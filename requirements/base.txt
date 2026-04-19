@@ -1,8 +1,12 @@
 # --- Telegram bot ---
-python-telegram-bot[ext]==21.6
+# 21.11.x is the last 21.x line; pulls aiohttp ≥ 3.10 which has 3.14
+# wheels. Major bump to 22.x is intentionally deferred (different
+# breaking changes — separate ADR).
+python-telegram-bot[ext]==21.11.1
 
 # --- Media downloading ---
-yt-dlp==2024.10.7
+# Older 2024 releases used the removed-in-3.14 ``imp`` stdlib module.
+yt-dlp==2026.3.17
 
 # --- Async / queue ---
 arq==0.26.1
@@ -10,17 +14,23 @@ redis==5.0.8
 
 # --- Database ---
 SQLAlchemy[asyncio]==2.0.36
-asyncpg==0.29.0
+# 0.31.0 is the first asyncpg release shipping prebuilt cp314 wheels
+# (PR #1279 / Nov 2025). Older pins force a from-source build that
+# fails on hosted runners without postgres-server-dev.
+asyncpg==0.31.0
 alembic==1.13.3
 
 # --- HTTP / API ---
 fastapi==0.115.0
-uvicorn[standard]==0.30.6
+# 0.32.x bundles uvloop ≥ 0.22 which has cp314 wheels (PR #638).
+uvicorn[standard]==0.32.0
 httpx==0.27.2
 
 # --- Config / logging / utils ---
-pydantic==2.9.2
-pydantic-settings==2.5.2
+# pydantic 2.13.x bundles pydantic-core ≥ 2.46, which is the first
+# pydantic-core line publishing cp314 wheels (PR #1714).
+pydantic==2.13.2
+pydantic-settings==2.13.1
 structlog==24.4.0
 tenacity==9.0.0
 python-multipart==0.0.12

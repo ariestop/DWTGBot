@@ -249,7 +249,7 @@ group to cancel superseded runs on the same ref.
 
 ```bash
 # one-time
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements/base.txt -r requirements/dev.txt
 

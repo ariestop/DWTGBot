@@ -3,7 +3,7 @@
 # Production deploy uses deploy/scripts/* and docker compose stacks.
 # =====================================================================
 
-PYTHON ?= python3.11
+PYTHON ?= python3.14
 VENV   ?= .venv
 PIP    := $(VENV)/bin/pip
 PY     := $(VENV)/bin/python

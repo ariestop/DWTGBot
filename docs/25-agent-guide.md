@@ -290,7 +290,7 @@ utility concern, not domain.
 
 The **canonical register of locked decisions** is
 [**ADR-0005 — Locked architectural assumptions**](adr/0005-locked-architectural-assumptions.md).
-It enumerates twelve foundational rows (Python 3.11+, two-server
+It enumerates twelve foundational rows (Python 3.14+ — see ADR-0009; two-server
 architecture, NL-1/NL-2 service composition, provider-based design,
 Redis queue, Postgres SoT, temp links, structured logging, Docker-first,
 GitHub Actions, bash installer) and defines what "locked" means in

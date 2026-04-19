@@ -9,7 +9,7 @@ DWTGBot. The configuration that enforces these rules lives in
 `pyproject.toml` (ruff + mypy) and `.pre-commit-config.yaml`; this file
 documents the *why* and provides examples.
 
-> 🔒 **Locked:** Python 3.11+, `ruff` + `ruff format` + `mypy`. **No
+> 🔒 **Locked:** Python 3.14+ ([ADR-0009](adr/0009-python-314-runtime.md)), `ruff` + `ruff format` + `mypy`. **No
 > `black` directly.** See ADR-0003.
 
 ---
@@ -71,7 +71,7 @@ Per-file overrides:
 
 ```toml
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict_optional = true
 warn_unused_ignores = true
 warn_redundant_casts = true

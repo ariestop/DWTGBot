@@ -58,7 +58,7 @@ explicitly supersedes the corresponding row of §3.
 
 | # | Locked assumption | Authoritative source(s) |
 |---|---|---|
-| 1 | **Language & runtime: Python 3.11+** | This ADR; [`27-coding-standards.md`](../27-coding-standards.md) §1 |
+| 1 | **Language & runtime: Python 3.14+** (superseded from 3.11+ by [ADR-0009](0009-python-314-runtime.md)) | [ADR-0009](0009-python-314-runtime.md); [`27-coding-standards.md`](../27-coding-standards.md) §1 |
 | 2 | **Two-server architecture** (control plane / media plane, separated by WireGuard private network) | [ADR-0001](0001-two-server-topology.md); [`02-architecture.md`](../02-architecture.md), [`19-docker-architecture.md`](../19-docker-architecture.md) |
 | 3 | **NL-1 = bot + redis + postgres + backups** (control plane; no public ports) | [ADR-0001](0001-two-server-topology.md); [`19-docker-architecture.md`](../19-docker-architecture.md), [`20-deployment.md`](../20-deployment.md) |
 | 4 | **NL-2 = worker + nginx + certbot + cleanup + storage volume** (media plane; public 80/443) | [ADR-0001](0001-two-server-topology.md); [`19-docker-architecture.md`](../19-docker-architecture.md), [`11-storage-strategy.md`](../11-storage-strategy.md) |
@@ -94,24 +94,36 @@ likely cascades through several others — see §3.13 (interlocks) below.
 This section enumerates each lock individually: **the precise scope of
 the lock**, what it implies, and the per-decision rationale snippet.
 
-### 3.1 Python 3.11+
+### 3.1 Python 3.14+ (superseded from 3.11+)
 
-**Scope of lock:** the project targets CPython 3.11 or newer for all
-application code, scripts, and CI. We do not support 3.10 or earlier.
+**Status:** superseded by [ADR-0009](0009-python-314-runtime.md)
+(2026-04-19). Original 3.11+ scope is preserved below as historical
+context; the binding contract now reads **CPython 3.14 or newer**.
 
-**Why locked:**
-- 3.11 is the first release with `tomllib`, `Self` type, exception
-  groups, and the substantial async/perf improvements we already use in
-  `app/`.
-- All Docker images target Ubuntu 24.04 LTS, which ships 3.12 as
-  default; 3.11 is the realistic minimum we both develop and test
-  against.
+**Scope of lock (current):** the project targets CPython 3.14 or newer
+for all application code, scripts, and CI. We do not support 3.13 or
+earlier.
+
+**Why locked (current — see ADR-0009 for the full rationale):**
+- 3.14 ships PEP 749 deferred annotations, t-strings, free-threaded
+  builds and a stable JIT — features that materially affect typing,
+  templating and worker concurrency choices we make in `app/`.
+- The previous 3.11 floor was raised because pinned Rust/C-extension
+  deps (pydantic-core, asyncpg, uvloop) now publish prebuilt cp314
+  wheels, removing the build-from-source overhead that previously
+  blocked the bump.
+- Ubuntu 24.04 LTS images for Python now ship 3.14 in the
+  `python:3.14.4-slim` family.
 
 **Implications:**
-- New code may freely use `match`, `Self`, `ExceptionGroup`,
-  `tomllib`.
+- New code may freely use 3.12/3.13/3.14 features (`PEP 695` generic
+  aliases, `Self`, `ExceptionGroup`, t-strings, etc.).
 - We do **not** add `from typing import` shims for back-compat with
-  3.10.
+  3.11–3.13.
+
+**Historical note (3.11+ era):** 3.11 was originally chosen as the
+floor for `tomllib`, `Self`, `ExceptionGroup` and async perf. That
+rationale still holds — 3.14 is a strict superset.
 
 ### 3.2 Two-server architecture
 

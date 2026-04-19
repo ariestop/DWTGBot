@@ -5,7 +5,7 @@
 # on a schedule via app.workers.backup_worker.
 # =====================================================================
 
-ARG PYTHON_VERSION=3.11.10
+ARG PYTHON_VERSION=3.14.4
 ARG APP_USER=app
 ARG APP_UID=1000
 ARG APP_GID=1000

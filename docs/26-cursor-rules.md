@@ -305,7 +305,7 @@ review.
 
 > 🔒 **The foundation Cursor must preserve at all times** is enumerated
 > in [**ADR-0005 — Locked architectural assumptions**](adr/0005-locked-architectural-assumptions.md)
-> §2 (twelve rows: Python 3.11+, two-server architecture, NL-1/NL-2
+> §2 (twelve rows: Python 3.14+ (ADR-0009), two-server architecture, NL-1/NL-2
 > service composition, provider-based design, Redis queue, Postgres SoT,
 > temp links, structured logging, Docker-first, GitHub Actions, bash
 > installer). A change touching any row → **stop, draft a superseding

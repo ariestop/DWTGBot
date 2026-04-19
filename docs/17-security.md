@@ -211,7 +211,7 @@ not yet shipped. When you add them, **always** require this header.
   `:ro`. Same for the api container in NL-2 (effectively read-only path
   usage).
 - **No `--privileged`, no `cap_add`, no `pid: host`, no `network: host`.**
-- **Image base**: `python:3.11-slim` and `nginx:1.27-alpine` — small
+- **Image base**: `python:3.14.4-slim` and `nginx:1.27-alpine` — small
   attack surface, well-maintained. Bump regularly.
 - **Healthchecks** restart unhealthy containers without manual
   intervention (see [`15-healthchecks.md`](15-healthchecks.md)).

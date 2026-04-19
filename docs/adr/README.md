@@ -79,6 +79,7 @@ Copy [`0000-template.md`](0000-template.md) and fill it in.
 | [0006](0006-in-process-rate-limit-metrics-exporter.md) | In-process Prometheus exporter for rate-limit metrics | Accepted |
 | [0007](0007-job-queue-worker-metrics.md) | Job / queue / worker Prometheus metrics (3-process exporter) | Accepted |
 | [0008](0008-audit-top5-fixes.md) | Audit Top-5 fixes — retry semantics, atomic per-user cap, log redaction, immutable image tags, atomic temp-link counter | Accepted |
+| [0009](0009-python-314-runtime.md) | Raise the language floor to Python 3.14 (supersedes ADR-0005 row 1) | Accepted |
 
 > 🔒 **Start here when in doubt:**
 > [ADR-0005](0005-locked-architectural-assumptions.md) is the canonical

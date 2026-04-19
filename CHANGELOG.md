@@ -12,6 +12,56 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Changed — Python runtime floor: 3.11 → 3.14 (ADR-0009)
+
+The project's locked language floor moves from **CPython 3.11+** to
+**CPython 3.14+** (supersedes [ADR-0005](docs/adr/0005-locked-architectural-assumptions.md)
+row 1; full rationale in [ADR-0009](docs/adr/0009-python-314-runtime.md)).
+
+- All build/runtime/CI surfaces pinned to **Python 3.14.4**:
+  `pyproject.toml` (`requires-python = ">=3.14"`,
+  `[tool.mypy] python_version = "3.14"`), `mypy.ini`,
+  `.github/workflows/ci.yml` (lint / typecheck / tests jobs),
+  `docker/{bot,api,worker,backup}.Dockerfile`
+  (`ARG PYTHON_VERSION=3.14.4`, `python:3.14.4-slim`), `Makefile`
+  (`PYTHON ?= python3.14`).
+- Pinned compiled-deps bumped to the minimum versions that publish
+  prebuilt cp314 wheels (no from-source builds in CI):
+  `pydantic 2.9.2 → 2.13.2` (bundles `pydantic-core 2.46+`),
+  `pydantic-settings 2.5.2 → 2.13.1`,
+  `asyncpg 0.29.0 → 0.31.0`,
+  `uvicorn[standard] 0.30.6 → 0.32.0` (uvloop ≥ 0.22 with cp314),
+  `python-telegram-bot[ext] 21.6 → 21.11.1` (aiohttp with cp314),
+  `yt-dlp 2024.10.7 → 2026.3.17` (older releases imported the
+  removed-in-3.14 `imp` stdlib),
+  `mypy 1.11.2 → 1.13.0` (parses 3.14 syntax — PEP 749 / t-strings).
+- `[tool.ruff] target-version` deliberately stays on `"py313"` for now
+  (see [ADR-0009 §3](docs/adr/0009-python-314-runtime.md)
+  "Tooling caveat"): py314 target makes the formatter rewrite
+  `except (A, B):` to PEP 758 unparenthesized form, which any tool
+  running on a 3.13 host (mypy / pytest / IDE LSPs) cannot parse.
+  Will flip once contributor toolchains are uniformly on 3.14.
+- Pure-Python pins left unchanged on purpose (`SQLAlchemy`,
+  `alembic`, `redis-py`, `arq`, `httpx`, `structlog`, `tenacity`,
+  `prometheus-client`, `fastapi`) — bumping them would inflate the
+  blast radius without addressing the runtime floor.
+- 3.13 and earlier are dropped from the support matrix. Operators
+  must rebuild images from the bumped Dockerfiles before pulling.
+  Local devs need `pyenv install 3.14.4` (or equivalent) — the
+  `requires-python` pin enforces this on `pip install`.
+- Documentation aligned: `README.md`, `docs/00-overview.md`,
+  `docs/02-architecture.md`, `docs/17-security.md`,
+  `docs/18-testing-strategy.md`, `docs/19-docker-architecture.md`,
+  `docs/24-runbooks.md`, `docs/25-agent-guide.md`,
+  `docs/26-cursor-rules.md`, `docs/27-coding-standards.md`,
+  `.cursor/rules/00-project-overview.mdc`,
+  `.cursor/rules/60-docker-and-deploy.mdc`. ADR-0005 §3.1 retains
+  the 3.11 history as a "superseded" note pointing at ADR-0009.
+- Verified locally: `ruff check`, `ruff format --check`,
+  `mypy app` (with `python_version = 3.14`), and `pytest -m "not
+  integration"` (193 tests, 1 Postgres-dependent skip) all green
+  against the bumped pin set.
+
 ### Fixed — audit Top-5 (ADR-0008)
 
 The first project-wide audit (Architect / Backend / DevOps / SRE /

@@ -7,7 +7,7 @@ name = "dwtgbot"
 version = "0.1.0"
 description = "Production-ready Telegram media downloader bot (YouTube, Instagram)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = { text = "MIT" }
 authors = [{ name = "DWTGBot maintainers" }]
 
@@ -17,7 +17,12 @@ include = ["app*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+# Stay on py313 deliberately: ruff's formatter applies PEP 758
+# (unparenthesized ``except``) under py314, which is invalid syntax
+# for any tool still running on a 3.13 host (mypy/pytest/pre-commit).
+# We can flip this to py314 once the toolchain is uniformly 3.14.
+# See ADR-0009 §3 ("Consequences").
+target-version = "py313"
 extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
@@ -58,7 +63,7 @@ ignore = [
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict_optional = true
 warn_unused_ignores = true
 warn_redundant_casts = true

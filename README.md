@@ -111,7 +111,7 @@ Layers (`app/`):
 
 ## Quickstart (single host, dev)
 
-Requirements: Python 3.11+, Docker, ffmpeg. Production target OS: **Ubuntu 24.04 LTS**.
+Requirements: Python 3.14+, Docker, ffmpeg. Production target OS: **Ubuntu 24.04 LTS**.
 
 ```bash
 git clone <repo-url> dwtgbot && cd dwtgbot
@@ -354,7 +354,7 @@ without an explicit RFC discussion.
 
 | # | Area | Decision |
 |---|---|---|
-| 1 | Language | Python 3.11+ |
+| 1 | Language | Python 3.14+ |
 | 2 | Bot framework | python-telegram-bot |
 | 3 | Queue | Redis (arq) |
 | 4 | Database | PostgreSQL + SQLAlchemy 2.x + Alembic |

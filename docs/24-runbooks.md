@@ -1453,7 +1453,7 @@ docker exec dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
   "SELECT version_num FROM alembic_version;"
 
 # What heads exist in the repo?
-docker run --rm -v $PWD:/app -w /app python:3.11-slim \
+docker run --rm -v $PWD:/app -w /app python:3.14.4-slim \
   bash -lc "pip install alembic >/dev/null && alembic heads"
 
 # Re-apply manually to see the error verbatim

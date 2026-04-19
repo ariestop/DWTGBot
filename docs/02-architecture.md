@@ -314,7 +314,7 @@ This section consolidates the *why*. Full reasoning lives in the ADRs.
 | Two-server topology | Blast radius isolation, security, scaling | [ADR-0001](adr/0001-two-server-topology.md) + [ADR-0005 §3.2](adr/0005-locked-architectural-assumptions.md) |
 | NL-1 service composition | Stateful + non-public co-located; minimal firewall surface | [ADR-0005 §3.3](adr/0005-locked-architectural-assumptions.md) |
 | NL-2 service composition | Media-traffic-heavy + public; isolated from control plane | [ADR-0005 §3.4](adr/0005-locked-architectural-assumptions.md) |
-| Python 3.11+ | Ecosystem fit (yt-dlp, telegram, fastapi); typing maturity | [ADR-0005 §3.1](adr/0005-locked-architectural-assumptions.md) |
+| Python 3.14+ | Ecosystem fit (yt-dlp, telegram, fastapi); typing maturity; PEP 749 / 750 / 779 / JIT (see [ADR-0009](adr/0009-python-314-runtime.md)) | [ADR-0005 §3.1](adr/0005-locked-architectural-assumptions.md), [ADR-0009](adr/0009-python-314-runtime.md) |
 | Bot framework `python-telegram-bot` | Async, mature, well-maintained | [ADR-0002](adr/0002-python-telegram-bot.md) |
 | Redis queue (arq) | Already needed for state; one infra component fewer | [ADR-0005 §3.6](adr/0005-locked-architectural-assumptions.md) |
 | PostgreSQL as source of truth | Strong typing, transactions, migrations | [ADR-0005 §3.7](adr/0005-locked-architectural-assumptions.md) |

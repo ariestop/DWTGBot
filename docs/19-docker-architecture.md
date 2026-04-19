@@ -40,7 +40,7 @@ Every Python image follows the same template:
 
 ```Dockerfile
 # ---------- builder ----------
-FROM python:3.11.10-slim AS builder
+FROM python:3.14.4-slim AS builder
 RUN apt-get install build-essential gcc                # only in builder
 WORKDIR /opt/build
 COPY requirements/ requirements/
@@ -48,7 +48,7 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install -r requirements/prod.txt
 
 # ---------- runtime ----------
-FROM python:3.11.10-slim AS runtime
+FROM python:3.14.4-slim AS runtime
 RUN apt-get install tini ca-certificates curl [+ ffmpeg in worker]
 RUN groupadd --gid 1000 app && useradd --uid 1000 --gid 1000 app
 COPY --from=builder /opt/venv /opt/venv
@@ -65,7 +65,7 @@ Properties:
 |---|---|
 | Builder vs runtime split | runtime image has no compilers / build deps |
 | `pip` into `/opt/venv` | reproducible, no `--user`, no dist-packages mix |
-| `python:3.11.10-slim` | small, vetted base; pin patch version |
+| `python:3.14.4-slim` | small, vetted base; pin patch version (see [ADR-0009](adr/0009-python-314-runtime.md)) |
 | `tini` as PID 1 | proper SIGTERM forwarding, no zombie processes |
 | Non-root `app:1000` | reduce blast radius of any RCE |
 | `--chown=app:app` on COPY | no fix-up `RUN chown` step |
@@ -74,7 +74,7 @@ Properties:
 
 Argument convention:
 ```Dockerfile
-ARG PYTHON_VERSION=3.11.10
+ARG PYTHON_VERSION=3.14.4
 ARG APP_USER=app
 ARG APP_UID=1000
 ARG APP_GID=1000
@@ -341,7 +341,7 @@ production.
 | Mistake | Symptom | Fix |
 |---|---|---|
 | `chown` mismatch on host volume | `PermissionError` on first start | `chown -R 1000:1000 /var/lib/dwtgbot/storage` |
-| Bumped `python:3.11` minor → tests fail | new lib behaviour | Pin patch (`3.11.10`); update intentionally |
+| Bumped `python:3.14` minor → tests fail | new lib behaviour | Pin patch (`3.14.4`); update intentionally |
 | Built worker without `ffmpeg` | first job fails with "ffmpeg not found" | Use `worker.Dockerfile`; verify with `docker exec dwtgbot_worker which ffmpeg` |
 | Forgot to mount `STORAGE_PATH` into nginx | `404` after API returns 200 | Mount as `:ro`; verify path |
 | `migrate` job stuck | bot won't start | `docker compose logs migrate`; fix the migration; rerun |

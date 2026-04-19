@@ -11,7 +11,7 @@ Read `docs/19-docker-architecture.md` and `docs/20-deployment.md`.
 ## Image conventions
 
 - Multi-stage builds: `builder` (with `gcc`) + `runtime` (without).
-- Base: `python:3.11.10-slim` (pin patch version) or
+- Base: `python:3.14.4-slim` (pin patch version, ADR-0009) or
   `nginx:1.27-alpine` for nginx.
 - Non-root user: `app:1000`. **Never** end with `USER root`.
 - `tini` as PID 1 for proper signal handling.
