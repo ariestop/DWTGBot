@@ -43,6 +43,11 @@ async def _amain() -> int:
                 await start()
         await application.initialize()
         await application.start()
+        # ``application.updater`` is typed as ``Updater | None`` because PTB
+        # supports webhook-only setups; we always run polling so it must be
+        # present here. Fail loud if PTB ever changes that contract.
+        if application.updater is None:
+            raise RuntimeError("PTB Application has no Updater (polling mode required)")
         await application.updater.start_polling(drop_pending_updates=False)
         stop_event = asyncio.Event()
 

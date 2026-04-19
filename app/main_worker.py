@@ -15,7 +15,12 @@ def main() -> None:
 
     from app.infrastructure.queue.worker_settings import WorkerSettings
 
-    run_worker(WorkerSettings)
+    # arq's ``run_worker`` accepts either ``dict`` or a subclass of
+    # ``WorkerSettingsBase``. Our ``WorkerSettings`` is a duck-typed bare
+    # class (the convention encouraged by the arq docs); making it inherit
+    # from ``WorkerSettingsBase`` would force re-declaring fields with
+    # explicit defaults. The runtime contract is satisfied — silence mypy.
+    run_worker(WorkerSettings)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

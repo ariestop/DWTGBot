@@ -21,7 +21,8 @@ as a Histogram (cardinality is bounded → fast PromQL).
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -34,7 +35,10 @@ from app.logging_config import get_logger
 
 _logger = get_logger(__name__)
 
-HandlerFn = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[object]]
+# Match PTB's expected callback signature exactly. Using ``Awaitable`` here
+# would widen the return type and break ``CommandHandler`` / ``MessageHandler``
+# / ``CallbackQueryHandler`` registration in ``app/bot/application.py``.
+HandlerFn = Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, Any]]
 
 
 def instrument(handler: HandlerFn) -> HandlerFn:
@@ -56,7 +60,7 @@ def instrument(handler: HandlerFn) -> HandlerFn:
        re-raises so PTB's ``on_error`` runs.
     """
 
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> object:
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Any:
         container = get_container(context.bot_data)
         metrics = container.job_metrics
         start = time.monotonic()
