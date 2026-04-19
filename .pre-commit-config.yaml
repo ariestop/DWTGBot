@@ -12,7 +12,9 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Keep in sync with `requirements/dev.txt` ruff pin — older 0.6.x
+    # cannot parse our pyproject.toml (lacks ASYNC240 etc.).
+    rev: v0.15.11
     hooks:
       - id: ruff
         args: [--fix]
