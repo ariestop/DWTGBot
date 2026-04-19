@@ -61,7 +61,10 @@ class SqlAlchemyTempLinksRepository(TempLinksRepository):
                 .values(is_active=False)
             )
             result = await session.execute(stmt)
-            return result.rowcount or 0
+            # SA 2.0.41+ stubs narrowed AsyncSession.execute to Result[Any];
+            # at runtime an UPDATE returns CursorResult which carries
+            # rowcount. Same idiom used in media_cache_repo_impl.
+            return result.rowcount or 0  # type: ignore[attr-defined]
 
     async def list_inactive_with_files(self, limit: int = 500) -> list[TempLink]:
         async with self._sm() as session:

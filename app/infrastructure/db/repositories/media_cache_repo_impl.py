@@ -58,7 +58,9 @@ class SqlAlchemyMediaCacheRepository(MediaCacheRepository):
         async with self._sm.begin() as session:
             stmt = delete(MediaCacheModel).where(MediaCacheModel.expires_at <= now)
             result = await session.execute(stmt)
-            return result.rowcount or 0
+            # See temp_links_repo_impl.deactivate_expired for the SA 2.0.41+
+            # stub-narrowing rationale (DELETE returns CursorResult at runtime).
+            return result.rowcount or 0  # type: ignore[attr-defined]
 
 
 def _to_record(row: MediaCacheModel) -> MediaCacheRecord:

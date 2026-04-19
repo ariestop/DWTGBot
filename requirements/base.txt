@@ -13,12 +13,20 @@ arq==0.26.1
 redis==5.0.8
 
 # --- Database ---
-SQLAlchemy[asyncio]==2.0.36
+# SQLAlchemy 2.0.36 calls ``Union.__getitem__(tuple)`` in
+# ``util/typing.py::make_union_type`` while resolving stringified
+# annotations at mapper-init. CPython 3.14 tightened that descriptor
+# to refuse tuple inputs, so any class with ``Mapped[A | B]`` raises
+# ``TypeError`` at import time. Fixed upstream by 2.0.41+; we pin
+# the latest 2.0.x line to inherit subsequent 3.14 fixes too.
+SQLAlchemy[asyncio]==2.0.49
 # 0.31.0 is the first asyncpg release shipping prebuilt cp314 wheels
 # (PR #1279 / Nov 2025). Older pins force a from-source build that
 # fails on hosted runners without postgres-server-dev.
 asyncpg==0.31.0
-alembic==1.13.3
+# 1.13.3 was tested against SQLAlchemy 2.0.30; 1.14.x is the line
+# explicitly validated against the SA 2.0.4x typing fixes above.
+alembic==1.14.0
 
 # --- HTTP / API ---
 fastapi==0.115.0
