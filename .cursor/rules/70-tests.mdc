@@ -1,0 +1,64 @@
+---
+description: Test conventions — fast, hermetic units; opt-in integration.
+globs: app/tests/**/*.py
+alwaysApply: false
+---
+
+# Test conventions
+
+Read `docs/18-testing-strategy.md`.
+
+## Default: hermetic & fast
+
+- No real network, DB, Redis, Telegram, ffmpeg subprocess.
+- Use the autouse fixtures in `conftest.py` for env + `Settings` cache.
+- For paths, use the pytest `tmp_path` fixture.
+
+## Use cases → fakes
+
+When testing a use case, supply in-memory **fakes** that implement the
+repository / service ABCs:
+
+```python
+class FakeJobsRepo(JobsRepository):
+    def __init__(self):
+        self.created: list[DownloadJob] = []
+    async def create(self, job):
+        job.id = len(self.created) + 1
+        self.created.append(job)
+        return job
+    ...
+```
+
+**Never** import from `app.infrastructure.db.*` in a unit test.
+
+## Async tests
+
+```python
+@pytest.mark.asyncio
+async def test_something(): ...
+```
+
+(Pytest is configured with `asyncio_mode=auto` per file; check existing
+files.)
+
+## Integration tests
+
+- Mark with `@pytest.mark.integration`.
+- Default invocation excludes them (`pytest -m "not integration"`).
+- Must clean up after themselves; don't pollute external systems.
+
+## Naming & assertions
+
+- File: `app/tests/test_<thing>.py`.
+- Test name reads as a sentence:
+  `test_register_use_marks_inactive_when_exhausted`.
+- Assert specific values, not just `is not None`.
+
+## Anti-patterns
+
+- ❌ `time.sleep` (use injected clock or `freezegun`).
+- ❌ Real `httpx` / DB calls in unit tests.
+- ❌ Mocking private methods (test through public API).
+- ❌ `pytest.mark.skip("flaky")` — fix or delete.
+- ❌ Asserting on log lines (test behaviour).

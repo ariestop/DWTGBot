@@ -1,0 +1,39 @@
+# Configuration for lycheeverse/lychee — used by .github/workflows/ci.yml
+# (the workflow passes most flags explicitly; this file pins behaviour
+# for local runs `lychee README.md docs/**/*.md`).
+
+# Verbosity
+verbose = "warn"
+no_progress = true
+
+# Networking
+max_concurrency = 8
+max_redirects = 10
+timeout = 20
+retry_wait_time = 2
+max_retries = 1
+accept = [200, 206, 429]
+
+# Cache — same key the workflow uses
+cache = true
+max_cache_age = "14d"
+
+# Always-skip — local hosts, platforms that block bots, file:// schemes,
+# and well-known anchors that vary between renderers.
+exclude = [
+  "^https?://(localhost|127\\.0\\.0\\.1)",
+  "^https?://(.*\\.)?(youtube\\.com|youtu\\.be|instagram\\.com|tiktok\\.com|x\\.com|twitter\\.com)",
+  "^mailto:",
+  "^file:",
+]
+exclude_path = [
+  "node_modules",
+  "venv",
+  ".venv",
+  "build",
+  "dist",
+]
+
+# Anchor checking is on by default; relative anchors inside a file are
+# best-effort (markdown rendering varies across GitHub vs GitLab vs MkDocs).
+include_fragments = true

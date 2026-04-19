@@ -1,0 +1,68 @@
+---
+description: Error hierarchy and logging discipline.
+globs: app/**/*.py
+alwaysApply: false
+---
+
+# Errors & logging
+
+Read `docs/16-error-handling.md` and `docs/14-logging-observability.md`.
+
+## Errors
+
+All app-domain errors derive from `app.exceptions.AppError`. Each class
+has a friendly `user_message` (Russian) shown to end users; `str(exc)`
+goes to logs / DB.
+
+```python
+class MyNewError(DownloadError):
+    user_message = "Не удалось обработать запрос."
+```
+
+Three-tier handling pattern (use it in every entry point):
+
+```python
+try:
+    ...
+except (InvalidUrlError, UnsupportedPlatformError) as exc:
+    _logger.info("link_rejected", reason=type(exc).__name__)
+    await message.reply_text(exc.user_message)
+except AppError as exc:
+    _logger.warning("link_analysis_failed", error=str(exc))
+    await message.reply_text(exc.user_message)
+except Exception as exc:
+    _logger.exception("link_analysis_unexpected_error", error=str(exc))
+    await message.reply_text("Не удалось обработать ссылку. Попробуйте позже.")
+```
+
+## Logging
+
+```python
+from app.logging_config import get_logger
+from app.utils.correlation import bind_context
+
+_logger = get_logger(__name__)
+
+with bind_context(request_id=req_id, user_id=uid, chat_id=cid):
+    _logger.info("update_received", update_id=update.update_id)
+```
+
+Rules:
+
+- Event names: `snake_case_nouns` like `job_done`, `temp_link_issued`,
+  `worker_startup_check_failed`. **Never** f-strings as event names.
+- Levels:
+  - INFO — normal events / state transitions.
+  - WARNING — handled `AppError`, retries.
+  - ERROR — unexpected, with `_logger.exception(...)`.
+  - DEBUG — verbose internals, off in production.
+- Bind `request_id` (and `job_id` once minted) at the top of every async
+  unit of work. Use `bind_context` (contextvars-based) so children
+  inherit it.
+
+## Never log
+
+- `BOT_TOKEN`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `API_INTERNAL_TOKEN`.
+- Full temp-link tokens. Truncate: `token[:8] + "..."`.
+- Cookies, Authorization headers, raw Telegram updates.
+- Telegram usernames / phone numbers (use numeric `user_id`).

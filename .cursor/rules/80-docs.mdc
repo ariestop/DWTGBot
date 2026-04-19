@@ -1,0 +1,51 @@
+---
+description: Docs structure & maintenance rules.
+globs: docs/**/*.md,README.md
+alwaysApply: false
+---
+
+# Docs
+
+The `docs/` folder is the technical source of truth. Index:
+`docs/README.md`. Root `README.md` is a marketing summary.
+
+## Source-of-truth precedence (most → least authoritative)
+
+1. ADR documents (`docs/adr/*.md`) — hard architectural locks.
+2. Topic docs (`docs/02-…` to `docs/33-…`).
+3. Inline code comments.
+4. Root `README.md` (marketing summary).
+
+## Conventions
+
+- **Mermaid** for all diagrams (renders on GitHub).
+- **File references**: project-relative paths (e.g.
+  `app/utils/url.py`), no fragile line numbers.
+- **Tables > prose** for comparisons / rules.
+- **Anti-patterns + common mistakes** sections at the end of each
+  topic doc — agents must scan them before changes.
+- **Locked decisions** flagged with `> 🔒 Locked:` admonitions and
+  back-link to an ADR.
+- **Status tags** at the top: `Status: Stable | Evolving | Draft`.
+
+## When you change behaviour
+
+- Update the doc(s) in the **same PR** as the code change.
+- Use the "Quick lookup by task" table in `docs/README.md` to find the
+  right files.
+- **Never** create a new top-level doc unless none of `00-33` fits —
+  extend an existing one.
+
+## When you change a locked decision
+
+- Add an ADR: `docs/adr/000N-<short-slug>.md` with `Status / Context /
+  Decision / Consequences / Alternatives considered`.
+- Update the README's "Architectural decisions (locked)" table.
+- Update the topic doc(s) that referenced the old decision; back-link
+  to the ADR.
+
+## Style
+
+- Headings: sentence case (`# 14 — Logging and observability`).
+- Code in fenced blocks with the language tag.
+- Avoid emojis except `🔒` for locked admonitions.

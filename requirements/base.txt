@@ -1,0 +1,32 @@
+# --- Telegram bot ---
+python-telegram-bot[ext]==21.6
+
+# --- Media downloading ---
+yt-dlp==2024.10.7
+
+# --- Async / queue ---
+arq==0.26.1
+redis==5.0.8
+
+# --- Database ---
+SQLAlchemy[asyncio]==2.0.36
+asyncpg==0.29.0
+alembic==1.13.3
+
+# --- HTTP / API ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+httpx==0.27.2
+
+# --- Config / logging / utils ---
+pydantic==2.9.2
+pydantic-settings==2.5.2
+structlog==24.4.0
+tenacity==9.0.0
+python-multipart==0.0.12
+
+# --- Observability ---
+# Optional at runtime — only loaded when METRICS_ENABLED=true (see
+# app/composition.py:_build_metrics). Pinning here keeps the prod image
+# self-contained for ADR-0006's in-process exporter design.
+prometheus-client==0.21.0

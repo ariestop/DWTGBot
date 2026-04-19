@@ -1,0 +1,75 @@
+---
+description: Python style, typing, and async conventions for DWTGBot.
+globs: app/**/*.py
+alwaysApply: false
+---
+
+# Python style for DWTGBot
+
+## Format & lint
+
+- Formatter: **`ruff format`** (black-compatible). Never invoke `black`.
+- Linter: `ruff check --fix`.
+- Typecheck: `mypy app`.
+- Pre-commit hooks already enforce this (`.pre-commit-config.yaml`).
+
+## Typing
+
+- `from __future__ import annotations` at top of every module.
+- Type ALL public functions and methods. `Any` only when justified.
+- Use `pydantic` v2 for IO models / config; not for domain entities
+  (those are dataclass-style objects in `app/domain/entities/`).
+
+## Async
+
+- All IO is async. No `requests`, no `urllib3`, no `time.sleep`.
+- HTTP clients: `httpx` or `aiohttp` (already in deps); for yt-dlp
+  internals we let the library manage its own client.
+- Long-blocking sync calls go through `asyncio.to_thread(...)`.
+- Subprocesses: `asyncio.create_subprocess_exec(arg, arg, ...)` —
+  argv list, **never** `shell=True`.
+
+## Logging
+
+```python
+from app.logging_config import get_logger
+_logger = get_logger(__name__)
+```
+
+- `_logger.info("snake_case_event", key=value, ...)` — structured.
+- `_logger.exception("...", error=str(exc))` for unexpected errors.
+- `_logger.warning(...)` for handled `AppError`s.
+- **Never** `print(...)`. **Never** f-strings as event names.
+- Bind correlation: `with bind_context(request_id=..., job_id=...):`.
+
+## Errors
+
+- Subclass `app.exceptions.AppError`; pick the most specific class.
+- Set a friendly `user_message` (Russian, single sentence).
+- Catch `AppError` → reply to user; catch broad `Exception` only at
+  top of handlers / use cases, log with `_logger.exception`.
+- Never `except Exception: pass`.
+
+## Configuration
+
+- Read everything from `app.config.get_settings()`. **Never** read
+  `os.environ` directly outside `app/config.py`.
+
+## Imports / layers
+
+Allowed dependency direction (see `docs/03-project-structure.md`):
+
+```
+bot, api, workers  →  application  →  domain
+                        ↑
+                  infrastructure (implements domain interfaces)
+```
+
+`domain/*` imports nothing from `infrastructure`, `bot`, `api`, `workers`.
+
+## Tests
+
+- Live in `app/tests/`.
+- Default tests: no real DB, Redis, Telegram, network.
+- Use fakes for repository / service protocols (see existing tests).
+- Mark integration tests with `@pytest.mark.integration`.

@@ -1,0 +1,59 @@
+---
+description: DWTGBot project overview & locked architectural decisions. Always-on context.
+alwaysApply: true
+---
+
+# DWTGBot — what & how (read first)
+
+DWTGBot is a production Telegram media bot. It accepts URLs (YouTube,
+Instagram), downloads media via `yt-dlp`+`ffmpeg`, and delivers files
+through Telegram (small files) or temporary HTTPS links (large files).
+
+## Locked architectural decisions (canonical register: `docs/adr/0005-locked-architectural-assumptions.md`)
+
+> **Canonical source of truth:**
+> [`docs/adr/0005-locked-architectural-assumptions.md`](mdc:docs/adr/0005-locked-architectural-assumptions.md)
+> §2 — twelve foundational rows. Changing any row requires a new ADR
+> that explicitly supersedes it (process in ADR-0005 §6).
+> The list below is a quick mirror; ADR-0005 is authoritative.
+
+1. **Python 3.11+** (use 3.11 features; no 3.12-only syntax).
+2. **Two-server architecture** (NL-1 + NL-2 over WireGuard private subnet).
+3. **NL-1 = bot + redis + postgres (+ backup)** — control plane, no public ports.
+4. **NL-2 = worker + nginx + certbot + cleanup + api + storage** — media plane, public 80/443.
+5. **Provider-based design** for media platforms (`BaseProvider` interface; one class per platform).
+6. **Queue**: Redis + `arq`. Idempotency contract: `_job_id=job:<db_pk>`.
+7. **DB**: PostgreSQL as **source of truth** + SQLAlchemy 2.x + Alembic (forward-only migrations).
+8. **Delivery**: small → Telegram upload; large → tokenized HTTPS link served via nginx `X-Accel-Redirect` (internal location, TTL + use counter).
+9. **Logging**: `structlog`, JSON in production. Correlation context (`request_id`, `job_id`, `user_id`, `chat_id`) bound via contextvars.
+10. **Docker-first deployment**: Docker Compose v2, two stacks (`deploy/nl1`, `deploy/nl2`). No host-installed Python services.
+11. **CI/CD**: GitHub Actions (CI on every PR, build → GHCR, manual SSH-based deploy).
+12. **Interactive installer**: bash (`deploy/scripts/install.sh`) with menu and idempotent non-interactive mode.
+
+### Adjacent ADR-locked decisions (related but separate ADRs)
+
+- **Bot framework**: `python-telegram-bot` async ([ADR-0002](mdc:docs/adr/0002-python-telegram-bot.md)).
+- **Formatter**: `ruff format` only — no `black` directly ([ADR-0003](mdc:docs/adr/0003-ruff-format-no-black.md)).
+- **Temp-link delivery mechanism**: Nginx `X-Accel-Redirect` ([ADR-0004](mdc:docs/adr/0004-temp-links-via-nginx-x-accel.md)).
+- **Download engine**: `yt-dlp` Python lib (never the CLI).
+- **Media processing**: `ffmpeg` in the worker image only.
+- **OS target**: Ubuntu 24.04 LTS (`noble`).
+- **Tests**: `pytest`; default run excludes the `integration` marker.
+
+## Where the docs live
+
+- Index: `docs/README.md`
+- For agents (this document, expanded): `docs/25-agent-guide.md`
+- Architecture: `docs/02-architecture.md`
+- Project structure: `docs/03-project-structure.md`
+- Coding standards: `docs/27-coding-standards.md`
+
+Read the relevant topic doc(s) BEFORE editing any file.
+
+## The four hard rules
+
+1. **Read before write.** Open the docs + source + tests for the area.
+2. **Respect locked decisions.** Need to break one? Add an ADR first.
+3. **Stay inside your layer.** Never cross-import upward; see
+   dependency matrix in `docs/03-project-structure.md`.
+4. **Update docs in the same PR.** Behaviour change → doc change.

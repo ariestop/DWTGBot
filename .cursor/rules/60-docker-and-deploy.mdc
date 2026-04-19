@@ -1,0 +1,60 @@
+---
+description: Docker & compose conventions (multi-stage, non-root, healthchecks, no public ports).
+globs: docker/**/*,deploy/**/*
+alwaysApply: false
+---
+
+# Docker & deploy
+
+Read `docs/19-docker-architecture.md` and `docs/20-deployment.md`.
+
+## Image conventions
+
+- Multi-stage builds: `builder` (with `gcc`) + `runtime` (without).
+- Base: `python:3.11.10-slim` (pin patch version) or
+  `nginx:1.27-alpine` for nginx.
+- Non-root user: `app:1000`. **Never** end with `USER root`.
+- `tini` as PID 1 for proper signal handling.
+- Layer order: copy `requirements/` first, install, then `COPY app/`.
+- `COPY --chown=app:app` instead of post-`COPY` `RUN chown`.
+- Declare a `HEALTHCHECK`.
+
+## Compose conventions
+
+- Apply YAML anchors `*restart`, `*logging`, `*app-env` to every
+  long-running service.
+- `depends_on: { condition: service_healthy }` for required deps.
+- `migrate` service is one-shot (`restart: "no"`); other app services
+  use `restart: unless-stopped`.
+- **No `ports:`** on internal services (postgres, redis, api, worker).
+  Only nginx publishes `80` and `443`.
+- Networks: `dwtgbot_internal` on NL-1, `dwtgbot_media` on NL-2. Cross-
+  host traffic uses the **host's private VLAN**, not docker networking.
+- Volumes named `dwtgbot_*` for clarity in `docker volume ls`.
+
+## Image tags
+
+- CI publishes to GHCR with `sha-<short>`, semver tags, and `latest`
+  (only on `main`).
+- Production deploys pin **explicit sha or semver** in `.env`. Never
+  `latest` in production.
+
+## Worker-only
+
+- Only the worker image installs `ffmpeg`. Bot/api images do not need
+  it; do not add it.
+
+## nginx
+
+- Public `:80` redirects to `:443` except `/.well-known/acme-challenge/`.
+- File serving uses `internal;` location + `X-Accel-Redirect`. The
+  `STORAGE_PATH` volume is mounted **read-only** into nginx.
+- HSTS / X-Frame-Options / Referrer-Policy / etc. via the shared
+  `snippets/security.conf`.
+
+## Forbidden
+
+- `--privileged`, `cap_add`, `pid: host`, `network: host`.
+- Building images on the production host.
+- Putting secrets in `docker-compose.yml`.
+- Same-host Postgres → public IP exposure.

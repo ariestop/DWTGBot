@@ -1,0 +1,86 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which server to update"
+        type: choice
+        required: true
+        options: [nl1, nl2, both]
+        default: both
+      ref:
+        description: "Git ref to deploy (branch / tag / sha)"
+        type: string
+        required: false
+        default: main
+
+concurrency:
+  group: deploy-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  nl1:
+    if: ${{ inputs.target == 'nl1' || inputs.target == 'both' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: nl1
+    steps:
+      - name: Deploy to NL-1 over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.NL1_HOST }}
+          username: ${{ secrets.NL1_SSH_USER }}
+          key: ${{ secrets.NL1_SSH_KEY }}
+          port: ${{ secrets.NL1_SSH_PORT || 22 }}
+          script_stop: true
+          # Audit fix #4: pass immutable image tags into the deploy
+          # script's environment. The compose files require IMAGE_* to
+          # be set (``${VAR:?...}``) and will refuse to start otherwise.
+          # Using ``sha-<short>`` of the deployed ref guarantees the
+          # registry has the artefact (built by build-images.yml).
+          envs: GITHUB_SHA,GITHUB_REPOSITORY
+          script: |
+            set -Eeuo pipefail
+            cd "${{ secrets.NL1_REPO_PATH }}"
+            git fetch --all --tags
+            git checkout "${{ inputs.ref }}"
+            git pull --ff-only origin "${{ inputs.ref }}" || true
+            SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+            export IMAGE_TAG="sha-${SHORT_SHA}"
+            export IMAGE_BOT="ghcr.io/${{ github.repository }}-bot:${IMAGE_TAG}"
+            export IMAGE_API="ghcr.io/${{ github.repository }}-api:${IMAGE_TAG}"
+            export IMAGE_WORKER="ghcr.io/${{ github.repository }}-worker:${IMAGE_TAG}"
+            export IMAGE_BACKUP="ghcr.io/${{ github.repository }}-backup:${IMAGE_TAG}"
+            ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
+
+  nl2:
+    if: ${{ inputs.target == 'nl2' || inputs.target == 'both' }}
+    needs: [nl1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: nl2
+    steps:
+      - name: Deploy to NL-2 over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.NL2_HOST }}
+          username: ${{ secrets.NL2_SSH_USER }}
+          key: ${{ secrets.NL2_SSH_KEY }}
+          port: ${{ secrets.NL2_SSH_PORT || 22 }}
+          script_stop: true
+          envs: GITHUB_SHA,GITHUB_REPOSITORY
+          script: |
+            set -Eeuo pipefail
+            cd "${{ secrets.NL2_REPO_PATH }}"
+            git fetch --all --tags
+            git checkout "${{ inputs.ref }}"
+            git pull --ff-only origin "${{ inputs.ref }}" || true
+            SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+            export IMAGE_TAG="sha-${SHORT_SHA}"
+            export IMAGE_API="ghcr.io/${{ github.repository }}-api:${IMAGE_TAG}"
+            export IMAGE_WORKER="ghcr.io/${{ github.repository }}-worker:${IMAGE_TAG}"
+            ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl2

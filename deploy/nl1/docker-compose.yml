@@ -1,0 +1,149 @@
+# =====================================================================
+# NL-1 — control plane stack.
+# Services: postgres, redis, bot, api (internal), backup.
+#
+# Postgres and Redis are NEVER published to the host. The media-plane
+# (NL-2) reaches them over a private link (WireGuard / VPC) using the
+# host IP captured in POSTGRES_HOST / REDIS_HOST inside NL-2's .env.
+# =====================================================================
+
+x-app-env: &app-env
+  env_file:
+    - .env
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: dwtgbot_postgres
+    <<: [*restart, *logging]
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - backups:/var/backups/dwtgbot
+    networks:
+      - dwtgbot_internal
+    # No ports: — DB is accessible only inside the docker network and via
+    # the host private interface (configure firewall + WireGuard).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  redis:
+    image: redis:7-alpine
+    container_name: dwtgbot_redis
+    <<: [*restart, *logging]
+    command: >
+      redis-server
+      --save 60 1000
+      --appendonly yes
+      ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - dwtgbot_internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  migrate:
+    # Audit fix #4: every app image MUST be pinned to an immutable tag
+    # (sha-XXXXXXX or vX.Y.Z). The :- default tag let stale ``:latest``
+    # ship by accident on first boot and made rollbacks ambiguous.
+    # ``${VAR:?msg}`` makes ``docker compose up`` fail fast with a clear
+    # message if the operator forgot to set the tag in .env.
+    image: ${IMAGE_BOT:?IMAGE_BOT must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-bot:sha-abc1234)}
+    container_name: dwtgbot_migrate
+    <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - dwtgbot_internal
+    entrypoint: ["tini", "--"]
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  bot:
+    image: ${IMAGE_BOT:?IMAGE_BOT must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-bot:sha-abc1234)}
+    container_name: dwtgbot_bot
+    <<: [*app-env, *restart, *logging]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - dwtgbot_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f app.main_bot >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  api:
+    image: ${IMAGE_API:?IMAGE_API must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-api:sha-abc1234)}
+    container_name: dwtgbot_api_nl1
+    <<: [*app-env, *restart, *logging]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dwtgbot_internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/healthz >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    # No external ports — only used by docker healthchecks and as an
+    # admin debug endpoint reachable inside the private network.
+
+  backup:
+    image: ${IMAGE_BACKUP:?IMAGE_BACKUP must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-backup:sha-abc1234)}
+    container_name: dwtgbot_backup
+    <<: [*app-env, *restart, *logging]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_SCRIPT: /app/deploy/scripts/backup.sh
+    volumes:
+      - backups:/var/backups/dwtgbot
+    networks:
+      - dwtgbot_internal
+
+networks:
+  dwtgbot_internal:
+    name: dwtgbot_internal
+    driver: bridge
+    internal: false   # set true when fully air-gapped; bot needs egress to api.telegram.org
+
+volumes:
+  postgres_data:
+    name: dwtgbot_postgres_data
+  redis_data:
+    name: dwtgbot_redis_data
+  backups:
+    name: dwtgbot_backups

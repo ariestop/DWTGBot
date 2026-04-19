@@ -1,0 +1,119 @@
+# =====================================================================
+# Media-plane vhost. ${SERVER_NAME} is replaced by the entrypoint.
+# Strategy:
+#   /.well-known/acme-challenge/  → webroot served from /var/www/certbot
+#   :80                           → permanent redirect to HTTPS
+#   :443                          → reverse-proxy to api:8080
+#                                   GET /d/{token} validates the link;
+#                                   the api responds with X-Accel-Redirect
+#                                   pointing to the internal /_protected/
+#                                   location, where nginx serves the file
+#                                   via sendfile().
+# =====================================================================
+
+upstream dwtgbot_api {
+    server api:8080;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${SERVER_NAME};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${SERVER_NAME};
+
+    ssl_certificate     /etc/letsencrypt/live/${SERVER_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SERVER_NAME}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    include /etc/nginx/snippets/security.conf;
+
+    # Health probe directly on nginx
+    location /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    # Public temp-link endpoint. The api validates the token and replies
+    # with X-Accel-Redirect → /_protected/<relative_path>, then nginx
+    # serves the file from STORAGE_PATH efficiently.
+    #
+    # Rate limiting: the zones are declared in nginx.conf (see the
+    # "temp_link_*" block there for sizing rationale). Burst=20 nodelay
+    # absorbs legitimate retries without delaying them; over-budget
+    # requests get an immediate 429 (limit_req_status). limit_conn caps
+    # simultaneous downloads per IP so one client cannot starve the
+    # worker pool. Rejections show up as ``limit_req_status="REJECTED"``
+    # in the JSON access log — feed them into your dashboard from
+    # docs/35-metrics-and-slo.md §6.
+    #
+    # Caching: ``Cache-Control: no-store`` prevents intermediate proxies
+    # (corporate, ISP) and the user-agent from holding onto a file fetched
+    # via a single-use, time-bounded token. ``always`` ensures the header
+    # is set even on 4xx (e.g. 410 Gone after the link expired) so a
+    # cached "the file is gone" page doesn't haunt a returning user.
+    # ``Pragma`` + ``Expires`` cover ancient HTTP/1.0 intermediaries.
+    # See docs/17-security.md §6 and docs/10-temp-links-and-delivery.md §9.
+    location /d/ {
+        limit_req  zone=temp_link_per_ip      burst=20 nodelay;
+        limit_conn temp_link_conn_per_ip      8;
+
+        proxy_pass         http://dwtgbot_api;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Internal-XAccel "1";
+        proxy_read_timeout 60s;
+        proxy_buffering    off;
+
+        add_header Cache-Control "no-store"      always;
+        add_header Pragma        "no-cache"      always;
+        add_header Expires       "0"             always;
+    }
+
+    # Internal location used by X-Accel-Redirect ONLY.
+    # ``internal;`` makes nginx refuse direct external requests.
+    # The Cache-Control headers are repeated here because ``add_header``
+    # in nginx is *not* inherited from the parent location once the
+    # child sets any add_header directive (and X-Accel hands off here).
+    location /_protected/ {
+        internal;
+        alias /var/lib/dwtgbot/storage/;
+        sendfile on;
+        tcp_nopush on;
+        # Force download semantics for unknown types.
+        types { }
+        default_type application/octet-stream;
+        add_header Content-Disposition "attachment" always;
+        add_header Cache-Control       "no-store"   always;
+        add_header Pragma              "no-cache"   always;
+        add_header Expires             "0"          always;
+    }
+
+    # Everything else: deny by default.
+    location / {
+        return 404;
+    }
+}

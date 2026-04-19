@@ -1,0 +1,88 @@
+---
+description: Bash conventions for deploy scripts (idempotency, strict mode, prompts).
+globs: deploy/scripts/**/*.sh
+alwaysApply: false
+---
+
+# Bash conventions for `deploy/scripts/`
+
+Read `docs/20-deployment.md` and `docs/24-runbooks.md`.
+
+## Strict mode at the top
+
+```bash
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=helpers.sh
+source "${SCRIPT_DIR}/helpers.sh"
+```
+
+`helpers.sh` already sets `set -Eeuo pipefail` and an `ERR` trap; do
+not weaken it.
+
+## Idempotent
+
+Every step must be safe to re-run. Pattern:
+
+```bash
+if [[ -f "${TARGET}" ]]; then
+  log_ok "Already exists: ${TARGET}"
+  return
+fi
+```
+
+or
+
+```bash
+sudo mkdir -p /var/lib/dwtgbot/storage
+sudo chown -R 1000:1000 /var/lib/dwtgbot
+```
+
+## Prompts before destructive actions
+
+```bash
+confirm "Drop database '${POSTGRES_DB}'?" "N" || die "Aborted by user"
+```
+
+`confirm "<msg>" "Y|N"` lives in `helpers.sh`. Honor `ASSUME_YES=1` for
+CI / non-interactive runs.
+
+## Logging
+
+Use the helpers, not raw `echo`:
+
+```bash
+log_step "Installing Docker"
+log_info "Pulled image"
+log_ok   "Done"
+log_warn "Skipping unsupported OS"
+log_error "Backup failed"
+die "Aborting: missing dependency"
+```
+
+## OS target
+
+Production target is **Ubuntu 24.04 LTS (noble)**. The Docker installer
+pins the apt repo to `noble`. Use `require_ubuntu_2404` before
+OS-version-sensitive actions.
+
+## Quoting & arrays
+
+- Always quote variables: `"${VAR}"`, never `$VAR` in command args.
+- Arrays for multi-arg commands: `args=(--flag value); cmd "${args[@]}"`.
+- Avoid `eval`. If you think you need it, you don't.
+
+## Subprocess control
+
+- Process substitution `< <(cmd)` is fine.
+- `set -o pipefail` is on; failures in the middle of a pipe abort.
+- For loops on file lists, use `mapfile -t` not `for f in $(ls ...)`.
+
+## Lint
+
+```bash
+bash -n deploy/scripts/foo.sh
+shellcheck --severity=warning deploy/scripts/foo.sh
+```
+
+CI runs `shellcheck` with `severity=warning` over `deploy/scripts/`.

@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+
+      - name: Install ruff
+        run: pip install -r requirements/dev.txt
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+      - name: ruff check
+        run: ruff check .
+
+  typecheck:
+    name: Mypy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements/base.txt
+            requirements/dev.txt
+
+      - name: Install deps
+        run: |
+          pip install -r requirements/base.txt
+          pip install -r requirements/dev.txt
+
+      - name: mypy
+        run: mypy app
+
+  tests:
+    name: Pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements/base.txt
+            requirements/dev.txt
+
+      - name: Install ffmpeg (for yt-dlp postprocessor probes)
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install deps
+        run: |
+          pip install -r requirements/base.txt
+          pip install -r requirements/dev.txt
+
+      - name: pytest
+        env:
+          BOT_TOKEN: "0000000000:test-token"
+          APP_ENV: development
+          LOG_LEVEL: WARNING
+          LOG_JSON: "false"
+          PUBLIC_BASE_URL: http://localhost:8080
+          STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
+          STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
+        run: pytest -m "not integration"
+
+  shell-lint:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./deploy/scripts
+          severity: warning
+
+  docs-link-check:
+    name: Docs link check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore lychee cache
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ hashFiles('docs/**/*.md', '*.md', '.lychee.toml') }}
+          restore-keys: lychee-
+      - name: lychee — broken link check
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # Only docs + top-level guides; do not crawl every README in deps.
+          args: >-
+            --no-progress
+            --cache
+            --max-cache-age 14d
+            --include-fragments
+            --max-concurrency 8
+            --accept 200,206,429
+            --exclude '^https?://(localhost|127\.0\.0\.1)'
+            --exclude '^https?://(.*\.)?(youtube\.com|youtu\.be|instagram\.com|tiktok\.com)'
+            'README.md' 'CONTRIBUTING.md' 'docs/**/*.md'
+          # Fail the job if there are broken links; the report is uploaded as an artifact.
+          fail: true
+          output: ./lychee-report.md
+      - name: Upload lychee report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: lychee-report.md

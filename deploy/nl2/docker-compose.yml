@@ -1,0 +1,131 @@
+# =====================================================================
+# NL-2 — media plane stack.
+# Services: api, worker, cleanup, nginx, certbot.
+#
+# Connects to NL-1's postgres/redis over a private network using
+# POSTGRES_HOST / REDIS_HOST in this stack's .env (typically WireGuard IPs).
+# Only ports 80 and 443 are exposed to the public internet.
+# =====================================================================
+
+x-app-env: &app-env
+  env_file:
+    - .env
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+
+  api:
+    # Audit fix #4: app images must be pinned to immutable tags. ``:?``
+    # makes ``docker compose up`` fail-fast with a clear message if the
+    # operator forgot to set the tag in .env (no more silent ``:latest``).
+    image: ${IMAGE_API:?IMAGE_API must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-api:sha-abc1234)}
+    container_name: dwtgbot_api
+    <<: [*app-env, *restart, *logging]
+    networks:
+      - dwtgbot_media
+    volumes:
+      - storage:/var/lib/dwtgbot/storage
+      - storage_tmp:/var/lib/dwtgbot/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/healthz >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: ${IMAGE_WORKER:?IMAGE_WORKER must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-worker:sha-abc1234)}
+    container_name: dwtgbot_worker
+    <<: [*app-env, *restart, *logging]
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - dwtgbot_media
+    volumes:
+      - storage:/var/lib/dwtgbot/storage
+      - storage_tmp:/var/lib/dwtgbot/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'arq|app.main_worker' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cleanup:
+    image: ${IMAGE_WORKER:?IMAGE_WORKER must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-worker:sha-abc1234)}
+    container_name: dwtgbot_cleanup
+    <<: [*app-env, *restart, *logging]
+    networks:
+      - dwtgbot_media
+    volumes:
+      - storage:/var/lib/dwtgbot/storage
+      - storage_tmp:/var/lib/dwtgbot/tmp
+    command: ["python", "-m", "app.workers.cleanup_worker"]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: dwtgbot_nginx
+    <<: [*restart, *logging]
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SERVER_NAME: ${SERVER_NAME}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/snippets:/etc/nginx/snippets:ro
+      - ../nginx/conf.d/media.conf.template:/etc/nginx/templates/media.conf.template:ro
+      - storage:/var/lib/dwtgbot/storage:ro
+      - letsencrypt_conf:/etc/letsencrypt:ro
+      - letsencrypt_www:/var/www/certbot:ro
+    networks:
+      - dwtgbot_media
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep -q ok || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: dwtgbot_certbot
+    <<: *logging
+    depends_on:
+      - nginx
+    volumes:
+      - letsencrypt_conf:/etc/letsencrypt
+      - letsencrypt_www:/var/www/certbot
+    entrypoint: /bin/sh -c
+    command: >
+      'trap exit TERM;
+       while :;
+         do certbot renew --webroot -w /var/www/certbot --quiet;
+         sleep 12h & wait $${!};
+       done'
+    restart: unless-stopped
+
+networks:
+  dwtgbot_media:
+    name: dwtgbot_media
+    driver: bridge
+
+volumes:
+  storage:
+    name: dwtgbot_storage
+  storage_tmp:
+    name: dwtgbot_storage_tmp
+  letsencrypt_conf:
+    name: dwtgbot_letsencrypt_conf
+  letsencrypt_www:
+    name: dwtgbot_letsencrypt_www
