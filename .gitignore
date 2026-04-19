@@ -46,11 +46,12 @@ coverage.xml
 deploy/nl1/.env
 deploy/nl2/.env
 
-# Runtime / data
-storage/
-tmp/
-backups/
-logs/
+# Runtime / data — anchored to the project root so they DON'T eat
+# legitimate Python packages like ``app/infrastructure/storage/``.
+/storage/
+/tmp/
+/backups/
+/logs/
 *.log
 
 # Docker
