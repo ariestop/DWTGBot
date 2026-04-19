@@ -1,31 +1,42 @@
-# Python
+# =====================================================================
+# Anchoring rules:
+# - Patterns starting with "/" are anchored to the project root and
+#   only match there. Use this for build artefacts and runtime data
+#   directories whose names could collide with real Python packages
+#   (e.g. ``app/infrastructure/storage/``).
+# - Patterns without a leading "/" match at any depth — reserve those
+#   for caches, glob patterns and OS noise that we want gone everywhere.
+# Keep this header in mind before adding a new pattern.
+# =====================================================================
+
+# Python — build artefacts (project root only)
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 
-# Virtualenv
-.venv/
-venv/
-ENV/
+# Virtualenv (project root only)
+/.venv/
+/venv/
+/ENV/
 
-# Tooling
+# Tooling — caches can appear anywhere, keep unanchored
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
@@ -46,8 +57,8 @@ coverage.xml
 deploy/nl1/.env
 deploy/nl2/.env
 
-# Runtime / data — anchored to the project root so they DON'T eat
-# legitimate Python packages like ``app/infrastructure/storage/``.
+# Runtime / data — anchored so they don't eat real packages like
+# ``app/infrastructure/storage/`` (see ADR-0008 / past CI incident).
 /storage/
 /tmp/
 /backups/
@@ -55,4 +66,4 @@ deploy/nl2/.env
 *.log
 
 # Docker
-.docker/
+/.docker/
