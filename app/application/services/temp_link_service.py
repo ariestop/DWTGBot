@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.config import Settings
 from app.domain.entities.temp_link import TempLink
@@ -20,9 +20,7 @@ class TempLinkService:
 
     async def issue(self, *, job_id: int, file_path: str) -> tuple[TempLink, str]:
         token = secrets.token_urlsafe(self._settings.TEMP_LINK_TOKEN_BYTES)
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            seconds=self._settings.TEMP_LINK_TTL_SECONDS
-        )
+        expires_at = datetime.now(UTC) + timedelta(seconds=self._settings.TEMP_LINK_TTL_SECONDS)
 
         link = TempLink(
             id=None,

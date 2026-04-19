@@ -60,7 +60,7 @@ async def _amain() -> int:
             log.error("cleanup_startup_check_failed", reason=err)
         return 2
 
-    composition = build_api(settings)
+    composition = await build_api(settings)
     media_cache_repo = SqlAlchemyMediaCacheRepository(composition.core.sessionmaker)
 
     stop = asyncio.Event()
@@ -81,7 +81,7 @@ async def _amain() -> int:
                 log.exception("cleanup_cycle_error")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=settings.CLEANUP_INTERVAL_SECONDS)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
     finally:
         await composition.aclose()

@@ -13,8 +13,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from yt_dlp import YoutubeDL  # type: ignore[import-untyped]
-from yt_dlp.utils import DownloadError as YtDlpDownloadError  # type: ignore[import-untyped]
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError as YtDlpDownloadError
 
 from app.config import Settings
 from app.exceptions import (
@@ -108,13 +108,12 @@ class YtDlpRunner:
             ydl.download([url])
 
     @staticmethod
-    def _classify(exc: YtDlpDownloadError) -> ProviderError:
+    def _classify(exc: YtDlpDownloadError) -> ProviderError | DownloadError:
         msg = str(exc).lower()
         if (
             "private" in msg
             or "login required" in msg
-            or "requested format is not available" in msg
-            and "private" in msg
+            or ("requested format is not available" in msg and "private" in msg)
         ):
             return MediaPrivateError(str(exc))
         if "not found" in msg or "does not exist" in msg or "removed" in msg or "404" in msg:

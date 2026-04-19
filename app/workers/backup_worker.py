@@ -59,7 +59,7 @@ async def _amain() -> int:
         await _run_backup()
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
     log.info("backup_worker_stopped")
     return 0

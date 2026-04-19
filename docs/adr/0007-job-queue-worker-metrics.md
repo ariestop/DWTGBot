@@ -305,6 +305,6 @@ data structure for no observable benefit.
 - [`docs/35-metrics-and-slo.md`](../35-metrics-and-slo.md) §3, §4, §7
 - [`docs/14-logging-observability.md`](../14-logging-observability.md) §5
 - [`ADR-0006`](0006-in-process-rate-limit-metrics-exporter.md) — the in-process exporter shape we extend
-- [`ADR-0001`](0001-bot-and-worker-deployment-split.md) — process split
+- [`ADR-0001`](0001-two-server-topology.md) — process split
 - [Prometheus naming](https://prometheus.io/docs/practices/naming/)
 - [arq queue model](https://arq-docs.helpmanual.io/) — `default_queue_name`, `ZCARD` semantics

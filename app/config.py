@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     TEMP_LINK_TOKEN_BYTES: int = Field(32, ge=16, le=128)
 
     # --- Internal API ---
-    API_HOST: str = "0.0.0.0"  # noqa: S104  intentional for containerized service
+    API_HOST: str = "0.0.0.0"
     API_PORT: int = 8080
     API_INTERNAL_TOKEN: str = ""
     # Dev/CI-only test enqueue endpoint. MUST be empty in production
@@ -295,7 +295,7 @@ class Settings(BaseSettings):
         if not self.METRICS_ENABLED:
             return []
         errors: list[str] = []
-        if self.is_production and self.METRICS_BIND_HOST in ("0.0.0.0", "::"):  # noqa: S104
+        if self.is_production and self.METRICS_BIND_HOST in ("0.0.0.0", "::"):
             errors.append(
                 f"METRICS_BIND_HOST={self.METRICS_BIND_HOST!r} in production "
                 "exposes /metrics publicly. Bind to 127.0.0.1 (and proxy via "

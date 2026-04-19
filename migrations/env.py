@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import get_settings
 from app.infrastructure.db.base import Base
-from app.infrastructure.db import models  # noqa: F401  (register models on Base)
 
 config = context.config
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 @dataclass(slots=True)
@@ -23,11 +23,11 @@ class TempLink:
     max_downloads: int
     downloads_count: int = 0
     is_active: bool = True
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def is_usable(self, *, now: datetime | None = None) -> bool:
-        moment = now or datetime.now(timezone.utc)
+        moment = now or datetime.now(UTC)
         return (
             self.is_active
             and self.expires_at > moment
@@ -36,6 +36,6 @@ class TempLink:
 
     def register_use(self) -> None:
         self.downloads_count += 1
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
         if self.downloads_count >= self.max_downloads:
             self.is_active = False

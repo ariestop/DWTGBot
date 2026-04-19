@@ -37,7 +37,7 @@ class FfmpegRunner:
         )
         try:
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             proc.kill()
             await proc.wait()
             raise FfmpegError(f"ffmpeg timed out after {self._timeout}s") from exc

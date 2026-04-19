@@ -21,7 +21,7 @@ rationale has been lost.
 
 Write an ADR **before** making the change when:
 
-- You're changing a [locked decision](../28-implementation-playbook.md#5-step-4--decide-if-this-is-locked--cross-cutting).
+- You're changing a [locked decision](0005-locked-architectural-assumptions.md#2-decision).
 - You're picking between options with significant trade-offs (no
   obviously-best choice).
 - You're introducing a major dependency (DB, queue, framework).

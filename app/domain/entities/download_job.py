@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.domain.enums import JobStatus, Platform
@@ -36,13 +36,13 @@ class DownloadJob:
     error_message: str | None = None
     retries_count: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
     def mark_processing(self) -> None:
         self.status = JobStatus.PROCESSING
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def mark_done(
         self,
@@ -59,13 +59,13 @@ class DownloadJob:
         self.mime_type = mime_type
         self.telegram_file_id = telegram_file_id
         self.public_url = public_url
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.updated_at = now
         self.completed_at = now
 
     def mark_failed(self, error_message: str) -> None:
         self.status = JobStatus.FAILED
         self.error_message = error_message[:1000]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.updated_at = now
         self.completed_at = now

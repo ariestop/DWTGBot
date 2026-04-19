@@ -34,13 +34,24 @@ select = [
     "RUF",
 ]
 ignore = [
-    "S101",   # asserts allowed in tests
-    "PLR0913", # too many args (acceptable in services)
-    "PLR2004", # magic numbers (covered by config policy)
+    "S101",     # asserts allowed in tests
+    "PLR0913",  # too many args (acceptable in services)
+    "PLR2004",  # magic numbers (covered by config policy)
+    # Project-wide intentional patterns:
+    "RUF001",   # Cyrillic letters in user-facing strings (Telegram bot is RU-first)
+    "UP042",    # `class X(str, Enum)` is required for SQLAlchemy/Pydantic interop;
+                # replacing with `StrEnum` changes runtime behaviour
+    "PLC0415",  # deferred imports are an intentional pattern for DI/composition
+    "ASYNC240", # sync pathlib in async funcs is acceptable here (no anyio.Path)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"app/tests/**" = ["S105", "S106", "PLR2004"]
+"app/tests/**" = ["S105", "S106", "S108", "S104", "PLR2004"]
+"app/config.py" = ["S104"]                    # 0.0.0.0 bind defaults inside containers
+"app/api/**" = ["B008"]                       # FastAPI Depends(...) idiom
+"app/bot/callbacks/download.py" = ["PLR0911", "PLR0912"]  # callback dispatch table
+"app/infrastructure/cache/redis_state_store.py" = ["S301"]  # we control both pickle ends
+"app/infrastructure/queue/worker_settings.py" = ["RUF012"]  # arq WorkerSettings uses mutable class defaults
 "deploy/**" = ["ALL"]
 
 [tool.ruff.format]

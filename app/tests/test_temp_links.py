@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -19,7 +19,7 @@ class TestTempLinkEntity:
             "token": "t" * 32,
             "job_id": 42,
             "file_path": "/var/lib/dwtgbot/storage/jobs/42/x.mp4",
-            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+            "expires_at": datetime.now(UTC) + timedelta(hours=1),
             "max_downloads": 3,
         }
         defaults.update(kwargs)
@@ -29,7 +29,7 @@ class TestTempLinkEntity:
         assert self._link().is_usable() is True
 
     def test_unusable_when_expired(self) -> None:
-        link = self._link(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+        link = self._link(expires_at=datetime.now(UTC) - timedelta(seconds=1))
         assert link.is_usable() is False
 
     def test_unusable_when_inactive(self) -> None:

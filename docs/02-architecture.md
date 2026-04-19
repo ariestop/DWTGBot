@@ -51,7 +51,7 @@ flowchart TB
   knows about both inner and outer layers. It instantiates concrete
   infrastructure and injects it into use cases.
 
-For the precise import-allowed matrix see [`03-project-structure.md`](03-project-structure.md#dependency-rules).
+For the precise import-allowed matrix see [`03-project-structure.md`](03-project-structure.md#7-dependency-rules--the-matrix).
 
 ---
 

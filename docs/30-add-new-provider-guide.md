@@ -166,7 +166,7 @@ synchronously (analyze) from the bot path, once asynchronously
 
 ### 2.4 Locked architectural rows that providers must respect
 
-From [`adr/0005-…` §2](adr/0005-locked-architectural-assumptions.md#2-the-twelve-locked-rows):
+From [`adr/0005-…` §2](adr/0005-locked-architectural-assumptions.md#2-decision):
 
 - **Row 4** — provider-based design.
 - **Row 5** — Redis queue (provider does not call queue directly).
@@ -767,7 +767,7 @@ old one and let `build_options` choose which to expose (gates by
 
 If your provider would naturally produce more options, group them
 under a "More qualities…" sub-menu (separate flow, F-Flow per
-[`29-` §10](29-feature-development-guide.md#10-developing-a-callback-driven-flow)).
+[`29-` §10](29-feature-development-guide.md#10-developing-a-new-callback-driven-flow)).
 
 ### 9.4 DO / DON'T
 

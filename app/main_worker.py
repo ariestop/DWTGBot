@@ -15,7 +15,7 @@ def main() -> None:
 
     from app.infrastructure.queue.worker_settings import WorkerSettings
 
-    run_worker(WorkerSettings)  # type: ignore[arg-type]
+    run_worker(WorkerSettings)
 
 
 if __name__ == "__main__":

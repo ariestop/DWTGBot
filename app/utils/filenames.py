@@ -23,26 +23,36 @@ def sanitize_filename(name: str, *, fallback: str = "media") -> str:
       - collapse whitespace
       - prevent leading dots / traversal artefacts
       - truncate to MAX_NAME_LEN, preserving extension
+
+    The extension is split off **before** sanitisation so the boundary
+    dot survives even when the stem is fully non-ASCII (and thus
+    collapsed to a single ``_`` placeholder).
     """
     if not name:
         return fallback
 
     cleaned = unicodedata.normalize("NFKD", name)
     cleaned = "".join(ch for ch in cleaned if not unicodedata.category(ch).startswith("C"))
-    cleaned = _SAFE_CHARS_RE.sub("_", cleaned)
     cleaned = _MULTI_DOT_RE.sub(".", cleaned)
-    cleaned = _WS_RE.sub(" ", cleaned).strip(" ._-")
 
-    if not cleaned:
-        cleaned = fallback
-
-    # Preserve extension if reasonable.
+    # Detect a "real" extension (short, alnum) and protect the boundary
+    # dot from later strip/collapse steps that might otherwise eat it.
+    stem, ext = cleaned, ""
     if "." in cleaned:
-        stem, _, ext = cleaned.rpartition(".")
-        if 0 < len(ext) <= 8 and ext.isalnum():
-            keep = MAX_NAME_LEN - len(ext) - 1
-            return f"{stem[:keep]}.{ext.lower()}" if keep > 0 else cleaned[:MAX_NAME_LEN]
-    return cleaned[:MAX_NAME_LEN]
+        head, _, tail = cleaned.rpartition(".")
+        if head and 0 < len(tail) <= 8 and tail.isalnum() and tail.isascii():
+            stem, ext = head, tail.lower()
+
+    stem = _SAFE_CHARS_RE.sub("_", stem)
+    stem = _WS_RE.sub(" ", stem).strip(" ._-")
+
+    if not stem:
+        stem = fallback
+
+    if ext:
+        keep = MAX_NAME_LEN - len(ext) - 1
+        return f"{stem[:keep]}.{ext}" if keep > 0 else f"{stem}.{ext}"[:MAX_NAME_LEN]
+    return stem[:MAX_NAME_LEN]
 
 
 def ensure_within(base: Path, candidate: Path) -> Path:

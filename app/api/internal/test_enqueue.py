@@ -50,7 +50,7 @@ class _EnqueueResponse(BaseModel):
     correlation_id: str
 
 
-def _composition(request: Request) -> "ApiComposition":
+def _composition(request: Request) -> ApiComposition:
     return request.app.state.composition
 
 

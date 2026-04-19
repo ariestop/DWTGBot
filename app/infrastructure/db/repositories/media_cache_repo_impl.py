@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -17,7 +17,7 @@ class SqlAlchemyMediaCacheRepository(MediaCacheRepository):
         self._sm = sessionmaker
 
     async def get_fresh(self, source_url: str) -> MediaCacheRecord | None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         async with self._sm() as session:
             stmt = select(MediaCacheModel).where(
                 MediaCacheModel.source_url == source_url,
@@ -54,7 +54,7 @@ class SqlAlchemyMediaCacheRepository(MediaCacheRepository):
             return _to_record(row)
 
     async def purge_expired(self) -> int:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         async with self._sm.begin() as session:
             stmt = delete(MediaCacheModel).where(MediaCacheModel.expires_at <= now)
             result = await session.execute(stmt)

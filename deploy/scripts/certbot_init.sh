@@ -17,6 +17,9 @@ DOMAIN="${DOMAIN:-${SERVER_NAME:-}}"
 [[ -n "${EMAIL:-}"  ]] || prompt_value EMAIL "Admin email for Let's Encrypt"
 
 log_info "Bootstrapping cert for ${DOMAIN} (email ${EMAIL})"
-cd "${DEPLOY_DIR}/nl2"
+cd "${DEPLOY_DIR}/nl2" || {
+  log_error "Cannot cd into ${DEPLOY_DIR}/nl2"
+  exit 1
+}
 DOMAIN="${DOMAIN}" EMAIL="${EMAIL}" STAGING="${STAGING:-0}" \
   bash "${DEPLOY_DIR}/certbot/init-letsencrypt.sh"

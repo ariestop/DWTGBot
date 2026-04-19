@@ -73,7 +73,7 @@ class TestSettingsValidation:
         monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
         monkeypatch.setenv("API_INTERNAL_TOKEN", "x")
         monkeypatch.setenv("METRICS_ENABLED", "true")
-        monkeypatch.setenv("METRICS_BIND_HOST", "0.0.0.0")  # noqa: S104
+        monkeypatch.setenv("METRICS_BIND_HOST", "0.0.0.0")
         get_settings.cache_clear()
         errors = get_settings().validate_runtime(require_storage=False, require_tools=False)
         assert any("METRICS_BIND_HOST" in e for e in errors)
@@ -84,7 +84,7 @@ class TestSettingsValidation:
         monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
         monkeypatch.setenv("API_INTERNAL_TOKEN", "x")
         monkeypatch.setenv("METRICS_ENABLED", "false")
-        monkeypatch.setenv("METRICS_BIND_HOST", "0.0.0.0")  # noqa: S104
+        monkeypatch.setenv("METRICS_BIND_HOST", "0.0.0.0")
         get_settings.cache_clear()
         errors = get_settings().validate_runtime(require_storage=False, require_tools=False)
         assert not any("METRICS_BIND_HOST" in e for e in errors)

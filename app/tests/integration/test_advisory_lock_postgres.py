@@ -41,10 +41,6 @@ from app.domain.entities.download_job import DownloadJob
 from app.domain.entities.temp_link import TempLink
 from app.domain.enums import JobStatus, Platform
 from app.infrastructure.db.base import Base
-from app.infrastructure.db.models import (  # noqa: F401  ensure models are registered on Base
-    DownloadJobModel,
-    TempLinkModel,
-)
 from app.infrastructure.db.repositories.jobs_repo_impl import SqlAlchemyJobsRepository
 from app.infrastructure.db.repositories.temp_links_repo_impl import (
     SqlAlchemyTempLinksRepository,

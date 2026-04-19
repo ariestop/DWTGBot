@@ -26,5 +26,5 @@ async def bind_request_context(update: Update, context: ContextTypes.DEFAULT_TYP
     # within a single update because PTB runs each update in its own task.
     with bind_context(request_id=request_id, user_id=user_id, chat_id=chat_id, update_id=update_id):
         _logger.debug(
-            "update_received", update_type=update.effective_message and "message" or "other"
+            "update_received", update_type=(update.effective_message and "message") or "other"
         )

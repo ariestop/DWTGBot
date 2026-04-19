@@ -79,7 +79,9 @@ class BotComposition:
             if stop is not None:
                 await stop()
         await self.arq_pool.close()
-        await self.core.redis.aclose()
+        # ``aclose`` is the redis-py 5.x async-shutdown method; types-redis
+        # 4.6 stubs predate it, so mypy needs a narrow ignore here.
+        await self.core.redis.aclose()  # type: ignore[attr-defined]
         await self.core.engine.dispose()
 
 
@@ -101,7 +103,7 @@ class WorkerComposition:
             if stop is not None:
                 await stop()
         await self.sender.shutdown()
-        await self.core.redis.aclose()
+        await self.core.redis.aclose()  # type: ignore[attr-defined]
         await self.core.engine.dispose()
 
 
@@ -126,7 +128,7 @@ class ApiComposition:
                 await stop()
         if self.arq_pool is not None:
             await self.arq_pool.close()
-        await self.core.redis.aclose()
+        await self.core.redis.aclose()  # type: ignore[attr-defined]
         await self.core.engine.dispose()
 
 
@@ -224,15 +226,15 @@ def _build_metrics(
     # Lazy imports: prometheus-client / uvicorn are required only when
     # METRICS_ENABLED=true. Keeping them out of the top-level import set
     # lets a slimmed-down deploy (or tests) skip the dependency entirely.
-    from prometheus_client import CollectorRegistry  # noqa: PLC0415
+    from prometheus_client import CollectorRegistry
 
-    from app.infrastructure.metrics.prometheus_job_metrics import (  # noqa: PLC0415
+    from app.infrastructure.metrics.prometheus_job_metrics import (
         PrometheusJobMetrics,
     )
-    from app.infrastructure.metrics.prometheus_metrics import (  # noqa: PLC0415
+    from app.infrastructure.metrics.prometheus_metrics import (
         PrometheusRateLimitMetrics,
     )
-    from app.infrastructure.metrics.server import MetricsServer  # noqa: PLC0415
+    from app.infrastructure.metrics.server import MetricsServer
 
     registry = CollectorRegistry()
     rl_metrics = PrometheusRateLimitMetrics(
@@ -260,10 +262,10 @@ def _build_queue_sampler(
     if not settings.METRICS_ENABLED:
         return None
 
-    from app.infrastructure.metrics.queue_depth_sampler import (  # noqa: PLC0415
+    from app.infrastructure.metrics.queue_depth_sampler import (
         QueueDepthSampler,
     )
-    from app.infrastructure.queue.arq_pool import WORKER_QUEUE_NAME  # noqa: PLC0415
+    from app.infrastructure.queue.arq_pool import WORKER_QUEUE_NAME
 
     return QueueDepthSampler(
         pool=pool,

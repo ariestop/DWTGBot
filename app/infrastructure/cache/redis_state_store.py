@@ -10,7 +10,7 @@ to msgpack with explicit dumpers per type.
 
 from __future__ import annotations
 
-import pickle  # noqa: S403  trusted in/out, see module docstring
+import pickle
 
 from redis.asyncio import Redis
 
@@ -35,7 +35,7 @@ class RedisRequestStateStore(RequestStateStore):
         data = await self._r.get(self._key(request_id))
         if data is None:
             return None
-        return pickle.loads(data)  # noqa: S301  trusted
+        return pickle.loads(data)
 
     async def delete(self, request_id: str) -> None:
         await self._r.delete(self._key(request_id))
