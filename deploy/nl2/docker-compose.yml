@@ -86,6 +86,14 @@ services:
       - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ../nginx/snippets:/etc/nginx/snippets:ro
       - ../nginx/conf.d/media.conf.template:/etc/nginx/templates/media.conf.template:ro
+      # Mask the stock default.conf shipped in nginx:alpine. Without this
+      # the image's default vhost (``server_name localhost``, listen :80)
+      # gets picked up by ``include /etc/nginx/conf.d/*.conf`` — and since
+      # it's first alphabetically it becomes the implicit default_server on
+      # :80, so any request with a non-matching Host header (ACME probes
+      # hitting by IP, curl to 127.0.0.1, opportunistic scanners) lands on
+      # the stock "Welcome to nginx" page instead of our media vhost.
+      - /dev/null:/etc/nginx/conf.d/default.conf:ro
       - storage:/var/lib/dwtgbot/storage:ro
       - letsencrypt_conf:/etc/letsencrypt:ro
       - letsencrypt_www:/var/www/certbot:ro
