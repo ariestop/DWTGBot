@@ -23,6 +23,7 @@ flow beyond the logged role name.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.config import Settings
@@ -67,8 +68,11 @@ def configure_sentry(settings: Settings, *, role: str) -> None:
             # stdlib; the logging integration captures ERROR+ as
             # events without us sprinkling ``capture_exception`` at
             # every ``_logger.exception`` site.
+            #
+            # sentry-sdk 2.x expects ``event_level`` as a stdlib
+            # ``logging`` int, not a level name string.
             integrations=[
-                LoggingIntegration(level=None, event_level="ERROR"),
+                LoggingIntegration(level=None, event_level=logging.ERROR),
             ],
             traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
             # PII is forwarded by default as of sentry-sdk 2.x — keep
