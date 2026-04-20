@@ -120,6 +120,7 @@ Grouped by concern. **Bold** = required, no safe default.
 | `API_PORT` | int | `8080` | Container-internal; never published |
 | `API_INTERNAL_TOKEN` | str | empty | **Required in production** for internal admin endpoints |
 | `INTERNAL_TEST_TOKEN` | str | empty | **MUST be empty in production.** Non-empty value enables `POST /internal/test/enqueue` for capacity tests (`docs/37-load-and-capacity.md` §6); rejected at startup when `APP_ENV=production` |
+| `API_VALIDATE_STORAGE` | bool | `true` | If `true`, `main_api` runs `validate_runtime(require_storage=True)` like the worker. NL-1 control-plane API only exposes `/healthz` — set **`false`** in `deploy/nl1/.env` (see `deploy/nl1/.env.example`). NL-2 media-plane API **must** keep `true` so a broken volume fails fast. |
 | `XACCEL_ENABLED` | bool | `false` | S6 audit fix: trust gate for nginx `X-Accel-Redirect` on `GET /api/v1/dl/{token}`. The api only emits `X-Accel-Redirect` when **both** the loopback `X-Internal-XAccel: 1` header (set unconditionally by `deploy/nginx/conf.d/media.conf.template`) *and* `XACCEL_ENABLED=true` are present. Flip to `true` only on hosts that actually have the bundled nginx in front of the api (NL-2). Leaving it `false` makes the api stream bytes itself — slower but safer if nginx is removed/misconfigured. |
 
 ### Worker / queue

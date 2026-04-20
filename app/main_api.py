@@ -18,7 +18,10 @@ def main() -> int:
     configure_sentry(settings, role="api")
     log = get_logger("dwtgbot.main_api")
 
-    errors = settings.validate_runtime(require_storage=True, require_tools=False)
+    errors = settings.validate_runtime(
+        require_storage=settings.API_VALIDATE_STORAGE,
+        require_tools=False,
+    )
     if errors:
         for err in errors:
             log.error("api_startup_check_failed", reason=err)

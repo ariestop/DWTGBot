@@ -25,16 +25,19 @@ check() {
 
 log_step "Toolchain"
 check "docker present"          has_command docker
-check "docker compose present"  bash -c '"${DOCKER_COMPOSE[@]:-docker compose}" version'
+# ``DOCKER_COMPOSE`` array expansion inside ``bash -c '...'`` breaks the
+# probe — call the plugin form directly (same as operators type by hand).
+check "docker compose present"  bash -c 'docker compose version >/dev/null 2>&1'
 check "curl present"            has_command curl
 
 if [[ "${TARGET}" == "auto" || "${TARGET}" == "nl1" ]]; then
   if [[ -f "${DEPLOY_DIR}/nl1/.env" ]]; then
     log_step "NL-1 stack"
     check "compose config valid"     compose_nl1 config -q
-    check "postgres healthy"         bash -c 'compose_nl1 ps --status running postgres | grep -q dwtgbot_postgres'
-    check "redis healthy"            bash -c 'compose_nl1 ps --status running redis    | grep -q dwtgbot_redis'
-    check "bot running"              bash -c 'compose_nl1 ps --status running bot      | grep -q dwtgbot_bot'
+    # Prefer Docker health status; fall back to running (no healthcheck).
+    check "postgres healthy"         bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_postgres 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
+    check "redis healthy"            bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_redis 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
+    check "bot running"              bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_bot 2>/dev/null | grep -qx running'
     check "internal /healthz"        bash -c 'compose_nl1 exec -T api curl -fsS http://127.0.0.1:8080/healthz'
   else
     log_warn "NL-1 .env not found, skipping NL-1 checks"
@@ -45,9 +48,9 @@ if [[ "${TARGET}" == "auto" || "${TARGET}" == "nl2" ]]; then
   if [[ -f "${DEPLOY_DIR}/nl2/.env" ]]; then
     log_step "NL-2 stack"
     check "compose config valid"     compose_nl2 config -q
-    check "api running"              bash -c 'compose_nl2 ps --status running api     | grep -q dwtgbot_api'
-    check "worker running"           bash -c 'compose_nl2 ps --status running worker  | grep -q dwtgbot_worker'
-    check "nginx running"            bash -c 'compose_nl2 ps --status running nginx   | grep -q dwtgbot_nginx'
+    check "api running"              bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_api 2>/dev/null | grep -qx running'
+    check "worker running"           bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_worker 2>/dev/null | grep -qx running'
+    check "nginx running"            bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_nginx 2>/dev/null | grep -qx running'
     check "internal /healthz"        bash -c 'compose_nl2 exec -T api curl -fsS http://127.0.0.1:8080/healthz'
     check "internal /readyz"         bash -c 'compose_nl2 exec -T api curl -fsS http://127.0.0.1:8080/readyz'
     check "nginx /healthz"           bash -c 'compose_nl2 exec -T nginx wget -qO- http://127.0.0.1/healthz | grep -q ok'

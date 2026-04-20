@@ -137,6 +137,11 @@ class Settings(BaseSettings):
     # Dev/CI-only test enqueue endpoint. MUST be empty in production
     # (validated by ``Settings.validate_runtime`` — see app/config.py).
     INTERNAL_TEST_TOKEN: str = ""
+    # NL-1 control-plane API serves only internal /healthz; it does not
+    # stream downloads from disk. Set ``false`` on NL-1 (same idea as
+    # ``main_bot`` using ``require_storage=False``). NL-2 media-plane API
+    # MUST keep the default ``true`` so misconfigured storage fails fast.
+    API_VALIDATE_STORAGE: bool = True
 
     # --- Worker / queue ---
     WORKER_CONCURRENCY: int = Field(2, ge=1, le=64)

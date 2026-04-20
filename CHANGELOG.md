@@ -12,6 +12,23 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — NL-1 API crash loop (storage validation)
+
+The internal API on NL-1 only serves ``/healthz``; it does not need
+writable media dirs like the media-plane API on NL-2. ``main_api`` used
+``validate_runtime(require_storage=True)`` while ``main_bot`` used
+``require_storage=False``, so a control-plane host could pass the bot
+checks but fail the API checks and restart forever.
+
+- **`API_VALIDATE_STORAGE`** (default ``true``): NL-1 sets ``false`` in
+  ``deploy/nl1/.env.example``; NL-2 keeps the default.
+- **`deploy/scripts/healthcheck.sh`**: fixed the broken ``docker compose``
+  probe (array expansion inside ``bash -c``); NL-1 postgres/redis/bot
+  checks now use ``docker inspect`` health/status instead of fragile
+  ``compose ps --status`` greps.
+- **`deploy/scripts/deploy_update.sh`**: skip pre-deploy backup when
+  ``dwtgbot_postgres`` is not running (first boot).
+
 ### Fixed — GHCR image names must be lowercase
 
 Docker rejects references like ``ghcr.io/owner/DWTGBot-bot`` with

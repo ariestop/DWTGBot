@@ -48,7 +48,11 @@ validate_config() {
 pre_backup() {
   if [[ "${TARGET}" == "nl1" ]]; then
     log_step "Pre-deploy backup"
-    bash "${SCRIPT_DIR}/backup.sh" || log_warn "Backup failed — continuing under user discretion"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx dwtgbot_postgres; then
+      bash "${SCRIPT_DIR}/backup.sh" || log_warn "Backup failed — continuing under user discretion"
+    else
+      log_info "Postgres container not running — skipping pre-deploy backup (first boot?)"
+    fi
   fi
 }
 
