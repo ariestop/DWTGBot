@@ -109,12 +109,20 @@ class InstagramProvider(BaseProvider):
         out_dir = self._target_path(target_dir)
 
         playlist_items = self._compute_playlist_items(option, url=url)
+        # Instagram's MP4s routinely pass the ffprobe "looks H.264/AAC"
+        # check yet still freeze on mobile Telegram -- typical culprits
+        # are fragmented/segmented mp4 (pulled from a DASH manifest),
+        # High@5.x profile, or unusual GOP spacing. A forced transcode
+        # flattens the output to a known-good H.264 Main@4.0 mp4 that
+        # mobile hardware decoders handle reliably. The slow path is
+        # only invoked for the video items inside the batch.
         files = await self._ytdlp.download(
             url,
             format_spec="bestvideo*+bestaudio/best",
             target_dir=out_dir,
             merge_output_format="mp4",
             extra_opts=({"playlist_items": playlist_items} if playlist_items else None),
+            force_transcode=True,
         )
 
         if option.kind is MediaKind.PHOTO:

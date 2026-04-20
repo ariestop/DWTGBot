@@ -106,7 +106,13 @@ async def _probe_video_codecs(
     return (vcodec, acodec, pix_fmt)
 
 
-async def _ensure_mobile_compatible(path: Path, ffmpeg_bin: str, ffprobe_bin: str | None) -> None:
+async def _ensure_mobile_compatible(
+    path: Path,
+    ffmpeg_bin: str,
+    ffprobe_bin: str | None,
+    *,
+    force_transcode: bool = False,
+) -> None:
     """Rewrite ``path`` so Telegram mobile clients can play it.
 
     Fast path (when the probe shows H.264 video + AAC audio + yuv420p):
@@ -120,6 +126,13 @@ async def _ensure_mobile_compatible(path: Path, ffmpeg_bin: str, ffprobe_bin: st
     2 vCPU at 1080p. Quality is visually indistinguishable at typical
     Telegram viewing sizes. CRF 23 is libx264's default sweet spot.
 
+    ``force_transcode`` routes into the slow path unconditionally. Use
+    it for sources where codec names look fine to ffprobe but the
+    container still isn't mobile-safe (e.g. Instagram's fragmented
+    MP4, High@5.x profile, unusual GOPs) -- a belt-and-suspenders
+    remux to a known-good mp4 reliably fixes the "frozen first frame"
+    symptom on phones.
+
     Any failure leaves the original file untouched (we log and move
     on) so a post-step regression cannot break downloads that used to
     reach the user.
@@ -130,7 +143,7 @@ async def _ensure_mobile_compatible(path: Path, ffmpeg_bin: str, ffprobe_bin: st
     vcodec = acodec = pix_fmt = None
     if ffprobe_bin:
         vcodec, acodec, pix_fmt = await _probe_video_codecs(path, ffprobe_bin)
-    needs_transcode = (
+    needs_transcode = force_transcode or (
         (vcodec is not None and vcodec not in _MOBILE_OK_VCODECS)
         or (acodec is not None and acodec not in _MOBILE_OK_ACODECS)
         or (pix_fmt is not None and pix_fmt not in _MOBILE_OK_PIX_FMTS)
@@ -258,6 +271,7 @@ class YtDlpRunner:
         postprocessors: list[dict[str, Any]] | None = None,
         merge_output_format: str | None = None,
         extra_opts: dict[str, Any] | None = None,
+        force_transcode: bool = False,
     ) -> list[Path]:
         """Download the media. Returns list of resulting file paths in target_dir."""
         host = _host_of(url)
@@ -324,7 +338,12 @@ class YtDlpRunner:
         if resolved_ffmpeg:
             for f in files:
                 if f.suffix.lower() in _FASTSTART_EXTS:
-                    await _ensure_mobile_compatible(f, resolved_ffmpeg, resolved_ffprobe)
+                    await _ensure_mobile_compatible(
+                        f,
+                        resolved_ffmpeg,
+                        resolved_ffprobe,
+                        force_transcode=force_transcode,
+                    )
         return files
 
     async def _trip_if_open(self, host: str) -> None:
