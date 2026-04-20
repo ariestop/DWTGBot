@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -19,14 +20,31 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+
+
+def _database_url_for_migrations() -> str:
+    """Resolve DB URL for Alembic.
+
+    Prefer ``os.environ["DATABASE_URL"]`` so Docker Compose-injected values
+    always win over any optional ``.env`` file in the process working directory
+    (pydantic-settings also merges env + dotenv; this path is explicit for
+    migrations).
+    """
+    env_url = (os.environ.get("DATABASE_URL") or "").strip()
+    if env_url:
+        return env_url
+    return settings.database_url
+
+
+_db_url = _database_url_for_migrations()
+config.set_main_option("sqlalchemy.url", _db_url)
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=_db_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -52,7 +70,7 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        url=settings.database_url,
+        url=_db_url,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
