@@ -5,12 +5,39 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+from typing import Any
+
+from telegram.ext import Application
 
 from app.bot.application import build_application
-from app.composition import build_bot
+from app.composition import BotComposition, build_bot
 from app.config import get_settings
 from app.logging_config import configure_logging, get_logger
 from app.observability.sentry import configure_sentry
+
+
+async def _finalize_bot_run(
+    application: Application,
+    composition: BotComposition,
+    *,
+    app_initialized: bool,
+    log: Any,
+) -> None:
+    log.info("bot_stopping")
+    try:
+        if application.updater is not None:
+            try:
+                await application.updater.stop()
+            except RuntimeError as exc:
+                # If ``initialize()`` failed, the updater was never started.
+                if "not running" not in str(exc).lower():
+                    raise
+        if app_initialized:
+            await application.stop()
+    finally:
+        await application.shutdown()
+        await composition.aclose()
+    log.info("bot_stopped")
 
 
 async def _amain() -> int:
@@ -27,6 +54,7 @@ async def _amain() -> int:
 
     composition = await build_bot(settings)
     application = build_application(settings, composition.container)
+    app_initialized = False
 
     log.info("bot_starting", env=settings.APP_ENV.value)
     try:
@@ -44,6 +72,7 @@ async def _amain() -> int:
             if start is not None:
                 await start()
         await application.initialize()
+        app_initialized = True
         await application.start()
         # ``application.updater`` is typed as ``Updater | None`` because PTB
         # supports webhook-only setups; we always run polling so it must be
@@ -62,15 +91,12 @@ async def _amain() -> int:
 
         await stop_event.wait()
     finally:
-        log.info("bot_stopping")
-        try:
-            if application.updater is not None:
-                await application.updater.stop()
-            await application.stop()
-        finally:
-            await application.shutdown()
-            await composition.aclose()
-        log.info("bot_stopped")
+        await _finalize_bot_run(
+            application,
+            composition,
+            app_initialized=app_initialized,
+            log=log,
+        )
     return 0
 
 
