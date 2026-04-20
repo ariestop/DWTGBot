@@ -73,7 +73,7 @@ class DeliveryService:
             size = f.stat().st_size
             if size <= max_tg:
                 file_id = await self._upload_one(
-                    chat_id, f, kind=result.kind, caption=_caption(result)
+                    chat_id, f, kind=result.kind, caption=_caption(result, size)
                 )
                 return DeliveryOutcome(
                     method=DeliveryMethod.TELEGRAM_UPLOAD,
@@ -91,7 +91,7 @@ class DeliveryService:
             for f in files:
                 fid = await self._upload_one(chat_id, f, kind=_infer_kind(f), caption=None)
                 primary_file_id = primary_file_id or fid
-            await self._sender.send_text(chat_id, _caption(result))
+            await self._sender.send_text(chat_id, _caption(result, result.total_size_bytes))
             return DeliveryOutcome(
                 method=DeliveryMethod.TELEGRAM_UPLOAD,
                 public_url=None,
@@ -112,7 +112,7 @@ class DeliveryService:
         _, url = await self._temp_links.issue(job_id=job_id, file_path=str(file))
         await self._sender.send_text(
             chat_id,
-            f"📦 Файл слишком большой для Telegram.\n"
+            f"📦 Файл слишком большой для Telegram ({_format_size(size)}).\n"
             f'Скачать (TTL ограничен): <a href="{url}">{file.name}</a>',
         )
         _logger.info("delivered_via_temp_link", job_id=job_id, size=size, file=file.name)
@@ -136,12 +136,23 @@ class DeliveryService:
         return await self._sender.send_document(chat_id, file, caption)
 
 
-def _caption(result: DownloadResult) -> str:
-    return f"<b>{_escape(result.title)}</b>"
+def _caption(result: DownloadResult, size_bytes: int) -> str:
+    return f"<b>{_escape(result.title)}</b>\n{_format_size(size_bytes)}"
 
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _format_size(n: int) -> str:
+    """Human-readable size for captions (binary units, 1 decimal place)."""
+    if n < 1024:
+        return f"{n} B"
+    unit_pairs = (("KB", 1024), ("MB", 1024**2), ("GB", 1024**3))
+    for name, factor in reversed(unit_pairs):
+        if n >= factor:
+            return f"{n / factor:.1f} {name}"
+    return f"{n} B"
 
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
