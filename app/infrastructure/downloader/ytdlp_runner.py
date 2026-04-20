@@ -160,14 +160,15 @@ async def _ensure_mobile_compatible(
         #   * ``-r 30`` caps the frame rate per Telegram's spec ("max 30
         #     fps") — dropping to 30 fps is cheap at ``veryfast`` and
         #     avoids the 60-fps mobile-decoder stall altogether.
-        #   * ``-bsf:v dump_extra=freq=keyframe`` writes SPS/PPS in-band
-        #     before every IDR. Out-of-band parameter sets land in the
-        #     ``avcC`` box only, which some mobile decoders don't consult
-        #     before demanding a keyframe — the classic "frozen first
-        #     frame, audio plays" symptom.
         #   * 48 kHz / stereo AAC is the codec pair Telegram's own
         #     uploader normalises to; it avoids edge cases with 44.1 kHz
         #     or mono tracks on older Androids.
+        #
+        # We deliberately do NOT set ``-bsf:v dump_extra``: the MP4
+        # muxer stores SPS/PPS in the ``avcC`` box automatically and
+        # rejects ("Error initializing the muxer: Invalid argument")
+        # streams that also carry them inline. ``dump_extra`` is meant
+        # for raw/TS outputs.
         args = [
             "-c:v",
             "libx264",
@@ -183,8 +184,6 @@ async def _ensure_mobile_compatible(
             "23",
             "-r",
             "30",
-            "-bsf:v",
-            "dump_extra=freq=keyframe",
             "-c:a",
             "aac",
             "-b:a",
