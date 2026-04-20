@@ -105,7 +105,13 @@ latest_local_dump() {
 }
 
 main() {
-  if [[ -n "${POSTGRES_HOST:-}" && "${POSTGRES_HOST}" != "postgres" ]]; then
+  # Prefer in-container mode whenever ``pg_dump`` is available *and*
+  # ``POSTGRES_HOST`` is set. This covers both the standard NL-1
+  # ``backup`` container (``POSTGRES_HOST=postgres`` — docker network
+  # name) and any remote Postgres setup (``POSTGRES_HOST=<NL1_IP>``).
+  # Falling back to ``run_on_host_mode`` only when ``pg_dump`` is
+  # missing is a safer signal that we are running on the bare host.
+  if has_command pg_dump && [[ -n "${POSTGRES_HOST:-}" ]]; then
     run_in_container_mode
   elif has_command docker && [[ -f "${DEPLOY_DIR}/nl1/docker-compose.yml" ]]; then
     run_on_host_mode
