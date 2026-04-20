@@ -306,36 +306,77 @@ cp deploy/templates/env.template deploy/nl1/.env
 # OR via installer:  bash deploy/scripts/install.sh  →  4) Create .env from template
 ```
 
+#### 5.1.1 Postgres and Redis — you do **not** install them on the host
+
+On NL-1, **PostgreSQL** and **Redis** are **Docker images** started by
+`deploy/nl1/docker-compose.yml`. You never run `apt install postgresql`
+or `apt install redis-server` for this stack.
+
+What you **do** set in `deploy/nl1/.env` are:
+
+| Variable | Meaning |
+|---|---|
+| `POSTGRES_PASSWORD` | A **secret string you invent** (or generate). The `postgres` container uses it on first volume init. It is **not** a password you “get from somewhere” — you choose it once and keep it. |
+| `DATABASE_URL` | The **same** password, embedded in the URL the app uses. Format: `postgresql+asyncpg://USER:PASSWORD@postgres:5432/DB` — host **`postgres`** is the Compose service name, not `127.0.0.1`. |
+| `REDIS_PASSWORD` | Another secret (can differ from Postgres). If empty, Redis runs **without** `requirepass` (OK for isolated dev; **set a strong password in production** before NL-2 connects). |
+| `REDIS_URL` | If `REDIS_PASSWORD` is set: `redis://:PASSWORD@redis:6379/0` (note the `:` before the password). If no password: `redis://redis:6379/0`. |
+
+**Rule:** the password in `DATABASE_URL` after the second `:` must **exactly** match `POSTGRES_PASSWORD`. If you change one, change both.
+
+**First-time recipe** (installer already copied
+`deploy/nl1/.env.example` → `deploy/nl1/.env`). Run on the server from the
+repo root — it generates secrets and rewrites the four lines (adjust path
+if your clone is not `/opt/dwtgbot`):
+
+```bash
+cd /opt/dwtgbot   # or: cd /opt/DWTGBot
+
+PG_PASS="$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-32)"
+RD_PASS="$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-32)"
+
+# URL-encode safety: the generator above avoids +/= ; if you paste a manual
+# password with @ # : / etc., you must percent-encode it inside DATABASE_URL.
+
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${PG_PASS}|"           deploy/nl1/.env
+sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql+asyncpg://dwtgbot:${PG_PASS}@postgres:5432/dwtgbot|" deploy/nl1/.env
+sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${RD_PASS}|"                 deploy/nl1/.env
+sed -i "s|^REDIS_URL=.*|REDIS_URL=redis://:${RD_PASS}@redis:6379/0|"     deploy/nl1/.env
+
+chmod 0600 deploy/nl1/.env
+printf '\nSave these for NL-2 (same byte-for-byte):\n  POSTGRES_PASSWORD=%s\n  REDIS_PASSWORD=%s\n' "$PG_PASS" "$RD_PASS"
+```
+
+Then set `BOT_TOKEN`, `BOT_ADMIN_IDS`, `API_INTERNAL_TOKEN`, `IMAGE_*`,
+`PUBLIC_BASE_URL`, and `docker login ghcr.io` as in the rest of §5.1.
+
 Edit `deploy/nl1/.env` (full reference in §7):
 
 ```bash
-# Required values for NL-1:
-sed -i "s|^APP_ROLE=.*|APP_ROLE=control-plane|"                              deploy/nl1/.env
-sed -i "s|^APP_ENV=.*|APP_ENV=production|"                                   deploy/nl1/.env
+# Required values for NL-1 (paths assume repo at /opt/dwtgbot or /opt/DWTGBot)
+sed -i "s|^APP_ROLE=.*|APP_ROLE=all|"                                      deploy/nl1/.env
+sed -i "s|^APP_ENV=.*|APP_ENV=production|"                                 deploy/nl1/.env
 
 # Telegram
-sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=<your_botfather_token>|"                   deploy/nl1/.env
-sed -i "s|^BOT_ADMIN_IDS=.*|BOT_ADMIN_IDS=11111111,22222222|"                deploy/nl1/.env
+sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=<your_botfather_token>|"                  deploy/nl1/.env
+sed -i "s|^BOT_ADMIN_IDS=.*|BOT_ADMIN_IDS=11111111,22222222|"               deploy/nl1/.env
 
-# Strong secrets (generate ONCE, share with NL-2)
-PG_PASS=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-32)
-RD_PASS=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-32)
+# Postgres + Redis: use §5.1.1 one-liner block (sets POSTGRES_PASSWORD,
+# DATABASE_URL, REDIS_PASSWORD, REDIS_URL). If you created .env from
+# deploy/templates/env.template instead, substitute __PG_PASS__ everywhere:
+#   sed -i "s|__PG_PASS__|${PG_PASS}|g" deploy/nl1/.env
+
 API_TOK=$(openssl rand -hex 32)
+sed -i "s|^API_INTERNAL_TOKEN=.*|API_INTERNAL_TOKEN=${API_TOK}|" deploy/nl1/.env
+# If .env still has __API_TOKEN__ from env.template:
+sed -i "s|__API_TOKEN__|${API_TOK}|g" deploy/nl1/.env 2>/dev/null || true
 
-sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${PG_PASS}|"               deploy/nl1/.env
-sed -i "s|__PG_PASS__|${PG_PASS}|g"                                          deploy/nl1/.env
-sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${RD_PASS}|"                     deploy/nl1/.env
-sed -i "s|^API_INTERNAL_TOKEN=.*|API_INTERNAL_TOKEN=${API_TOK}|; s|__API_TOKEN__|${API_TOK}|" \
-                                                                             deploy/nl1/.env
-
-# Public URL of the media plane (NL-2)
-sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=https://media.example.com|"    deploy/nl1/.env
-sed -i "s|^SERVER_NAME=.*|SERVER_NAME=media.example.com|"                    deploy/nl1/.env
+# Public URL of the media plane (NL-2) — must be https:// in production
+sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=https://media.example.com|"   deploy/nl1/.env
 
 chmod 0600 deploy/nl1/.env
 ```
 
-Save `${PG_PASS}`, `${RD_PASS}`, `${API_TOK}` somewhere safe — you'll paste them into NL-2's `.env` (§6.1) verbatim.
+After running §5.1.1, save `PG_PASS`, `RD_PASS`, and `API_TOK` somewhere safe — you'll paste Postgres/Redis passwords into NL-2's `.env` (§6.1) verbatim.
 
 ### 5.2 Validate config
 

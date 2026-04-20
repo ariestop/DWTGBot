@@ -12,6 +12,17 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Docs — NL-1 Postgres/Redis (first-time operators)
+
+- **`docs/20-deployment.md`** §5.1.1: explains that Postgres and Redis are
+  **Docker services** on NL-1 (no `apt install`), what each env var
+  means, the rule that `DATABASE_URL` must match `POSTGRES_PASSWORD`, and
+  the `REDIS_URL` shape with/without a password. Includes a copy-paste
+  `openssl` + `sed` recipe aligned with `deploy/nl1/.env.example`.
+- The §5.1 shell snippet was corrected (`APP_ROLE=all` instead of an
+  invalid `control-plane` value; `REDIS_URL` is no longer omitted when
+  using the recipe from §5.1.1).
+
 ### Docs — Deploy readiness sweep
 
 Closes the paper gap left by the S1-S10 + L-series code changes: the
