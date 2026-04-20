@@ -10,12 +10,38 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import MutableMapping
 from typing import Any
 
 import structlog
 from structlog.types import Processor
 
 from app.config import Settings
+
+
+def _add_logger_name_compat(
+    logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """Like ``structlog.stdlib.add_logger_name`` but safe with ``PrintLogger``.
+
+    Native structlog with ``PrintLoggerFactory`` passes a ``PrintLogger`` that
+    has no ``.name`` (structlog 24.x), so ``add_logger_name`` raises
+    ``AttributeError``. Stdlib ``LogRecord``s should set ``_record`` (see
+    :class:`_StdlibFormatter`) so we take ``record.name`` first.
+    """
+    rec = event_dict.get("_record")
+    if rec is not None:
+        event_dict["logger"] = getattr(rec, "name", "unknown")
+        return event_dict
+    if logger is None:
+        event_dict.setdefault("logger", "dwtgbot")
+        return event_dict
+    name = getattr(logger, "name", None)
+    if isinstance(name, str) and name:
+        event_dict["logger"] = name
+        return event_dict
+    event_dict.setdefault("logger", "dwtgbot")
+    return event_dict
 
 
 def configure_logging(settings: Settings) -> None:
@@ -27,7 +53,7 @@ def configure_logging(settings: Settings) -> None:
     shared_processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
-        structlog.stdlib.add_logger_name,
+        _add_logger_name_compat,
         timestamper,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
@@ -70,6 +96,9 @@ class _StdlibFormatter(logging.Formatter):
             "event": record.getMessage(),
             "logger": record.name,
             "level": record.levelname.lower(),
+            # So ``_add_logger_name_compat`` matches ``structlog.stdlib.add_logger_name``
+            # when ``logger`` is None (stdlib bridge passes no bound logger).
+            "_record": record,
         }
         if record.exc_info:
             event_dict["exc_info"] = record.exc_info

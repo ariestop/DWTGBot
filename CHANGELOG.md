@@ -12,6 +12,18 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — API crash: ``PrintLogger`` has no ``.name`` (structlog)
+
+``configure_logging`` used ``PrintLoggerFactory`` together with
+``structlog.stdlib.add_logger_name``, which reads ``logger.name``. Native
+``PrintLogger`` has no ``name``, so ``main_api`` crashed on the first
+``log.info`` with ``AttributeError`` (seen on Python 3.14 in Docker).
+
+- Replaced with ``_add_logger_name_compat`` (handles ``PrintLogger``,
+  ``None`` from the stdlib bridge, and ``_record`` when present).
+- ``_StdlibFormatter`` now passes ``_record`` into the processor chain so
+  third-party loggers resolve correctly.
+
 ### Fixed — NL-1 API crash loop (storage validation)
 
 The internal API on NL-1 only serves ``/healthz``; it does not need
