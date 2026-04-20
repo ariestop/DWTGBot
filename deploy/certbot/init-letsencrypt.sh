@@ -58,15 +58,20 @@ $COMPOSE run --rm --entrypoint "\
 echo "Starting nginx with dummy cert"
 $COMPOSE up -d nginx
 
-echo "Removing dummy cert"
-$COMPOSE run --rm --entrypoint "\
-  rm -rf /etc/letsencrypt/live/${DOMAIN} \
-         /etc/letsencrypt/archive/${DOMAIN} \
-         /etc/letsencrypt/renewal/${DOMAIN}.conf" certbot
+# Give nginx a couple of seconds to bind :80 before certbot tries to reach
+# /.well-known/acme-challenge through it.
+sleep 3
 
 STAGING_FLAG=""
 [[ "$STAGING" == "1" ]] && STAGING_FLAG="--staging"
 
+# Note: we deliberately do NOT delete the dummy cert before calling certbot.
+# The previous version removed it first, which left nginx with missing cert
+# files — and on the next restart (healthcheck/live-restore/etc.) nginx
+# crash-looped with ``cannot load certificate``, which then caused Let's
+# Encrypt HTTP-01 to fail with Connection refused. ``--force-renewal`` makes
+# certbot overwrite the dummy cert in-place, so nginx can be reloaded
+# cleanly afterwards without any window where the cert files are absent.
 echo "Requesting real cert from Let's Encrypt"
 $COMPOSE run --rm --entrypoint "\
   certbot certonly --webroot -w /var/www/certbot \
@@ -76,7 +81,8 @@ $COMPOSE run --rm --entrypoint "\
     --rsa-key-size ${RSA_KEY_SIZE} \
     --agree-tos \
     --no-eff-email \
-    --force-renewal" certbot
+    --force-renewal \
+    --non-interactive" certbot
 
 echo "Reloading nginx"
 $COMPOSE exec nginx nginx -s reload || $COMPOSE restart nginx
