@@ -46,6 +46,18 @@ COPY --chown=${APP_USER}:${APP_USER} app/        app/
 COPY --chown=${APP_USER}:${APP_USER} migrations/ migrations/
 COPY --chown=${APP_USER}:${APP_USER} alembic.ini ./
 
+# Deploy-audit fix: the storage volumes are mounted under
+# /var/lib/dwtgbot/... in the NL-2 docker-compose; a first-boot of the
+# stack initialises a *named* docker volume from the image's directory
+# contents at that path. If the image doesn't own those dirs, the
+# freshly-created volume ends up root-owned, and the next container
+# that mounts it (e.g. worker, which runs as ``app``) cannot write.
+# Mirror the mkdir+chown that already exists in worker.Dockerfile so
+# whichever of api/worker gets started first seeds the volume with the
+# correct ownership.
+RUN mkdir -p /var/lib/dwtgbot/storage /var/lib/dwtgbot/tmp \
+ && chown -R ${APP_USER}:${APP_USER} /var/lib/dwtgbot
+
 USER ${APP_USER}
 EXPOSE 8080
 
