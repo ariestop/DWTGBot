@@ -29,6 +29,16 @@ fi
 
 mkdir -p "${DATA_PATH}/conf/live/${DOMAIN}" "${DATA_PATH}/www"
 
+# Pre-create the target directories inside the ``letsencrypt_conf`` volume
+# before openssl tries to write into them. The certbot image runs openssl
+# with a minimal shell, so mkdir has to happen in its own ``run`` call —
+# piggy-backing on the openssl one-liner below would execute inside quoted
+# context and no longer be a separate command. Without this step openssl
+# fails with ``Can't open .../privkey.pem for writing, No such file``.
+$COMPOSE run --rm --entrypoint "mkdir -p \
+  '/etc/letsencrypt/live/${DOMAIN}' \
+  '/etc/letsencrypt/archive/${DOMAIN}'" certbot
+
 if [[ ! -f "${DATA_PATH}/conf/options-ssl-nginx.conf" ]]; then
   curl -sSL https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf \
     > "${DATA_PATH}/conf/options-ssl-nginx.conf"
