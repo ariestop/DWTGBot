@@ -26,6 +26,17 @@ server {
         default_type "text/plain";
     }
 
+    # Plain-HTTP health probe for container healthcheck and the deploy
+    # script. Both probes run inside the container with busybox-wget, which
+    # does NOT follow redirects and has no TLS trust store for our own
+    # hostname on 127.0.0.1. Serving /healthz on :80 keeps the loopback
+    # check simple while everything else still 301s to HTTPS.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+
     location / {
         return 301 https://$host$request_uri;
     }
