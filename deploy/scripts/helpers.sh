@@ -129,17 +129,28 @@ require_env_file() {
 }
 
 # ---------- compose wrappers ----------
+# Auto-pick docker-compose.override.yml when it exists next to the base file.
+# This mirrors the default behaviour of `docker compose` invoked without -f
+# (which implicitly merges override files). Since we always pass -f explicitly,
+# we have to add the override path ourselves or host-specific tweaks (e.g.
+# binding postgres/redis to a WireGuard IP) would silently be dropped.
 compose_nl1() {
   local env="${DEPLOY_DIR}/nl1/.env"
   local file="${DEPLOY_DIR}/nl1/docker-compose.yml"
+  local override="${DEPLOY_DIR}/nl1/docker-compose.override.yml"
+  local args=(-f "${file}")
+  [[ -f "${override}" ]] && args+=(-f "${override}")
   require_env_file "${env}"
-  "${DOCKER_COMPOSE[@]}" -f "${file}" --env-file "${env}" "$@"
+  "${DOCKER_COMPOSE[@]}" "${args[@]}" --env-file "${env}" "$@"
 }
 compose_nl2() {
   local env="${DEPLOY_DIR}/nl2/.env"
   local file="${DEPLOY_DIR}/nl2/docker-compose.yml"
+  local override="${DEPLOY_DIR}/nl2/docker-compose.override.yml"
+  local args=(-f "${file}")
+  [[ -f "${override}" ]] && args+=(-f "${override}")
   require_env_file "${env}"
-  "${DOCKER_COMPOSE[@]}" -f "${file}" --env-file "${env}" "$@"
+  "${DOCKER_COMPOSE[@]}" "${args[@]}" --env-file "${env}" "$@"
 }
 
 # ---------- random / secrets ----------
