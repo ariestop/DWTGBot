@@ -349,6 +349,11 @@ printf '\nSave these for NL-2 (same byte-for-byte):\n  POSTGRES_PASSWORD=%s\n  R
 Then set `BOT_TOKEN`, `BOT_ADMIN_IDS`, `API_INTERNAL_TOKEN`, `IMAGE_*`,
 `PUBLIC_BASE_URL`, and `docker login ghcr.io` as in the rest of §5.1.
 
+**GHCR image names must be lowercase** — e.g.
+`ghcr.io/ariestop/dwtgbot-bot:sha-XXXXXXX`, not `…/DWTGBot-bot:…`, or
+`docker pull` fails with `repository name must be lowercase`. CI
+(`build-images.yml`) lowercases the repo segment automatically.
+
 Edit `deploy/nl1/.env` (full reference in §7):
 
 ```bash

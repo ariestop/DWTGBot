@@ -51,10 +51,11 @@ jobs:
             git pull --ff-only origin "${{ inputs.ref }}" || true
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
-            export IMAGE_BOT="ghcr.io/${{ github.repository }}-bot:${IMAGE_TAG}"
-            export IMAGE_API="ghcr.io/${{ github.repository }}-api:${IMAGE_TAG}"
-            export IMAGE_WORKER="ghcr.io/${{ github.repository }}-worker:${IMAGE_TAG}"
-            export IMAGE_BACKUP="ghcr.io/${{ github.repository }}-backup:${IMAGE_TAG}"
+            REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+            export IMAGE_BOT="ghcr.io/${REPO_LC}-bot:${IMAGE_TAG}"
+            export IMAGE_API="ghcr.io/${REPO_LC}-api:${IMAGE_TAG}"
+            export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
+            export IMAGE_BACKUP="ghcr.io/${REPO_LC}-backup:${IMAGE_TAG}"
             ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
 
   nl2:
@@ -81,6 +82,7 @@ jobs:
             git pull --ff-only origin "${{ inputs.ref }}" || true
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
-            export IMAGE_API="ghcr.io/${{ github.repository }}-api:${IMAGE_TAG}"
-            export IMAGE_WORKER="ghcr.io/${{ github.repository }}-worker:${IMAGE_TAG}"
+            REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+            export IMAGE_API="ghcr.io/${REPO_LC}-api:${IMAGE_TAG}"
+            export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
             ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl2

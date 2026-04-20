@@ -12,12 +12,20 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — GHCR image names must be lowercase
+
+Docker rejects references like ``ghcr.io/owner/DWTGBot-bot`` with
+``repository name must be lowercase``. CI now lowercases
+``${{ github.repository }}`` before tagging/pushing, and the deploy
+workflow lowercases ``GITHUB_REPOSITORY`` when exporting ``IMAGE_*``.
+Examples in ``deploy/nl1/.env.example`` / ``deploy/nl2/.env.example`` use
+``ghcr.io/ariestop/dwtgbot-*``.
+
 ### Docs — GHCR image paths in env examples
 
 - **`deploy/nl1/.env.example`** / **`deploy/nl2/.env.example`**: default
-  `IMAGE_*` lines now use `ghcr.io/ariestop/DWTGBot-*` (matches CI
-  `build-images.yml`) instead of the misleading `your-org/dwtgbot-*`
-  placeholder that caused `not found` on first deploy.
+  `IMAGE_*` lines use `ghcr.io/ariestop/dwtgbot-*` (lowercase; matches CI
+  after the fix above) instead of `your-org/dwtgbot-*` placeholders.
 
 ### Docs — NL-1 Postgres/Redis (first-time operators)
 
