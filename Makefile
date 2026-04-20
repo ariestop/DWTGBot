@@ -39,8 +39,13 @@ dev-install: venv ## Install dev dependencies from lockfile
 # drifts from requirements/*.lock. ``uv`` is invoked via
 # ``python -m uv`` to avoid pinning the lock workflow to a particular
 # PATH resolution (wheel installs differ between venv/global).
+#
+# ``--universal`` resolves against *all* supported platforms/Pythons at
+# once, so a lockfile generated on Windows matches one produced in the
+# Ubuntu CI runner (platform-specific deps like ``uvloop``,
+# ``colorama``, ``tzdata`` are kept with environment markers).
 PY_LOCK ?= python3.14
-LOCK_FLAGS := --python-version 3.14 --generate-hashes --quiet
+LOCK_FLAGS := --universal --python-version 3.14 --generate-hashes --quiet
 
 lock: ## Regenerate requirements/*.lock from *.txt
 	$(PY_LOCK) -m uv pip compile requirements/base.txt -o requirements/base.lock $(LOCK_FLAGS)
@@ -49,11 +54,13 @@ lock: ## Regenerate requirements/*.lock from *.txt
 
 lock-check: ## Fail if *.lock drifts from *.txt (used in CI)
 	@tmpdir=$$(mktemp -d); \
+	mkdir -p $$tmpdir/requirements; \
+	cp requirements/*.txt $$tmpdir/requirements/; \
 	for r in base dev prod; do \
-	  $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o $$tmpdir/$$r.lock $(LOCK_FLAGS); \
-	  if ! diff -q requirements/$$r.lock $$tmpdir/$$r.lock >/dev/null; then \
+	  (cd $$tmpdir && $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o requirements/$$r.lock $(LOCK_FLAGS)); \
+	  if ! diff -q requirements/$$r.lock $$tmpdir/requirements/$$r.lock >/dev/null; then \
 	    echo "::error::requirements/$$r.lock is stale — run 'make lock'"; \
-	    diff -u requirements/$$r.lock $$tmpdir/$$r.lock || true; \
+	    diff -u requirements/$$r.lock $$tmpdir/requirements/$$r.lock || true; \
 	    rm -rf $$tmpdir; exit 1; \
 	  fi; \
 	done; \

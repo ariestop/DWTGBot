@@ -128,8 +128,13 @@ jobs:
       # against the committed *.lock. If a PR bumps a version in *.txt
       # without regenerating *.lock, this step fails with the exact
       # diff so the author can run ``make lock`` locally.
+      #
+      # ``uv`` is pinned: the generated header and resolution order are
+      # stable per uv version, so a drift here would otherwise flap the
+      # check on uv minor releases. Bump deliberately and regenerate
+      # lockfiles in the same PR.
       - name: Install uv
-        run: pip install uv
+        run: pip install 'uv==0.11.7'
       - name: Verify lockfiles are up to date
         run: make lock-check
 
