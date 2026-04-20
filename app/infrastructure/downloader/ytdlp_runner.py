@@ -151,23 +151,48 @@ async def _ensure_mobile_compatible(
 
     tmp = path.with_suffix(path.suffix + ".remux.tmp")
     if needs_transcode:
+        # Tuned for Telegram mobile clients:
+        #   * high@4.1 is the widest-supported H.264 profile/level combo
+        #     that covers 1080p30 on every shipping iOS/Android decoder;
+        #     main@4.0 (previous value) overflows for 1080p60 sources
+        #     (common on Instagram) and some decoders refuse to start on
+        #     level-non-conforming streams.
+        #   * ``-r 30`` caps the frame rate per Telegram's spec ("max 30
+        #     fps") — dropping to 30 fps is cheap at ``veryfast`` and
+        #     avoids the 60-fps mobile-decoder stall altogether.
+        #   * ``-bsf:v dump_extra=freq=keyframe`` writes SPS/PPS in-band
+        #     before every IDR. Out-of-band parameter sets land in the
+        #     ``avcC`` box only, which some mobile decoders don't consult
+        #     before demanding a keyframe — the classic "frozen first
+        #     frame, audio plays" symptom.
+        #   * 48 kHz / stereo AAC is the codec pair Telegram's own
+        #     uploader normalises to; it avoids edge cases with 44.1 kHz
+        #     or mono tracks on older Androids.
         args = [
             "-c:v",
             "libx264",
             "-preset",
             "veryfast",
             "-profile:v",
-            "main",
+            "high",
             "-level",
-            "4.0",
+            "4.1",
             "-pix_fmt",
             "yuv420p",
             "-crf",
             "23",
+            "-r",
+            "30",
+            "-bsf:v",
+            "dump_extra=freq=keyframe",
             "-c:a",
             "aac",
             "-b:a",
             "192k",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
             "-movflags",
             "+faststart",
         ]
