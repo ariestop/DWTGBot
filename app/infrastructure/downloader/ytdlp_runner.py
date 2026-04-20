@@ -18,6 +18,7 @@ retrying a 429.
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -116,8 +117,23 @@ class YtDlpRunner:
             "retries": 2,
             "fragment_retries": 2,
             "noplaylist": False,
-            "ffmpeg_location": self._settings.FFMPEG_BIN,
         }
+        # yt-dlp treats ``ffmpeg_location`` as an absolute path to the binary
+        # or a directory containing it and verifies via ``os.path.exists``. A
+        # bare name like ``"ffmpeg"`` therefore resolves to False and the
+        # postprocessor bails out with "ffmpeg is not installed" even when
+        # it is perfectly reachable through ``PATH``. Resolve the configured
+        # value explicitly; if resolution fails, omit the option altogether
+        # and let yt-dlp's own auto-discovery (which also searches ``PATH``)
+        # handle it.
+        resolved_ffmpeg = shutil.which(self._settings.FFMPEG_BIN)
+        if resolved_ffmpeg:
+            opts["ffmpeg_location"] = resolved_ffmpeg
+        else:
+            _logger.warning(
+                "ffmpeg_binary_not_resolved",
+                configured=self._settings.FFMPEG_BIN,
+            )
         if merge_output_format:
             opts["merge_output_format"] = merge_output_format
         if postprocessors:
