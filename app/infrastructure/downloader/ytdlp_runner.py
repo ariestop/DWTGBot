@@ -53,6 +53,62 @@ _THROTTLE_MARKERS = (
 )
 
 
+# Containers we force-remux with ``faststart`` after download. Limited to
+# MP4-family formats because ``-movflags +faststart`` is only meaningful
+# for ISO BMFF containers; other formats (webm, mkv) either handle moov
+# positioning themselves or ignore the flag entirely.
+_FASTSTART_EXTS = frozenset({".mp4", ".mov", ".m4v"})
+
+
+async def _faststart_remux(path: Path, ffmpeg_bin: str) -> None:
+    """Rewrite ``path`` in place with the ``moov`` atom at the front.
+
+    Uses ``-c copy`` so no re-encoding happens — it's just a container
+    rewrite, usually well under a second. On any failure (ffmpeg exits
+    non-zero, times out, crashes) the original file is left untouched
+    and we log a warning. Idempotent: running on an already-faststart
+    file just produces an identical output.
+    """
+    tmp = path.with_suffix(path.suffix + ".faststart.tmp")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(tmp),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        if proc.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+            tail = (stderr or b"").decode("utf-8", errors="replace").strip().splitlines()[-3:]
+            _logger.warning(
+                "faststart_remux_failed",
+                file=str(path),
+                returncode=proc.returncode,
+                stderr=" | ".join(tail),
+            )
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            return
+        # Atomic replace on POSIX; Path.replace overwrites the target.
+        tmp.replace(path)
+    except (TimeoutError, OSError) as exc:
+        _logger.warning("faststart_remux_error", file=str(path), error=repr(exc))
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
 class YtDlpRunner:
     """Thin async facade over yt-dlp."""
 
@@ -152,7 +208,21 @@ class YtDlpRunner:
             raise DownloadError(f"yt-dlp download failed: {exc}") from exc
 
         await self._note_success(host)
-        return sorted(p for p in target_dir.iterdir() if p.is_file())
+        files = sorted(p for p in target_dir.iterdir() if p.is_file())
+        # Post-step: force MP4/MOV outputs to be "faststart" (moov atom at
+        # the head of the file). Without it Telegram's streaming player
+        # can't decode video until the whole file is downloaded — the user
+        # sees a frozen first frame while audio plays. yt-dlp's merger can
+        # be asked to emit faststart directly, but Instagram / TikTok
+        # single-stream downloads never hit the merger, so we apply the
+        # remux uniformly after download. ``-c copy`` means no re-encode:
+        # it's an O(file size) byte copy plus header move, typically well
+        # under a second for sub-100 MB files.
+        if resolved_ffmpeg:
+            for f in files:
+                if f.suffix.lower() in _FASTSTART_EXTS:
+                    await _faststart_remux(f, resolved_ffmpeg)
+        return files
 
     async def _trip_if_open(self, host: str) -> None:
         if self._breaker is None or not host:
