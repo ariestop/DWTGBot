@@ -149,7 +149,13 @@ async def _ensure_mobile_compatible(
         or (pix_fmt is not None and pix_fmt not in _MOBILE_OK_PIX_FMTS)
     )
 
-    tmp = path.with_suffix(path.suffix + ".remux.tmp")
+    # Keep the original extension as the *last* suffix of the tmp file
+    # (e.g. ``video.mp4`` → ``video.remux.tmp.mp4``). ffmpeg's muxer
+    # auto-detection looks at the trailing extension only; if it were
+    # ``.tmp`` ffmpeg would either fail to pick a muxer or pick the
+    # wrong one, at which point ``-movflags +faststart`` becomes
+    # "Invalid argument" and the whole remux fails.
+    tmp = path.with_name(path.stem + ".remux.tmp" + path.suffix)
     if needs_transcode:
         # Tuned for Telegram mobile clients:
         #   * high@4.1 is the widest-supported H.264 profile/level combo
