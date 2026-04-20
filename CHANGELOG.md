@@ -12,6 +12,13 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Docs — GHCR image paths in env examples
+
+- **`deploy/nl1/.env.example`** / **`deploy/nl2/.env.example`**: default
+  `IMAGE_*` lines now use `ghcr.io/ariestop/DWTGBot-*` (matches CI
+  `build-images.yml`) instead of the misleading `your-org/dwtgbot-*`
+  placeholder that caused `not found` on first deploy.
+
 ### Docs — NL-1 Postgres/Redis (first-time operators)
 
 - **`docs/20-deployment.md`** §5.1.1: explains that Postgres and Redis are
