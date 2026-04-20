@@ -117,8 +117,20 @@ class YouTubeProvider(BaseProvider):
 
         if option.kind is MediaKind.VIDEO and option.height is not None:
             h = option.height
+            # Prefer H.264 (avc1) + AAC because Telegram's mobile clients
+            # decode through hardware codecs that only handle that pair
+            # reliably. VP9/AV1 (common on YouTube 1080p60) would merge
+            # into an MP4 that plays on desktop but freezes on phones.
+            # The ``_ensure_mobile_compatible`` post-step transcodes as
+            # a last resort, but winning the selector is much cheaper
+            # than re-encoding after download, so we try avc1 first and
+            # only fall back when YouTube truly has no H.264 at that
+            # height (rare: H.264 tops out at 1080p30 for newer videos,
+            # so 1080p might land on vp9 and require transcoding).
             fmt = (
-                f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]"
+                f"bestvideo[height<={h}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]"
+                f"/bestvideo[height<={h}][vcodec^=avc1]+bestaudio[ext=m4a]"
+                f"/bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]"
                 f"/bestvideo[height<={h}]+bestaudio"
                 f"/best[height<={h}]"
             )

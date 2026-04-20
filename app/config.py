@@ -165,6 +165,7 @@ class Settings(BaseSettings):
 
     # --- Tooling ---
     FFMPEG_BIN: str = "ffmpeg"
+    FFPROBE_BIN: str = "ffprobe"
     YTDLP_BIN: str = "yt-dlp"
 
     # --- Outbound proxy (S9) ---

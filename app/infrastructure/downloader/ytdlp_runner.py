@@ -18,6 +18,7 @@ retrying a 429.
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -53,23 +54,121 @@ _THROTTLE_MARKERS = (
 )
 
 
-# Containers we force-remux with ``faststart`` after download. Limited to
-# MP4-family formats because ``-movflags +faststart`` is only meaningful
-# for ISO BMFF containers; other formats (webm, mkv) either handle moov
-# positioning themselves or ignore the flag entirely.
+# Video containers we post-process after download. Limited to MP4-family
+# formats because ``-movflags +faststart`` only applies to ISO BMFF
+# containers and Telegram's mobile players expect MP4.
 _FASTSTART_EXTS = frozenset({".mp4", ".mov", ".m4v"})
 
+# Mobile Telegram (iOS/Android) decodes through hardware codecs that
+# require a very narrow subset of formats. Anything else plays on
+# desktop (ffmpeg-based) but freezes the video track on phones while
+# audio decodes normally -- the exact "frozen frame, sound works"
+# symptom users reported for VP9-in-MP4 (common for YouTube 1080p) and
+# HEVC-in-MP4 (sometimes served by Instagram). Telegram's own file
+# spec (https://core.telegram.org/api/files#video) lists H.264 + AAC
+# as the expected pair.
+_MOBILE_OK_VCODECS = frozenset({"h264", "avc1"})
+_MOBILE_OK_ACODECS = frozenset({"aac"})
+_MOBILE_OK_PIX_FMTS = frozenset({"yuv420p", "yuvj420p"})
 
-async def _faststart_remux(path: Path, ffmpeg_bin: str) -> None:
-    """Rewrite ``path`` in place with the ``moov`` atom at the front.
 
-    Uses ``-c copy`` so no re-encoding happens — it's just a container
-    rewrite, usually well under a second. On any failure (ffmpeg exits
-    non-zero, times out, crashes) the original file is left untouched
-    and we log a warning. Idempotent: running on an already-faststart
-    file just produces an identical output.
+async def _probe_video_codecs(
+    path: Path, ffprobe_bin: str
+) -> tuple[str | None, str | None, str | None]:
+    """Return ``(video_codec, audio_codec, pix_fmt)`` — ``None`` if unknown."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ffprobe_bin,
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name,pix_fmt",
+            "-of",
+            "json",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode != 0:
+            return (None, None, None)
+        payload = json.loads(stdout.decode("utf-8", errors="replace") or "{}")
+    except (TimeoutError, ValueError, json.JSONDecodeError, OSError) as exc:
+        _logger.warning("probe_codecs_failed", file=str(path), error=repr(exc))
+        return (None, None, None)
+    vcodec = acodec = pix_fmt = None
+    for stream in payload.get("streams") or []:
+        if stream.get("codec_type") == "video" and vcodec is None:
+            vcodec = stream.get("codec_name")
+            pix_fmt = stream.get("pix_fmt")
+        elif stream.get("codec_type") == "audio" and acodec is None:
+            acodec = stream.get("codec_name")
+    return (vcodec, acodec, pix_fmt)
+
+
+async def _ensure_mobile_compatible(
+    path: Path, ffmpeg_bin: str, ffprobe_bin: str | None
+) -> None:
+    """Rewrite ``path`` so Telegram mobile clients can play it.
+
+    Fast path (when the probe shows H.264 video + AAC audio + yuv420p):
+    ``-c copy -movflags +faststart``, a byte-level container rewrite
+    that moves ``moov`` to the head. Completes in well under a second
+    for sub-100 MB files and preserves the original quality exactly.
+
+    Slow path (anything else -- VP9, HEVC, Opus, yuv444p, etc.):
+    transcode to H.264 Main@4.0 + AAC 192 kbps + yuv420p + faststart.
+    ``-preset veryfast`` keeps encoding time close to real-time on
+    2 vCPU at 1080p. Quality is visually indistinguishable at typical
+    Telegram viewing sizes. CRF 23 is libx264's default sweet spot.
+
+    Any failure leaves the original file untouched (we log and move
+    on) so a post-step regression cannot break downloads that used to
+    reach the user.
     """
-    tmp = path.with_suffix(path.suffix + ".faststart.tmp")
+    # Without ffprobe we can't tell whether a transcode is needed; err on
+    # the side of the cheap remux (matches the pre-probe behaviour and
+    # still fixes the moov-at-end case for H.264 sources).
+    vcodec = acodec = pix_fmt = None
+    if ffprobe_bin:
+        vcodec, acodec, pix_fmt = await _probe_video_codecs(path, ffprobe_bin)
+    needs_transcode = (
+        (vcodec is not None and vcodec not in _MOBILE_OK_VCODECS)
+        or (acodec is not None and acodec not in _MOBILE_OK_ACODECS)
+        or (pix_fmt is not None and pix_fmt not in _MOBILE_OK_PIX_FMTS)
+    )
+
+    tmp = path.with_suffix(path.suffix + ".remux.tmp")
+    if needs_transcode:
+        args = [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-profile:v",
+            "main",
+            "-level",
+            "4.0",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+        ]
+        event_ok = "mobile_transcode_done"
+        event_err = "mobile_transcode_failed"
+        timeout = 600
+    else:
+        args = ["-c", "copy", "-movflags", "+faststart"]
+        event_ok = "faststart_remux_done"
+        event_err = "faststart_remux_failed"
+        timeout = 120
+
     try:
         proc = await asyncio.create_subprocess_exec(
             ffmpeg_bin,
@@ -81,30 +180,36 @@ async def _faststart_remux(path: Path, ffmpeg_bin: str) -> None:
             str(path),
             "-map",
             "0",
-            "-c",
-            "copy",
-            "-movflags",
-            "+faststart",
+            *args,
             str(tmp),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
             tail = (stderr or b"").decode("utf-8", errors="replace").strip().splitlines()[-3:]
             _logger.warning(
-                "faststart_remux_failed",
+                event_err,
                 file=str(path),
                 returncode=proc.returncode,
                 stderr=" | ".join(tail),
+                vcodec=vcodec,
+                acodec=acodec,
+                pix_fmt=pix_fmt,
             )
             if tmp.exists():
                 tmp.unlink(missing_ok=True)
             return
-        # Atomic replace on POSIX; Path.replace overwrites the target.
         tmp.replace(path)
+        _logger.info(
+            event_ok,
+            file=str(path),
+            vcodec=vcodec,
+            acodec=acodec,
+            pix_fmt=pix_fmt,
+        )
     except (TimeoutError, OSError) as exc:
-        _logger.warning("faststart_remux_error", file=str(path), error=repr(exc))
+        _logger.warning(event_err, file=str(path), error=repr(exc))
         if tmp.exists():
             tmp.unlink(missing_ok=True)
 
@@ -209,19 +314,19 @@ class YtDlpRunner:
 
         await self._note_success(host)
         files = sorted(p for p in target_dir.iterdir() if p.is_file())
-        # Post-step: force MP4/MOV outputs to be "faststart" (moov atom at
-        # the head of the file). Without it Telegram's streaming player
-        # can't decode video until the whole file is downloaded — the user
-        # sees a frozen first frame while audio plays. yt-dlp's merger can
-        # be asked to emit faststart directly, but Instagram / TikTok
-        # single-stream downloads never hit the merger, so we apply the
-        # remux uniformly after download. ``-c copy`` means no re-encode:
-        # it's an O(file size) byte copy plus header move, typically well
-        # under a second for sub-100 MB files.
+        # Post-step: make MP4 outputs mobile-Telegram-friendly. Beyond the
+        # ``faststart`` fix (moov atom at the head so the player can start
+        # before the file is fully downloaded), mobile clients also need
+        # H.264 + AAC + yuv420p — VP9-in-MP4 (common for YouTube 1080p)
+        # and HEVC-in-MP4 (sometimes Instagram) decode fine on desktop
+        # but freeze the video track on iOS/Android while audio plays.
+        # ``_ensure_mobile_compatible`` probes the container and chooses
+        # the cheapest path that keeps the output playable on phones.
+        resolved_ffprobe = shutil.which(self._settings.FFPROBE_BIN) if resolved_ffmpeg else None
         if resolved_ffmpeg:
             for f in files:
                 if f.suffix.lower() in _FASTSTART_EXTS:
-                    await _faststart_remux(f, resolved_ffmpeg)
+                    await _ensure_mobile_compatible(f, resolved_ffmpeg, resolved_ffprobe)
         return files
 
     async def _trip_if_open(self, host: str) -> None:
