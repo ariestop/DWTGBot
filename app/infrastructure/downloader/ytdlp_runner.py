@@ -106,9 +106,7 @@ async def _probe_video_codecs(
     return (vcodec, acodec, pix_fmt)
 
 
-async def _ensure_mobile_compatible(
-    path: Path, ffmpeg_bin: str, ffprobe_bin: str | None
-) -> None:
+async def _ensure_mobile_compatible(path: Path, ffmpeg_bin: str, ffprobe_bin: str | None) -> None:
     """Rewrite ``path`` so Telegram mobile clients can play it.
 
     Fast path (when the probe shows H.264 video + AAC audio + yuv420p):
