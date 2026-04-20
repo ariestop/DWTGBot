@@ -29,7 +29,7 @@ check() {
 _nl1_curl_healthz() {
   local port="${1:-8080}"
   local _
-  for _ in {1..20}; do
+  for _ in {1..45}; do
     if docker exec dwtgbot_api_nl1 curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
       return 0
     fi
@@ -41,7 +41,7 @@ _nl1_curl_healthz() {
 _nl2_curl_healthz() {
   local port="${1:-8080}"
   local _
-  for _ in {1..20}; do
+  for _ in {1..45}; do
     if docker exec dwtgbot_api curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
       return 0
     fi
@@ -53,8 +53,31 @@ _nl2_curl_healthz() {
 _nl2_curl_readyz() {
   local port="${1:-8080}"
   local _
-  for _ in {1..20}; do
+  for _ in {1..45}; do
     if docker exec dwtgbot_api curl -fsS "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# Strip quotes / whitespace from ``API_PORT=`` lines (``API_PORT="8080"`` is common).
+_sanitize_env_value() {
+  local v="$1"
+  v="${v%%#*}"      # drop ``#`` inline comments
+  v="${v//$'\r'/}"  # Windows line endings
+  v="${v//\"/}"
+  v="${v//\'/}"
+  v="${v// /}"
+  printf '%s' "${v}"
+}
+
+# Bot may still be ``created`` / ``restarting`` for a few seconds after ``compose up``.
+_nl1_bot_running() {
+  local _
+  for _ in {1..45}; do
+    if docker inspect --format "{{.State.Status}}" dwtgbot_bot 2>/dev/null | grep -qx running; then
       return 0
     fi
     sleep 1
@@ -73,12 +96,13 @@ if [[ "${TARGET}" == "auto" || "${TARGET}" == "nl1" ]]; then
   if [[ -f "${DEPLOY_DIR}/nl1/.env" ]]; then
     log_step "NL-1 stack"
     NL1_API_PORT="$(grep -E '^API_PORT=' "${DEPLOY_DIR}/nl1/.env" 2>/dev/null | head -1 | cut -d= -f2-)"
+    NL1_API_PORT="$(_sanitize_env_value "${NL1_API_PORT}")"
     NL1_API_PORT="${NL1_API_PORT:-8080}"
     check "compose config valid"     compose_nl1 config -q
     # Prefer Docker health status; fall back to running (no healthcheck).
     check "postgres healthy"         bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_postgres 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
     check "redis healthy"            bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_redis 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
-    check "bot running"              bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_bot 2>/dev/null | grep -qx running'
+    check "bot running"              _nl1_bot_running
     check "internal /healthz"        _nl1_curl_healthz "${NL1_API_PORT}"
   else
     log_warn "NL-1 .env not found, skipping NL-1 checks"
@@ -89,6 +113,7 @@ if [[ "${TARGET}" == "auto" || "${TARGET}" == "nl2" ]]; then
   if [[ -f "${DEPLOY_DIR}/nl2/.env" ]]; then
     log_step "NL-2 stack"
     NL2_API_PORT="$(grep -E '^API_PORT=' "${DEPLOY_DIR}/nl2/.env" 2>/dev/null | head -1 | cut -d= -f2-)"
+    NL2_API_PORT="$(_sanitize_env_value "${NL2_API_PORT}")"
     NL2_API_PORT="${NL2_API_PORT:-8080}"
     check "compose config valid"     compose_nl2 config -q
     check "api running"              bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_api 2>/dev/null | grep -qx running'

@@ -28,8 +28,10 @@ checks but fail the API checks and restart forever.
   ``compose ps --status`` greps. Internal ``/healthz`` / ``/readyz`` probes
   no longer used ``bash -c 'compose_nl1 exec …'`` — **compose helpers are
   shell functions and are invisible inside a child ``bash -c``**, so the
-  check always failed; replaced with ``docker exec`` + 20 s retry while
-  uvicorn binds. NL-2 nginx probe also uses ``docker exec``.
+  check always failed; replaced with ``docker exec`` + retry while
+  uvicorn binds. NL-2 nginx probe also uses ``docker exec``. Follow-up:
+  **45 s** retry for bot ``running`` + ``/healthz`` (slow cold start);
+  ``API_PORT`` values are sanitised (quotes, ``#`` comments, CR).
 - **`deploy/scripts/deploy_update.sh`**: skip pre-deploy backup when
   ``dwtgbot_postgres`` is not running (first boot).
 
