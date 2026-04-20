@@ -40,6 +40,14 @@ class SqlAlchemyJobsRepository(JobsRepository):
             )
             session.add(row)
             await session.flush()
+            # ``created_at`` / ``updated_at`` use server_default=func.now(),
+            # so after flush they are server-computed but not in memory yet.
+            # Async SQLAlchemy expires server-generated columns; reading them
+            # via ``_to_entity(row)`` afterwards would trigger a sync refresh
+            # that asyncpg refuses outside a greenlet (MissingGreenlet). An
+            # explicit async refresh pulls the values while we still hold
+            # the session context.
+            await session.refresh(row)
             return _to_entity(row)
 
     async def get(self, job_id: int) -> DownloadJob | None:
@@ -69,6 +77,12 @@ class SqlAlchemyJobsRepository(JobsRepository):
             row.extra = dict(job.extra)
             row.completed_at = job.completed_at
             await session.flush()
+            # See ``create()`` — ``updated_at`` is server-side (onupdate=now()),
+            # so after flush it's expired in the session and a sync attribute
+            # read would trigger a refresh that asyncpg cannot satisfy
+            # outside a greenlet. Refresh explicitly while still in the
+            # async session scope.
+            await session.refresh(row)
             return _to_entity(row)
 
     async def increment_retries(self, job_id: int) -> int:
@@ -145,6 +159,9 @@ class SqlAlchemyJobsRepository(JobsRepository):
             )
             session.add(row)
             await session.flush()
+            # Same reason as ``create()`` — server_default=now() columns are
+            # expired post-flush; refresh before handing off to _to_entity().
+            await session.refresh(row)
             return _to_entity(row)
 
     async def reap_orphan_processing(self, *, older_than_seconds: int) -> int:

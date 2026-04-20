@@ -29,6 +29,14 @@ class SqlAlchemyTempLinksRepository(TempLinksRepository):
             )
             session.add(row)
             await session.flush()
+            # ``created_at`` / ``updated_at`` are server-side defaults
+            # (see TimestampMixin). After flush they are expired in the
+            # session; a sync attribute read inside ``_to_entity`` would
+            # try a refresh that asyncpg refuses outside a greenlet
+            # (MissingGreenlet). Refresh explicitly while the session
+            # context is still active. Same rationale as the analogous
+            # code paths in jobs_repo_impl.
+            await session.refresh(row)
             return _to_entity(row)
 
     async def get_by_token(self, token: str) -> TempLink | None:
@@ -50,6 +58,10 @@ class SqlAlchemyTempLinksRepository(TempLinksRepository):
             row.expires_at = link.expires_at
             row.max_downloads = link.max_downloads
             await session.flush()
+            # See ``create()`` — TimestampMixin.updated_at uses onupdate=now()
+            # which is server-evaluated; explicit refresh pulls the fresh
+            # value before the ORM row leaves the session scope.
+            await session.refresh(row)
             return _to_entity(row)
 
     async def deactivate_expired(self) -> int:
