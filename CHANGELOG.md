@@ -12,6 +12,13 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — Bot silent after ``/start`` (webhook vs polling)
+
+If a bot token previously had a **webhook** URL set, Telegram stops
+delivering updates to **getUpdates** (polling) until the webhook is
+deleted — the process looks healthy but never handles messages.
+``post_init`` now calls ``delete_webhook`` before setting commands.
+
 ### Fixed — API crash: ``PrintLogger`` has no ``.name`` (structlog)
 
 ``configure_logging`` used ``PrintLoggerFactory`` together with

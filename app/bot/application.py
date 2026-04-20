@@ -65,6 +65,10 @@ def build_application(settings: Settings, container: BotContainer) -> Applicatio
 
 
 async def _on_post_init(application: Application) -> None:
+    # Polling mode: if this token ever had a webhook (test deploy, another
+    # host, BotFather experiments), Telegram stops feeding getUpdates until
+    # the webhook is removed — users see no reply to /start.
+    await application.bot.delete_webhook(drop_pending_updates=False)
     await application.bot.set_my_commands(
         [
             BotCommand("start", "Приветствие"),
