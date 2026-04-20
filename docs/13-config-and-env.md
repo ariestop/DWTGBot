@@ -76,6 +76,10 @@ Grouped by concern. **Bold** = required, no safe default.
 | `POSTGRES_USER` | str | `dwtgbot` | |
 | **`POSTGRES_PASSWORD`** | str | empty | **Must be set in production** |
 | `DATABASE_URL` | str | computed | Overrides the host/port/etc. composition. Use only when needed |
+| `DB_POOL_SIZE` | int ≥1 | `5` | SQLAlchemy async pool size. S5 audit fix: was hard-coded. Raise on the worker container when `WORKER_CONCURRENCY > 5` (see `20-deployment.md` §7.1 — per-host values) |
+| `DB_MAX_OVERFLOW` | int ≥0 | `10` | Extra connections created beyond `DB_POOL_SIZE` before clients block on `DB_POOL_TIMEOUT_S` |
+| `DB_POOL_TIMEOUT_S` | int ≥1 | `30` | How long a caller waits for a free connection before `TimeoutError` |
+| `DB_POOL_RECYCLE_S` | int ≥60 | `1800` | Recycle stale connections; safer than Postgres `idle_in_transaction_session_timeout` races |
 
 > The async URL is `postgresql+asyncpg://...`; a sync version
 > (`+psycopg`) is derived for Alembic.
@@ -97,6 +101,7 @@ Grouped by concern. **Bold** = required, no safe default.
 | `STORAGE_PATH` | path | `/var/lib/dwtgbot/storage` | Mounted as RW into worker, RO into nginx |
 | `STORAGE_TMP_PATH` | path | `/var/lib/dwtgbot/tmp` | Worker scratch; **must be local SSD**, never NFS |
 | `MAX_FILE_SIZE_MB` | int ≥1 | `2048` | Per-result hard cap; ≥ `TELEGRAM_MAX_UPLOAD_MB` always |
+| `STORAGE_MIN_FREE_MB` | int ≥0 | `0` | S10 audit fix: disk-space backpressure. Worker calls `LocalStorage.assert_free_space()` at the top of `ProcessDownloadUseCase._run()`; below the threshold the job fails permanently with a user-friendly "сервис временно перегружен" message. `0` disables the guard. On NL-2 set to ~`3 × MAX_FILE_SIZE_MB` so a single cleanup miss can't push the FS to 100%. No-op on NL-1 (bot never writes to storage). |
 
 ### Public delivery (temp links)
 
@@ -115,6 +120,7 @@ Grouped by concern. **Bold** = required, no safe default.
 | `API_PORT` | int | `8080` | Container-internal; never published |
 | `API_INTERNAL_TOKEN` | str | empty | **Required in production** for internal admin endpoints |
 | `INTERNAL_TEST_TOKEN` | str | empty | **MUST be empty in production.** Non-empty value enables `POST /internal/test/enqueue` for capacity tests (`docs/37-load-and-capacity.md` §6); rejected at startup when `APP_ENV=production` |
+| `XACCEL_ENABLED` | bool | `false` | S6 audit fix: trust gate for nginx `X-Accel-Redirect` on `GET /api/v1/dl/{token}`. The api only emits `X-Accel-Redirect` when **both** the loopback `X-Internal-XAccel: 1` header (set unconditionally by `deploy/nginx/conf.d/media.conf.template`) *and* `XACCEL_ENABLED=true` are present. Flip to `true` only on hosts that actually have the bundled nginx in front of the api (NL-2). Leaving it `false` makes the api stream bytes itself — slower but safer if nginx is removed/misconfigured. |
 
 ### Worker / queue
 
@@ -132,6 +138,7 @@ Grouped by concern. **Bold** = required, no safe default.
 |---|---|---|---|
 | `CLEANUP_INTERVAL_SECONDS` | int ≥60 | `3600` (1 h) | Cleanup container loop |
 | `MEDIA_CACHE_TTL_SECONDS` | int ≥60 | `21600` (6 h) | Both metadata cache and Redis request state |
+| `ORPHAN_JOB_AGE_SECONDS` | int ≥60 | `3900` | S1 audit fix: the cleanup worker marks any `download_jobs` row stuck in `PROCESSING` older than this as `FAILED` with reason `internal_error`, releasing the per-user cap. **Must be ≥ 2 × `JOB_TIMEOUT_SECONDS`** so in-flight long jobs are never reaped. Non-zero reap counts are logged at WARNING (`orphan_jobs_reaped`) — a persistent signal means a worker is dying mid-job. |
 
 ### Backup
 
@@ -140,6 +147,15 @@ Grouped by concern. **Bold** = required, no safe default.
 | `BACKUP_DIR` | path | `/var/backups/dwtgbot` | Inside backup container; volume-mounted |
 | `BACKUP_RETENTION_DAYS` | int ≥1 | `14` | Days of dumps kept |
 | `BACKUP_INTERVAL_SECONDS` | int | `86400` | Set on the backup container env (compose) |
+| `BACKUP_S3_BUCKET` | str | empty | S2 audit fix: off-site replication backend #1. When set, `deploy/scripts/backup.sh::replicate_offsite` uploads each fresh dump via `aws s3 cp`. Requires `awscli` (bundled in `docker/backup.Dockerfile`) + ambient AWS credentials (instance profile, env, or `~/.aws/credentials`). Leave empty to skip. |
+| `BACKUP_S3_PREFIX` | str | `dwtgbot` | Object-key prefix inside `BACKUP_S3_BUCKET`. |
+| `BACKUP_RCLONE_REMOTE` | str | empty | S2 audit fix: off-site replication backend #2. Any remote known to rclone (`rclone config`) — B2, GCS, SFTP, etc. Uploads via `rclone copyto`. `rclone` is bundled in `docker/backup.Dockerfile`. Pick exactly one of `BACKUP_S3_BUCKET` / `BACKUP_RCLONE_REMOTE`. |
+
+> **Fail-open:** both replication paths log a warning on failure and
+> return success from `backup.sh` — the local copy in `BACKUP_DIR` is
+> authoritative. The restore drill in `.github/workflows/restore-drill.yml`
+> exercises the local-copy path nightly; off-site integrity is the
+> operator's responsibility (spot-check monthly).
 
 ### Tooling
 
@@ -147,6 +163,44 @@ Grouped by concern. **Bold** = required, no safe default.
 |---|---|---|---|
 | `FFMPEG_BIN` | str | `ffmpeg` | Resolved via `PATH` |
 | `YTDLP_BIN` | str | `yt-dlp` | We use the Python lib; var is for diagnostics |
+| `HTTPS_PROXY_URL` | str | empty | S9 audit fix: outbound proxy injected into `yt-dlp` opts for both `extract_info` and `download`. Empty = direct. Format `http://user:pass@host:port` or `socks5h://host:port`. Lets you egress through a regional proxy without leaking creds into process env. |
+
+### Circuit breaker — yt-dlp upstream (`docs/34-error-taxonomy.md`, L5 audit fix)
+
+The breaker is per-host and shared across the fleet via two Redis keys
+(`cb:{host}:failures`, `cb:{host}:open_until`). When the breaker is
+open, `YtDlpRunner.extract_info` / `download` raise
+`UpstreamUnavailableError` (retryable) before calling upstream — the
+job is rescheduled by arq and by the time the next attempt runs the
+cooldown has typically expired.
+
+| Variable | Type | Default | Notes |
+|---|---|---|---|
+| `CB_ENABLED` | bool | `true` | Master switch. Set `false` on single-process dev boxes without Redis. Production on both NL-1 (bot's analyze path) and NL-2 (worker's download path) should leave it `true`. |
+| `CB_FAILURE_THRESHOLD` | int ≥1 | `5` | Open after this many consecutive "throttle-shaped" errors (HTTP 429 / "too many requests" / "rate limit"). A single success resets the counter. |
+| `CB_WINDOW_SECONDS` | int ≥1 | `60` | TTL on the failure counter — `N` failures **within this window** trip the breaker. Longer windows forgive transient spikes; shorter windows trip faster. |
+| `CB_COOLDOWN_SECONDS` | int ≥1 | `300` | How long the breaker stays open once tripped. Must cover a reasonable rate-limit backoff from the upstream (`300` is appropriate for YouTube/Instagram). |
+
+### Error aggregation — Sentry / GlitchTip (L7 audit fix)
+
+`app/observability/sentry.py::configure_sentry(settings, role=...)` is
+called by every entrypoint (`main_bot`, `main_api`, `worker_settings._on_startup`,
+`cleanup_worker`, `backup_worker`). It's a **no-op when `SENTRY_DSN=""`**,
+and `sentry-sdk==2.19.2` is bundled in `requirements/prod.lock` so
+flipping it on is a single env-var redeploy rather than an image
+rebuild. The stdlib-logging integration captures `ERROR+` events
+without us sprinkling `capture_exception` anywhere.
+
+| Variable | Type | Default | Notes |
+|---|---|---|---|
+| `SENTRY_DSN` | str | empty | DSN from your Sentry / GlitchTip project. Empty disables the integration entirely. |
+| `SENTRY_ENVIRONMENT` | str | empty | Falls back to `APP_ENV` when empty. Use e.g. `production`, `staging`. |
+| `SENTRY_TRACES_SAMPLE_RATE` | float 0.0..1.0 | `0.0` | Performance tracing sample rate. `0.0` keeps Sentry quota to errors only. |
+| `SENTRY_RELEASE` | str | empty | Release tag (typically the image sha). Leaving it empty means every event has no release correlation — prefer setting it during deploy, e.g. `SENTRY_RELEASE=$IMAGE_SHA`. |
+
+Every event gets a `role` tag (`bot`, `api`, `worker`, `cleanup`, `backup`)
+attached via `before_send` so incident queries can filter by the
+originating process.
 
 ### Rate limiting (`docs/36-rate-limiting.md`)
 

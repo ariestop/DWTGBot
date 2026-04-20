@@ -12,6 +12,85 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Docs — Deploy readiness sweep
+
+Closes the paper gap left by the S1-S10 + L-series code changes: the
+new env vars existed in `.env.example` files but were absent from the
+canonical catalogue and the deploy runbook, so operators couldn't
+discover them during a fresh bring-up.
+
+- **`docs/13-config-and-env.md`** §2: added reference rows for
+  `DB_POOL_*` (S5), `STORAGE_MIN_FREE_MB` (S10), `XACCEL_ENABLED` (S6),
+  `ORPHAN_JOB_AGE_SECONDS` (S1), `BACKUP_S3_BUCKET` / `BACKUP_S3_PREFIX`
+  / `BACKUP_RCLONE_REMOTE` (S2), `HTTPS_PROXY_URL` (S9). New subsections
+  for **Circuit breaker** (L5, four `CB_*` vars) and **Error
+  aggregation — Sentry** (L7, four `SENTRY_*` vars). Each row explains
+  the production-safe default and the "why" behind non-obvious values.
+- **`docs/20-deployment.md`** §7.1: extended the per-host env matrix
+  with the audit keys, calling out the asymmetric defaults (NL-2
+  raises `DB_POOL_SIZE` to `20`; `XACCEL_ENABLED` stays `false` on
+  NL-1; `STORAGE_MIN_FREE_MB` is NL-2-only). §6.4: added a blocker
+  between NL-2 compose up and NL-1 having `migrate` done — NL-2 has
+  no `migrate` service, and worker crash-loops without the schema.
+  §10 checklists gained eight new items (S1/S2/S6/S10/L5/L7
+  verifications). §11 common-mistakes table gained rows 19-23 for the
+  new foot-guns (both off-site backends set; `XACCEL_ENABLED` on NL-1;
+  orphan age too short; disk guard at `0`; `sentry-sdk` missing from
+  a custom image build).
+- **`docs/22-backup-restore.md`** §4.3: documented the built-in
+  `replicate_offsite()` S3 + rclone paths (both binaries are now
+  bundled in `docker/backup.Dockerfile`), including the creds-mount
+  caveat — don't bake AWS keys / `rclone.conf` into the image.
+
+### Fixed — Deploy-readiness gaps
+
+- `deploy/nl1/.env.example` gained the four `CB_*` keys (L5),
+  `HTTPS_PROXY_URL` (S9), `STORAGE_MIN_FREE_MB=0` (S10) and
+  `XACCEL_ENABLED=false` (S6). The NL-1 operator no longer has to
+  diff against the root `.env.example` to discover them.
+- `docker/backup.Dockerfile` now installs Python deps from
+  `requirements/prod.lock` with `--require-hashes` (L8 parity with
+  api/bot/worker) and bundles `awscli` + `rclone` via apt so
+  `deploy/scripts/backup.sh::replicate_offsite` (S2) has a real
+  execution path in-container. The previous image ran unpinned
+  `pip install pydantic pydantic-settings structlog` and the off-site
+  step was a silent no-op that warned "aws-cli is missing" and
+  returned success.
+- `docker/api.Dockerfile` now `mkdir -p /var/lib/dwtgbot/{storage,tmp}
+  && chown app:app` before `USER app`, mirroring `worker.Dockerfile`.
+  On a fresh NL-2 compose up, api starts before worker (depends_on
+  api-healthy); without the mkdir the named docker volume was seeded
+  with root-owned dirs and the worker lost on its first
+  `storage.init()`.
+
+### Fixed — CI lockfile-check platform-independence
+
+The April-2026 L8 commit shipped lockfiles generated on Windows,
+which resolved to a different transitive graph than the one the
+Ubuntu CI runner produced (`uvloop` only on Linux; `colorama` /
+`tzdata` only on Windows). Three independent fixes:
+
+- `make lock` now uses `uv pip compile --universal` — every
+  platform-specific dep stays in the lock gated by an environment
+  marker, and a single lockfile is correct everywhere.
+- `make lock-check` runs the comparison compile inside a tmpdir with
+  the same relative `-o requirements/$r.lock` path, so the
+  uv-embedded header (which includes the output path by value)
+  matches and the diff doesn't flap on byte-identical content.
+- `.github/workflows/ci.yml::lockfile-check` pins `uv==0.11.7` — the
+  generated header and resolution order are stable per uv version,
+  so a floating install would flap the check on every minor release.
+
+### Fixed — `LoggingIntegration` type mismatch
+
+`configure_sentry` passed `event_level="ERROR"` to `LoggingIntegration`,
+which sentry-sdk 2.x types as `int | None`. Not caught locally because
+`sentry-sdk` was not installed in the dev venv (the import is behind a
+`try/except ImportError`, so mypy couldn't see the real signature); CI
+now installs from `requirements/prod.lock` where `sentry-sdk==2.19.2`
+is pinned, and mypy rejects the str. Fixed by passing the stdlib int
+`logging.ERROR`.
+
 ### Added — Audit roadmap L-series (medium-term improvements)
 
 Second pass on the architecture audit: the "потом" tier from the

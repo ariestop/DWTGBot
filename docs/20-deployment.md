@@ -492,6 +492,19 @@ nc -vz "${NL1_IP}" 6379   # redis
 
 If either fails, fix the private link / NL-1 firewall (§5.3) before continuing.
 
+> **NL-1 MUST be fully up before NL-2** — NL-2 does not have a
+> `migrate` service. The worker connects to NL-1's Postgres over
+> WireGuard and expects the schema to already be `alembic upgrade head`.
+> If you skip this, worker crash-loops with `relation "download_jobs"
+> does not exist`. The §8.1 mermaid enforces the order for a reason.
+> A sanity check before continuing to §6.5:
+>
+> ```bash
+> psql "postgresql://dwtgbot:${PG_PASS}@${NL1_IP}:5432/dwtgbot" \
+>     -c "SELECT version_num FROM alembic_version;"
+> # must print 0002_drop_unused_tables (or newer)
+> ```
+
 ### 6.5 Pull images and start (HTTP first)
 
 The first nginx start must serve **HTTP only** so certbot can solve the ACME HTTP-01 challenge against the live nginx.
@@ -593,7 +606,16 @@ echo | openssl s_client -connect media.example.com:443 -servername media.example
 | `BACKUP_DIR` | `/var/backups/dwtgbot` | n/a | |
 | `BACKUP_RETENTION_DAYS` | `14` | n/a | |
 | `BACKUP_INTERVAL_SECONDS` | `86400` | n/a | nightly |
+| `BACKUP_S3_BUCKET` / `BACKUP_S3_PREFIX` | optional | n/a | S2 off-site via `aws s3 cp`. `awscli` bundled in `docker/backup.Dockerfile`; AWS creds via instance profile or env. |
+| `BACKUP_RCLONE_REMOTE` | optional | n/a | S2 off-site via `rclone copyto`. Any rclone backend. `rclone` bundled in the backup image. Pick exactly one of S3 / rclone. |
 | `IMAGE_BOT` / `IMAGE_API` / `IMAGE_WORKER` / `IMAGE_BACKUP` | pinned tag | pinned tag | **never `:latest` in prod** |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT_S` / `DB_POOL_RECYCLE_S` | `5 / 10 / 30 / 1800` | **`20 / 20 / 30 / 1800`** on the worker container | S5. NL-2 worker holds a session per active job + cleanup; size the pool ≥ `WORKER_CONCURRENCY × 3`. |
+| `STORAGE_MIN_FREE_MB` | `0` | `~3 × MAX_FILE_SIZE_MB` (e.g. `6144`) | S10 disk-space backpressure. NL-2 only; NL-1 bot never writes to storage. |
+| `XACCEL_ENABLED` | `false` | `true` | S6 trust gate for `X-Accel-Redirect`. **NL-1 must keep this `false`** — flipping on without nginx in front of the api is a CVE. |
+| `ORPHAN_JOB_AGE_SECONDS` | `3900` | `3900` | S1 reaper threshold; **must be ≥ 2 × `JOB_TIMEOUT_SECONDS`**. |
+| `HTTPS_PROXY_URL` | optional | optional | S9 outbound proxy for yt-dlp. Empty = direct. |
+| `CB_ENABLED` / `CB_FAILURE_THRESHOLD` / `CB_WINDOW_SECONDS` / `CB_COOLDOWN_SECONDS` | `true / 5 / 60 / 300` | `true / 5 / 60 / 300` | L5 circuit breaker for yt-dlp. Redis-shared; leave defaults unless your upstream behaves unusually. |
+| `SENTRY_DSN` / `SENTRY_ENVIRONMENT` / `SENTRY_TRACES_SAMPLE_RATE` / `SENTRY_RELEASE` | optional | optional | L7 error aggregation. Blank DSN disables. Pass `SENTRY_RELEASE=$IMAGE_SHA` at deploy time for correlation. |
 
 ### 7.2 Sync rules NL-1 ↔ NL-2
 
@@ -827,6 +849,12 @@ If anything fails, jump to [`24-runbooks.md`](24-runbooks.md) and [`31-troublesh
 [ ] Image tags pinned (no `:latest` in `IMAGE_*`)
 [ ] Firewall rules in place on both hosts; default-deny verified
 [ ] Backup destination reachable from NL-1 (off-host copy if applicable)
+[ ] S10: `STORAGE_MIN_FREE_MB` on NL-2 set to a meaningful value (typically `3 × MAX_FILE_SIZE_MB`); `0` is accepted only for dev
+[ ] S6: `XACCEL_ENABLED=true` ONLY on NL-2; NL-1 stays `false` (flipping on without nginx = CVE)
+[ ] S1: `ORPHAN_JOB_AGE_SECONDS ≥ 2 × JOB_TIMEOUT_SECONDS` in both envs
+[ ] S2: if using off-site replication, exactly one of `BACKUP_S3_BUCKET` / `BACKUP_RCLONE_REMOTE` is set on NL-1; creds/remote tested (see §6.6 below and `22-backup-restore.md` §4)
+[ ] L7: `SENTRY_DSN` either set (DSN validated, event delivered in staging) or explicitly empty
+[ ] L7: `SENTRY_RELEASE=$IMAGE_SHA` exported at deploy time so events correlate with the shipped image
 ```
 
 ### 10.2 Deploy
@@ -845,7 +873,18 @@ If anything fails, jump to [`24-runbooks.md`](24-runbooks.md) and [`31-troublesh
 [ ] `error_class` histogram quiet (`24-runbooks.md` §0)
 [ ] No restart loops (`docker inspect ... -f '{{.RestartCount}}'` is stable)
 [ ] Backup ran (`ls -laht /var/backups/dwtgbot | head`) within `BACKUP_INTERVAL_SECONDS`
+[ ] S2: if off-site is configured, the same dump landed remotely
+       (`aws s3 ls s3://$BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX/` OR
+        `rclone lsd $BACKUP_RCLONE_REMOTE:` — see last-modified timestamp)
+[ ] S1: `docker logs dwtgbot_cleanup | jq -c 'select(.event=="orphan_jobs_reaped")'`
+       is empty (non-zero reap counts indicate a worker is crashing mid-job)
 [ ] Cleanup ran (`docker logs dwtgbot_cleanup | jq -c 'select(.event=="cleanup_done")' | tail`)
+[ ] L5: if upstream throttling happened, `docker exec dwtgbot_redis redis-cli KEYS 'cb:*'`
+       shows breaker keys only for the affected host(s) and they clear within
+       `CB_COOLDOWN_SECONDS`
+[ ] L7: if `SENTRY_DSN` is set, Sentry received at least one event from each
+       role (`bot`, `api`, `worker`, `cleanup`, `backup`) — trigger with a
+       manual `_logger.error` in staging or wait for natural traffic
 [ ] TLS cert valid > 30 days
 [ ] Documented the deployed version in your team's deploy log
 [ ] Monitoring alerts re-enabled (if you silenced any during deploy)
@@ -875,6 +914,11 @@ If anything fails, jump to [`24-runbooks.md`](24-runbooks.md) and [`31-troublesh
 | 16 | Set `LOG_LEVEL=DEBUG` in production and forgot | logs balloon; `jq` recipes get noisy | revert to `INFO` after triage |
 | 17 | Containers running on different `docker network` after manual edits | inter-service DNS fails | recreate via `docker compose up -d --force-recreate`; PR the desired state |
 | 18 | Credentials in CI logs | rotation required | use `::add-mask::` in GH Actions; rotate the leaked secret |
+| 19 | Both `BACKUP_S3_BUCKET` and `BACKUP_RCLONE_REMOTE` set | the script runs both paths; double bandwidth + double cost, no benefit | pick exactly one off-site backend |
+| 20 | `XACCEL_ENABLED=true` on NL-1 | the api emits `X-Accel-Redirect` to a non-existent nginx → downloads 502 (or worse, leak the internal path) | keep `XACCEL_ENABLED=false` on NL-1; only NL-2 fronts nginx (see §7.1) |
+| 21 | `ORPHAN_JOB_AGE_SECONDS < 2 × JOB_TIMEOUT_SECONDS` | cleanup worker reaps jobs that are still legitimately running → users get a confusing "failed" message while their file is uploading | raise `ORPHAN_JOB_AGE_SECONDS` or lower `JOB_TIMEOUT_SECONDS` |
+| 22 | `STORAGE_MIN_FREE_MB=0` on NL-2 | worker thrashes on a full disk, retries exhaust, user sees generic timeout | set to `3 × MAX_FILE_SIZE_MB` so S10 backpressure kicks in |
+| 23 | `SENTRY_DSN` set but `sentry-sdk` missing at runtime | not possible with `prod.lock` (bundled), but if someone rebuilds the image from `dev.lock` by hand, `configure_sentry` logs a warning and silently returns | always deploy from `prod.lock`; confirm `python -c "import sentry_sdk"` in the image |
 
 ---
 

@@ -205,10 +205,38 @@ What you get out of the box: **one copy, on the same host as the database**. Tha
 
 | Option | Setup effort | Safety |
 |---|---|---|
+| **Built-in `replicate_offsite()` — `aws s3 cp` or `rclone copyto`** | **lowest** (bundled in `docker/backup.Dockerfile`; one env var) | good; fail-open warnings keep local copy authoritative |
 | `rsync` to a second host every N hours | low | good (different machine) |
 | `restic` / `borg` to S3-compatible storage | medium | excellent (encrypted, deduped, off-region) |
 | Cloud snapshot of the `backups` volume | depends on provider | good (vendor-locked) |
 | Manual `scp` after each verified deploy | low | poor (operator forgets) |
+
+**Built-in recipe** (S2 audit fix). The `backup` container already runs
+every `BACKUP_INTERVAL_SECONDS`; after the local dump lands and the
+retention prune runs, `deploy/scripts/backup.sh::replicate_offsite()`
+uploads the fresh dump to *one* configured backend. Both `awscli` (v1,
+Debian package) and `rclone` are bundled in `docker/backup.Dockerfile`
+so the path is non-no-op out of the box.
+
+```dotenv
+# deploy/nl1/.env — pick exactly one
+BACKUP_S3_BUCKET=my-dwtgbot-backups          # creds: instance profile or env
+BACKUP_S3_PREFIX=dwtgbot                     # object-key prefix
+# OR
+BACKUP_RCLONE_REMOTE=myremote:dwtgbot/backups  # `rclone config` first
+```
+
+Both are **fail-open**: if the upload fails the script logs a warning
+and returns success — the local dump in `BACKUP_DIR` is authoritative.
+A CloudWatch alert on absent `Put-Object` events (or the equivalent
+for rclone) is the operator's job.
+
+> **Caveat:** `aws-cli v1` from Debian picks up creds from the
+> environment, `~/.aws/credentials`, or an instance profile. Mount
+> the creds file read-only into the `backup` container or set
+> `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `deploy/nl1/.env`.
+> For `rclone`, mount `/home/app/.config/rclone/rclone.conf` from
+> outside the image — don't bake secrets into the image.
 
 Minimal `rsync` recipe (host cron on NL-1 every 6 h):
 
