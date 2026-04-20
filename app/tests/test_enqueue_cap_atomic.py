@@ -60,6 +60,11 @@ class _AtomicRepo(JobsRepository):
             self.active += 1
             return await self.create(job)
 
+    async def reap_orphan_processing(self, *, older_than_seconds: int) -> int:
+        # S1 (audit fix): cleanup-worker concern; not exercised here.
+        del older_than_seconds
+        return 0
+
 
 class _FakeQueue:
     def __init__(self) -> None:

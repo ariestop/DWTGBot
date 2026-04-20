@@ -46,3 +46,16 @@ class JobsRepository(ABC):
         the same ``user_id`` — Postgres advisory locks are the
         recommended primitive here.
         """
+
+    @abstractmethod
+    async def reap_orphan_processing(self, *, older_than_seconds: int) -> int:
+        """S1 (audit fix): mark jobs FAILED when they're stuck in
+        ``PROCESSING`` past ``older_than_seconds`` and the queue can no
+        longer make progress on them (worker died mid-cycle).
+
+        Without this, a SIGKILL'd worker leaves rows in PROCESSING
+        forever — they keep counting against the per-user concurrency
+        cap until a human notices. Returns the number of rows touched.
+        Implementations MUST set ``error_message`` so operators can
+        triage from logs / Grafana alerts.
+        """

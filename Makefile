@@ -12,6 +12,7 @@ COMPOSE_NL1 := docker compose -f deploy/nl1/docker-compose.yml --env-file deploy
 COMPOSE_NL2 := docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env
 
 .PHONY: help venv install dev-install lint fmt typecheck test \
+        lock lock-check \
         up down logs ps restart \
         nl1-up nl1-down nl1-logs nl2-up nl2-down nl2-logs \
         migrate revision worker bot api \
@@ -27,11 +28,37 @@ venv: ## Create local virtualenv
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install -U pip wheel
 
-install: venv ## Install prod dependencies
-	$(PIP) install -r requirements/prod.txt
+install: venv ## Install prod dependencies from lockfile
+	$(PIP) install -r requirements/prod.lock
 
-dev-install: venv ## Install dev dependencies
-	$(PIP) install -r requirements/dev.txt
+dev-install: venv ## Install dev dependencies from lockfile
+	$(PIP) install -r requirements/dev.lock
+
+# L8: transitive-pin lockfiles. `make lock` regenerates all three;
+# `make lock-check` fails in CI if a human-edited requirements/*.txt
+# drifts from requirements/*.lock. ``uv`` is invoked via
+# ``python -m uv`` to avoid pinning the lock workflow to a particular
+# PATH resolution (wheel installs differ between venv/global).
+PY_LOCK ?= python3.14
+LOCK_FLAGS := --python-version 3.14 --generate-hashes --quiet
+
+lock: ## Regenerate requirements/*.lock from *.txt
+	$(PY_LOCK) -m uv pip compile requirements/base.txt -o requirements/base.lock $(LOCK_FLAGS)
+	$(PY_LOCK) -m uv pip compile requirements/dev.txt  -o requirements/dev.lock  $(LOCK_FLAGS)
+	$(PY_LOCK) -m uv pip compile requirements/prod.txt -o requirements/prod.lock $(LOCK_FLAGS)
+
+lock-check: ## Fail if *.lock drifts from *.txt (used in CI)
+	@tmpdir=$$(mktemp -d); \
+	for r in base dev prod; do \
+	  $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o $$tmpdir/$$r.lock $(LOCK_FLAGS); \
+	  if ! diff -q requirements/$$r.lock $$tmpdir/$$r.lock >/dev/null; then \
+	    echo "::error::requirements/$$r.lock is stale — run 'make lock'"; \
+	    diff -u requirements/$$r.lock $$tmpdir/$$r.lock || true; \
+	    rm -rf $$tmpdir; exit 1; \
+	  fi; \
+	done; \
+	rm -rf $$tmpdir; \
+	echo "lockfiles are up to date"
 
 precommit-install: ## Install pre-commit git hooks
 	$(VENV)/bin/pre-commit install

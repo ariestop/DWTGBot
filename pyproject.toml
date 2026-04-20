@@ -55,7 +55,8 @@ ignore = [
 "app/config.py" = ["S104"]                    # 0.0.0.0 bind defaults inside containers
 "app/api/**" = ["B008"]                       # FastAPI Depends(...) idiom
 "app/bot/callbacks/download.py" = ["PLR0911", "PLR0912"]  # callback dispatch table
-"app/infrastructure/cache/redis_state_store.py" = ["S301"]  # we control both pickle ends
+# NOTE: redis_state_store moved off pickle in S4 (audit fix). The
+# previous S301 ignore is no longer needed; msgpack is bandit-safe.
 "app/infrastructure/queue/worker_settings.py" = ["RUF012"]  # arq WorkerSettings uses mutable class defaults
 "deploy/**" = ["ALL"]
 

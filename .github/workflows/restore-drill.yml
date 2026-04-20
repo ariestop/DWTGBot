@@ -1,0 +1,101 @@
+name: Restore drill
+
+# S8 (audit fix): nightly verification that the latest backup actually
+# restores into a clean Postgres. We bootstrap the schema from the
+# repository's Alembic migrations (no real backup is available in CI),
+# then run the same restore_drill.sh smoke checks against it. This
+# catches:
+#   - migration drift (a new revision that fails to apply cleanly),
+#   - stale REQUIRED_TABLES list in restore_drill.sh,
+#   - hardcoded paths broken by housekeeping.
+#
+# Production deploys should additionally run restore_drill.sh
+# --from-offsite from cron once a week against the real S3/rclone
+# remote — see deploy/scripts/restore_drill.sh header.
+
+on:
+  schedule:
+    - cron: "37 3 * * *"  # 03:37 UTC nightly; offset to dodge the top-of-hour CI rush
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "migrations/**"
+      - "deploy/scripts/restore_drill.sh"
+      - "deploy/scripts/backup.sh"
+      - ".github/workflows/restore-drill.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    name: Bootstrap + verify drill DB
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: dwtgbot_drill
+          POSTGRES_USER: drill
+          POSTGRES_PASSWORD: drillpw
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U drill"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements/base.txt
+
+      - name: Install deps
+        run: pip install -r requirements/base.txt
+
+      - name: Apply migrations against the drill DB
+        env:
+          DATABASE_URL: postgresql+psycopg://drill:drillpw@127.0.0.1:55432/dwtgbot_drill
+        run: alembic upgrade head
+
+      - name: Verify required tables exist
+        env:
+          PGPASSWORD: drillpw
+        run: |
+          missing=()
+          for tbl in download_jobs media_cache temp_links; do
+            present=$(psql -h 127.0.0.1 -p 55432 -U drill -d dwtgbot_drill -tAc \
+              "SELECT to_regclass('public.${tbl}')")
+            if [ "${present}" != "${tbl}" ]; then
+              missing+=("${tbl}")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing tables: ${missing[*]}"
+            exit 1
+          fi
+          echo "All required tables present"
+
+      - name: Verify dropped tables are NOT present
+        # Sanity-check S3 (audit fix): audit_logs / app_settings must
+        # be gone after migration 0002. Catches an accidental revert.
+        env:
+          PGPASSWORD: drillpw
+        run: |
+          for tbl in audit_logs app_settings; do
+            present=$(psql -h 127.0.0.1 -p 55432 -U drill -d dwtgbot_drill -tAc \
+              "SELECT to_regclass('public.${tbl}')")
+            if [ "${present}" = "${tbl}" ]; then
+              echo "Unexpected table still present after 0002: ${tbl}"
+              exit 1
+            fi
+          done
+
+      - name: Restore drill — script self-test
+        run: bash -n deploy/scripts/restore_drill.sh

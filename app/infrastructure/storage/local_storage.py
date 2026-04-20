@@ -33,6 +33,8 @@ class LocalStorage:
         self._root = Path(settings.STORAGE_PATH)
         self._tmp_root = Path(settings.STORAGE_TMP_PATH)
         self._max_bytes = settings.max_file_size_bytes
+        # S10: backpressure threshold. ``0`` disables the check.
+        self._min_free_bytes = settings.STORAGE_MIN_FREE_MB * 1024 * 1024
 
     def init(self) -> None:
         for p in (self._root, self._tmp_root, self._root / "jobs"):
@@ -86,6 +88,39 @@ class LocalStorage:
         if size_bytes > self._max_bytes:
             limit_mb = self._max_bytes // 1024 // 1024
             raise StorageError(f"Result size {size_bytes} exceeds MAX_FILE_SIZE_MB ({limit_mb} MB)")
+
+    def free_bytes(self) -> int:
+        """Best-effort free-space probe on STORAGE_PATH.
+
+        Returns ``-1`` when ``statvfs`` is not available (e.g. Windows
+        host outside Docker, exotic FS) — callers must treat ``-1`` as
+        "skip the check" rather than "no free space".
+        """
+        try:
+            usage = shutil.disk_usage(self._root)
+        except OSError:
+            return -1
+        return int(usage.free)
+
+    def assert_free_space(self) -> None:
+        """S10: refuse to start a new download when disk is nearly full.
+
+        Raises ``StorageError`` so the caller can map it onto a user-
+        facing "service is busy" message and the worker can fail-fast
+        without dirtying the job dir. No-op when ``STORAGE_MIN_FREE_MB``
+        is unset (default).
+        """
+        if self._min_free_bytes <= 0:
+            return
+        free = self.free_bytes()
+        if free < 0:
+            return
+        if free < self._min_free_bytes:
+            min_mb = self._min_free_bytes // 1024 // 1024
+            free_mb = free // 1024 // 1024
+            raise StorageError(
+                f"Storage almost full: {free_mb} MB free, STORAGE_MIN_FREE_MB={min_mb} MB required"
+            )
 
     def package_zip(self, files: list[Path], *, job_id: int, base_name: str) -> Path:
         if not files:

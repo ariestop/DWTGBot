@@ -48,3 +48,10 @@ python-multipart==0.0.12
 # app/composition.py:_build_metrics). Pinning here keeps the prod image
 # self-contained for ADR-0006's in-process exporter design.
 prometheus-client==0.21.0
+
+# L7: Sentry error aggregation. Disabled by default (SENTRY_DSN="") —
+# installed unconditionally so flipping the env var is a redeploy,
+# not a dependency bump. 2.19 is the first line shipping cp314
+# wheels and adds FastAPI/ASGI `sentry_sdk.integrations.fastapi`
+# compatible with httpx 0.27 (Sentry's own HTTP client wrapper).
+sentry-sdk==2.19.2

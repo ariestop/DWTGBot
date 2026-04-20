@@ -84,6 +84,14 @@ server {
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
+        # S6 (audit fix): X-Internal-XAccel is the trust gate that flips
+        # ``api`` from streaming bytes itself to ``X-Accel-Redirect``.
+        # If a client supplies it, nginx happily forwards the client
+        # value unless we explicitly overwrite it. ``proxy_set_header``
+        # in nginx replaces the header on the upstream request, so the
+        # client-supplied value is effectively dropped here. The
+        # comment exists because reordering or removing this line
+        # silently re-introduces the spoofing path.
         proxy_set_header   X-Internal-XAccel "1";
         proxy_read_timeout 60s;
         proxy_buffering    off;

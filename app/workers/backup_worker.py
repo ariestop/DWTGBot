@@ -17,6 +17,7 @@ import sys
 
 from app.config import get_settings
 from app.logging_config import configure_logging, get_logger
+from app.observability.sentry import configure_sentry
 
 DEFAULT_INTERVAL = 24 * 60 * 60  # daily
 
@@ -42,6 +43,7 @@ async def _run_backup() -> int:
 async def _amain() -> int:
     settings = get_settings()
     configure_logging(settings)
+    configure_sentry(settings, role="backup")
     log = get_logger("dwtgbot.backup")
 
     interval = int(os.environ.get("BACKUP_INTERVAL_SECONDS", DEFAULT_INTERVAL))

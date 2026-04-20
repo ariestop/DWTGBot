@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.infrastructure.queue.arq_pool import WORKER_QUEUE_NAME, build_redis_settings
 from app.infrastructure.queue.tasks import process_download_job
 from app.logging_config import configure_logging, get_logger
+from app.observability.sentry import configure_sentry
 
 _logger = get_logger(__name__)
 
@@ -20,6 +21,7 @@ _logger = get_logger(__name__)
 async def _on_startup(ctx: dict[str, Any]) -> None:
     settings = get_settings()
     configure_logging(settings)
+    configure_sentry(settings, role="worker")
     errors = settings.validate_runtime(require_storage=True, require_tools=True)
     if errors:
         for err in errors:

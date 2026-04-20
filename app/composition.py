@@ -18,7 +18,7 @@ from app.application.services.delivery_service import DeliveryService
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.providers import ProviderRegistry
 from app.application.services.queue import QueueProducer
-from app.application.services.rate_limit import InMemoryNoticeThrottle, NoticeThrottle
+from app.application.services.rate_limit import NoticeThrottle
 from app.application.services.rate_limit_gate import NoopRateLimitGate, RateLimitGate
 from app.application.services.rate_limit_metrics import (
     NoopRateLimitMetrics,
@@ -31,10 +31,15 @@ from app.application.use_cases.enqueue_download import EnqueueDownloadUseCase
 from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.bot.container import BotContainer
 from app.config import Settings
+from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
+from app.infrastructure.cache.redis_notice_throttle import RedisNoticeThrottle
 from app.infrastructure.cache.redis_pool import build_redis
 from app.infrastructure.cache.redis_rate_limit_gate import RedisRateLimitGate
 from app.infrastructure.cache.redis_state_store import RedisRequestStateStore
 from app.infrastructure.db.repositories.jobs_repo_impl import SqlAlchemyJobsRepository
+from app.infrastructure.db.repositories.media_cache_repo_impl import (
+    SqlAlchemyMediaCacheRepository,
+)
 from app.infrastructure.db.repositories.temp_links_repo_impl import SqlAlchemyTempLinksRepository
 from app.infrastructure.db.session import build_engine, build_sessionmaker
 from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
@@ -108,6 +113,31 @@ class WorkerComposition:
 
 
 @dataclass(slots=True)
+class CleanupComposition:
+    """Minimal infra bundle for the cleanup worker (L13 audit fix).
+
+    Historically ``cleanup_worker`` reused ``build_api`` to get
+    ``temp_links_repo`` + ``storage``. That pulled the /metrics HTTP
+    server into the cleanup process, risking port collisions when
+    api + cleanup co-located on a single node and inflating the
+    surface area of a process whose only job is a background loop.
+
+    This bundle carries *only* what a cleanup cycle touches — no
+    /metrics server, no arq pool, no dev-only enqueue shim.
+    """
+
+    core: CoreInfra
+    temp_links_repo: SqlAlchemyTempLinksRepository
+    storage: LocalStorage
+    media_cache_repo: SqlAlchemyMediaCacheRepository
+    jobs_repo: SqlAlchemyJobsRepository
+
+    async def aclose(self) -> None:
+        await self.core.redis.aclose()  # type: ignore[attr-defined]
+        await self.core.engine.dispose()
+
+
+@dataclass(slots=True)
 class ApiComposition:
     core: CoreInfra
     temp_links_repo: SqlAlchemyTempLinksRepository
@@ -142,8 +172,25 @@ def _build_core(settings: Settings) -> CoreInfra:
     return CoreInfra(settings=settings, engine=engine, sessionmaker=sm, redis=redis)
 
 
-def _build_provider_registry(settings: Settings, storage: LocalStorage) -> ProviderRegistry:
-    ytdlp = YtDlpRunner(settings)
+def _build_provider_registry(
+    settings: Settings,
+    storage: LocalStorage,
+    *,
+    redis: Redis | None = None,
+) -> ProviderRegistry:
+    # L5 (audit fix): per-host circuit breaker shared across the fleet
+    # via Redis. ``redis=None`` disables the breaker (tests / one-off
+    # shells without Redis). In production both the bot and the
+    # worker build the registry with a live Redis connection.
+    breaker: RedisCircuitBreaker | None = None
+    if settings.CB_ENABLED and redis is not None:
+        breaker = RedisCircuitBreaker(
+            redis,
+            failure_threshold=settings.CB_FAILURE_THRESHOLD,
+            window_seconds=settings.CB_WINDOW_SECONDS,
+            cooldown_seconds=settings.CB_COOLDOWN_SECONDS,
+        )
+    ytdlp = YtDlpRunner(settings, breaker=breaker)
     yt = YouTubeProvider(settings=settings, ytdlp=ytdlp, storage=storage)
     ig = InstagramProvider(settings=settings, ytdlp=ytdlp, storage=storage)
     return DefaultProviderRegistry([yt, ig])
@@ -152,7 +199,7 @@ def _build_provider_registry(settings: Settings, storage: LocalStorage) -> Provi
 async def build_bot(settings: Settings) -> BotComposition:
     core = _build_core(settings)
     storage = LocalStorage(settings)  # bot doesn't need disk; harmless to construct
-    providers = _build_provider_registry(settings, storage)
+    providers = _build_provider_registry(settings, storage, redis=core.redis)
 
     state_store: RequestStateStore = RedisRequestStateStore(core.redis)
 
@@ -160,11 +207,13 @@ async def build_bot(settings: Settings) -> BotComposition:
     queue: QueueProducer = ArqQueueProducer(arq_pool)
 
     jobs_repo = SqlAlchemyJobsRepository(core.sessionmaker)
+    media_cache_repo = SqlAlchemyMediaCacheRepository(core.sessionmaker)
 
     analyze = AnalyzeLinkUseCase(
         providers=providers,
         state_store=state_store,
         request_ttl_seconds=settings.MEDIA_CACHE_TTL_SECONDS,
+        media_cache=media_cache_repo,
     )
 
     rl_metrics, job_metrics, metrics_server = _build_metrics(settings)
@@ -185,7 +234,10 @@ async def build_bot(settings: Settings) -> BotComposition:
         )
     else:
         rate_limit_gate = NoopRateLimitGate()
-    notice_throttle: NoticeThrottle = InMemoryNoticeThrottle()
+    # L4 (audit fix): cross-process throttle on "too many requests" /
+    # cap-hit notices. Previously a per-process dict — would spam the
+    # user once per replica behind a shared webhook.
+    notice_throttle: NoticeThrottle = RedisNoticeThrottle(core.redis)
 
     container = BotContainer(
         settings=settings,
@@ -280,7 +332,7 @@ def build_worker(settings: Settings) -> WorkerComposition:
     storage = LocalStorage(settings)
     storage.init()
 
-    providers = _build_provider_registry(settings, storage)
+    providers = _build_provider_registry(settings, storage, redis=core.redis)
     jobs_repo = SqlAlchemyJobsRepository(core.sessionmaker)
     temp_links_repo = SqlAlchemyTempLinksRepository(core.sessionmaker)
 
@@ -316,6 +368,28 @@ def build_worker(settings: Settings) -> WorkerComposition:
         storage=storage,
         job_metrics=job_metrics,
         metrics_server=metrics_server,
+    )
+
+
+async def build_cleanup(settings: Settings) -> CleanupComposition:
+    """Build the cleanup-worker composition (L13 audit fix).
+
+    Unlike ``build_api`` this does NOT wire a /metrics server or an
+    arq pool — both were incidental and caused port clashes when a
+    host ran api + cleanup side-by-side.
+    """
+    core = _build_core(settings)
+    storage = LocalStorage(settings)
+    storage.init()
+    temp_links_repo = SqlAlchemyTempLinksRepository(core.sessionmaker)
+    media_cache_repo = SqlAlchemyMediaCacheRepository(core.sessionmaker)
+    jobs_repo = SqlAlchemyJobsRepository(core.sessionmaker)
+    return CleanupComposition(
+        core=core,
+        temp_links_repo=temp_links_repo,
+        storage=storage,
+        media_cache_repo=media_cache_repo,
+        jobs_repo=jobs_repo,
     )
 
 

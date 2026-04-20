@@ -22,7 +22,7 @@ WORKDIR /opt/build
 COPY requirements/ requirements/
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install -U pip wheel \
- && /opt/venv/bin/pip install -r requirements/prod.txt
+ && /opt/venv/bin/pip install --require-hashes -r requirements/prod.lock
 
 FROM python:${PYTHON_VERSION}-slim AS runtime
 

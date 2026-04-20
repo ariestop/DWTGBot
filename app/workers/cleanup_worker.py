@@ -4,9 +4,13 @@ Periodic cleanup worker.
 Runs as a long-lived process (separate container) and performs:
   - deactivate temp links whose ``expires_at`` has passed,
   - delete files associated with already-inactive temp links,
-  - purge expired media_cache rows.
+  - purge expired media_cache rows,
+  - reap orphan ``PROCESSING`` jobs (S1 audit fix).
 
 The interval is set by ``CLEANUP_INTERVAL_SECONDS``.
+
+L13 (audit fix): uses ``composition.build_cleanup`` instead of
+``build_api`` — no /metrics server, no arq pool, no dev-only shims.
 """
 
 from __future__ import annotations
@@ -16,15 +20,17 @@ import signal
 import sys
 from pathlib import Path
 
-from app.composition import build_api
+from app.composition import CleanupComposition, build_cleanup
 from app.config import get_settings
-from app.infrastructure.db.repositories.media_cache_repo_impl import (
-    SqlAlchemyMediaCacheRepository,
-)
 from app.logging_config import configure_logging, get_logger
+from app.observability.sentry import configure_sentry
 
 
-async def _run_cycle(composition, media_cache_repo) -> None:
+async def _run_cycle(
+    composition: CleanupComposition,
+    *,
+    orphan_age_seconds: int,
+) -> None:
     log = get_logger("dwtgbot.cleanup")
 
     deactivated = await composition.temp_links_repo.deactivate_expired()
@@ -44,14 +50,24 @@ async def _run_cycle(composition, media_cache_repo) -> None:
     if removed_files:
         log.info("temp_link_files_removed", count=removed_files)
 
-    purged = await media_cache_repo.purge_expired()
+    purged = await composition.media_cache_repo.purge_expired()
     if purged:
         log.info("media_cache_purged", count=purged)
+
+    # S1 (audit fix): mark stuck PROCESSING jobs FAILED so they release
+    # the per-user cap. Logged at WARNING because a non-zero count
+    # always indicates a worker death — operators should investigate.
+    reaped = await composition.jobs_repo.reap_orphan_processing(
+        older_than_seconds=orphan_age_seconds,
+    )
+    if reaped:
+        log.warning("orphan_jobs_reaped", count=reaped, age_threshold_s=orphan_age_seconds)
 
 
 async def _amain() -> int:
     settings = get_settings()
     configure_logging(settings)
+    configure_sentry(settings, role="cleanup")
     log = get_logger("dwtgbot.cleanup")
 
     errors = settings.validate_runtime(require_storage=True, require_tools=False)
@@ -60,8 +76,7 @@ async def _amain() -> int:
             log.error("cleanup_startup_check_failed", reason=err)
         return 2
 
-    composition = await build_api(settings)
-    media_cache_repo = SqlAlchemyMediaCacheRepository(composition.core.sessionmaker)
+    composition = await build_cleanup(settings)
 
     stop = asyncio.Event()
 
@@ -72,11 +87,18 @@ async def _amain() -> int:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _stop)
 
-    log.info("cleanup_started", interval_sec=settings.CLEANUP_INTERVAL_SECONDS)
+    log.info(
+        "cleanup_started",
+        interval_sec=settings.CLEANUP_INTERVAL_SECONDS,
+        orphan_age_sec=settings.ORPHAN_JOB_AGE_SECONDS,
+    )
     try:
         while not stop.is_set():
             try:
-                await _run_cycle(composition, media_cache_repo)
+                await _run_cycle(
+                    composition,
+                    orphan_age_seconds=settings.ORPHAN_JOB_AGE_SECONDS,
+                )
             except Exception:  # pragma: no cover
                 log.exception("cleanup_cycle_error")
             try:

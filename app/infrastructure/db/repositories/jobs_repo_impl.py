@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -144,6 +146,41 @@ class SqlAlchemyJobsRepository(JobsRepository):
             session.add(row)
             await session.flush()
             return _to_entity(row)
+
+    async def reap_orphan_processing(self, *, older_than_seconds: int) -> int:
+        """Single-shot UPDATE that flips long-stuck PROCESSING → FAILED.
+
+        ``updated_at`` is the freshness signal — every status hop in
+        ``ProcessDownloadUseCase`` writes through ``update()`` which
+        bumps the column via the ``TimestampMixin``. A row whose
+        ``updated_at`` is older than ``older_than_seconds`` AND still
+        in PROCESSING is therefore an orphan: either the worker died
+        or arq lost the job mid-flight. Either way, retrying via
+        ``arq`` is no longer possible (no enqueued task exists), so
+        terminal-FAILED is the safe verdict.
+
+        The error message is intentionally explicit ("orphan reaped")
+        so it bubbles to operators' dashboards and logs without
+        getting confused with a genuine yt-dlp failure.
+        """
+        if older_than_seconds < 1:
+            raise ValueError("older_than_seconds must be >= 1")
+        threshold = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
+        async with self._sm.begin() as session:
+            stmt = (
+                update(DownloadJobModel)
+                .where(
+                    DownloadJobModel.status == JobStatus.PROCESSING,
+                    DownloadJobModel.updated_at < threshold,
+                )
+                .values(
+                    status=JobStatus.FAILED,
+                    error_message=("orphan reaped: worker did not heartbeat within the SLA window"),
+                    completed_at=datetime.now(UTC),
+                )
+            )
+            result = await session.execute(stmt)
+            return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
 
 def _to_entity(row: DownloadJobModel) -> DownloadJob:

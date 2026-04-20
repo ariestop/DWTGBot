@@ -27,6 +27,30 @@ black drop-in). Do not introduce `black` separately.
 CI runs the same on every PR (`.github/workflows/ci.yml`) plus shellcheck
 for `deploy/scripts/`.
 
+## Dependencies (L8)
+
+The project ships **two files per dependency tier**:
+
+| File | Purpose | Edit by hand? |
+|---|---|---|
+| `requirements/base.txt`, `dev.txt`, `prod.txt` | Top-level pins with a rationale comment for every bump | ✅ |
+| `requirements/base.lock`, `dev.lock`, `prod.lock` | Fully-resolved transitive pins + SHA-256 hashes, produced by `uv pip compile` | ❌ never — regenerate |
+
+Adding or bumping a dependency is always a two-step change:
+
+```bash
+# 1. edit requirements/<tier>.txt (add pin + rationale comment)
+# 2. regenerate the matching lockfile
+make lock
+# 3. commit both files in the same commit
+```
+
+CI's `lockfile-check` job reruns `uv pip compile` on a clean runner
+and fails the PR if the committed `*.lock` diverges from what the
+current `*.txt` would produce. Dockerfiles install from `prod.lock`
+with `--require-hashes`, so merging an out-of-sync pair would also
+fail image builds.
+
 ## Style
 
 - Follow the layered architecture (see [`docs/02-architecture.md`](docs/02-architecture.md)

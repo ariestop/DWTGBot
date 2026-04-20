@@ -16,12 +16,22 @@ from app.config import Settings
 
 
 def build_engine(settings: Settings) -> AsyncEngine:
+    """Build the async SQLAlchemy engine.
+
+    Pool sizing is read from Settings (S5): the previous hardcoded
+    ``pool_size=5, max_overflow=10`` was the right default for a single
+    bot/api process but starves a worker running with ``WORKER_CONCURRENCY``
+    > 5 (each download grabs a session for status updates). Production
+    deploys should raise ``DB_POOL_SIZE`` on the worker container.
+    """
     return create_async_engine(
         settings.database_url,
         echo=False,
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_timeout=settings.DB_POOL_TIMEOUT_S,
+        pool_recycle=settings.DB_POOL_RECYCLE_S,
     )
 
 

@@ -15,7 +15,7 @@ from app.domain.enums import JobStatus
 from app.domain.observability import file_size_class
 from app.domain.reason_class import ReasonClass, classify_exception
 from app.domain.repositories.jobs_repo import JobsRepository
-from app.exceptions import AppError, FileTooLargeError
+from app.exceptions import AppError, FileTooLargeError, StorageError
 from app.infrastructure.storage.local_storage import LocalStorage
 from app.infrastructure.telegram.sender import TelegramSender
 from app.logging_config import get_logger
@@ -76,6 +76,28 @@ class ProcessDownloadUseCase:
         await self._transition_to(job, JobStatus.PROCESSING, ReasonClass.OK)
 
         try:
+            # S10 (audit fix): backpressure on a near-full disk. We
+            # check *after* the PROCESSING transition (so the orphan
+            # reaper sees the row) but *before* allocating the job
+            # dir — failing here keeps the disk clean. Fail-permanent:
+            # retrying with the same disk pressure would just thrash.
+            #
+            # ``storage`` is allowed to be ``None`` in unit tests that
+            # only exercise the retry/error machinery (test_retry_semantics).
+            # Production wiring in ``composition.build_worker`` always
+            # injects a real ``LocalStorage``.
+            if self._storage is not None:
+                try:
+                    self._storage.assert_free_space()
+                except StorageError as exc:
+                    raise StorageError(
+                        str(exc),
+                        user_message=(
+                            "Сервис временно перегружен (нет свободного места). "
+                            "Попробуйте через несколько минут."
+                        ),
+                    ) from exc
+
             provider = self._providers.get(job.platform)
             info = await provider.get_info(job.source_url)
             options = provider.build_options(info)

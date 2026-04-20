@@ -10,11 +10,13 @@ from app.bot.application import build_application
 from app.composition import build_bot
 from app.config import get_settings
 from app.logging_config import configure_logging, get_logger
+from app.observability.sentry import configure_sentry
 
 
 async def _amain() -> int:
     settings = get_settings()
     configure_logging(settings)
+    configure_sentry(settings, role="bot")
     log = get_logger("dwtgbot.main_bot")
 
     errors = settings.validate_runtime(require_storage=False, require_tools=False)

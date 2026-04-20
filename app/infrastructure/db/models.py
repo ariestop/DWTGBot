@@ -1,4 +1,17 @@
-"""SQLAlchemy 2.x ORM models — single place for the DB schema."""
+"""SQLAlchemy 2.x ORM models — single place for the DB schema.
+
+NOTE on dropped tables (S3 audit fix)
+-------------------------------------
+``audit_logs`` and ``app_settings`` were defined here originally but
+never wired into any code path. Carrying them was a maintenance
+liability: every schema-touching ADR had to remember they existed,
+and they cluttered ``alembic check`` output. Migration
+``0002_drop_unused_tables`` removes them; the model classes are gone
+from this file. If you genuinely need an audit trail, prefer Loki
+queries on structured logs (``event_type=...``) — see
+``docs/14-logging-observability.md`` — and add a dedicated table
+back through a fresh ADR.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +33,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 
 from app.domain.enums import JobStatus, Platform
 from app.infrastructure.db.base import Base, TimestampMixin
@@ -119,26 +131,3 @@ class TempLinkModel(Base, TimestampMixin):
         CheckConstraint("max_downloads >= 1", name="max_downloads_positive"),
         CheckConstraint("downloads_count >= 0", name="downloads_count_non_negative"),
     )
-
-
-class AuditLogModel(Base):
-    __tablename__ = "audit_logs"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        index=True,
-        server_default=func.now(),
-    )
-
-
-class AppSettingModel(Base, TimestampMixin):
-    """Optional runtime-overridable settings table."""
-
-    __tablename__ = "app_settings"
-
-    key: Mapped[str] = mapped_column(String(128), primary_key=True)
-    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

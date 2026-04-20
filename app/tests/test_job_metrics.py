@@ -351,6 +351,11 @@ class _FakeJobsRepo(JobsRepository):
             return None
         return await self.create(job)
 
+    async def reap_orphan_processing(self, *, older_than_seconds: int) -> int:
+        # S1 (audit fix): exercised by cleanup_worker, not the enqueue path.
+        del older_than_seconds
+        return 0
+
 
 class _FakeQueue(QueueProducer):
     def __init__(self) -> None:

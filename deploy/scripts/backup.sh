@@ -50,6 +50,60 @@ prune_old() {
     | while read -r removed; do log_info "removed: ${removed}"; done
 }
 
+# ---------------------------------------------------------------------
+# S2 (audit fix): off-site replication.
+#
+# Local backups protect against accidental DELETE; they do NOT protect
+# against losing NL-1. We replicate the latest dump to one of:
+#
+#   - BACKUP_S3_BUCKET  → ``aws s3 cp`` (requires aws-cli + creds)
+#   - BACKUP_RCLONE_REMOTE → ``rclone copyto`` (any rclone backend)
+#
+# Both are best-effort: a failure logs a warning instead of aborting
+# the script (the local copy is still valid). Run this inline with the
+# normal backup so a single cron entry covers both planes.
+# ---------------------------------------------------------------------
+replicate_offsite() {
+  local outfile="$1"
+  local basename
+  basename="$(basename "${outfile}")"
+
+  if [[ -n "${BACKUP_S3_BUCKET:-}" ]]; then
+    if ! has_command aws; then
+      log_warn "BACKUP_S3_BUCKET set but aws-cli is missing; skipping S3 upload"
+    else
+      local s3_path="s3://${BACKUP_S3_BUCKET}/${BACKUP_S3_PREFIX:-dwtgbot}/${basename}"
+      log_info "Uploading ${basename} → ${s3_path}"
+      if aws s3 cp --only-show-errors "${outfile}" "${s3_path}"; then
+        log_ok "S3 upload complete (${s3_path})"
+      else
+        log_warn "S3 upload failed for ${s3_path} (local copy retained)"
+      fi
+    fi
+  fi
+
+  if [[ -n "${BACKUP_RCLONE_REMOTE:-}" ]]; then
+    if ! has_command rclone; then
+      log_warn "BACKUP_RCLONE_REMOTE set but rclone is missing; skipping remote upload"
+    else
+      local rc_path="${BACKUP_RCLONE_REMOTE%/}/${basename}"
+      log_info "Uploading ${basename} → ${rc_path}"
+      if rclone copyto --quiet "${outfile}" "${rc_path}"; then
+        log_ok "rclone upload complete (${rc_path})"
+      else
+        log_warn "rclone upload failed for ${rc_path} (local copy retained)"
+      fi
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------
+# Latest local dump path (used by replication + restore drill).
+# ---------------------------------------------------------------------
+latest_local_dump() {
+  ls -1t "${BACKUP_DIR}"/dwtgbot_*.sql.gz 2>/dev/null | head -n1
+}
+
 main() {
   if [[ -n "${POSTGRES_HOST:-}" && "${POSTGRES_HOST}" != "postgres" ]]; then
     run_in_container_mode
@@ -59,6 +113,15 @@ main() {
     die "No PG connection info and no compose stack — set POSTGRES_* env or run on NL-1 host"
   fi
   prune_old
+
+  local latest
+  latest="$(latest_local_dump || true)"
+  if [[ -n "${latest}" ]]; then
+    replicate_offsite "${latest}"
+  else
+    log_warn "No local dump found to replicate (run mode produced no file)"
+  fi
+
   log_ok "Backup complete"
 }
 

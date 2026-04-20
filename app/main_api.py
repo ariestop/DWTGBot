@@ -9,11 +9,13 @@ import uvicorn
 from app.api.app import create_app
 from app.config import get_settings
 from app.logging_config import configure_logging, get_logger
+from app.observability.sentry import configure_sentry
 
 
 def main() -> int:
     settings = get_settings()
     configure_logging(settings)
+    configure_sentry(settings, role="api")
     log = get_logger("dwtgbot.main_api")
 
     errors = settings.validate_runtime(require_storage=True, require_tools=False)

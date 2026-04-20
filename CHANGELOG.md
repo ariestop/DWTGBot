@@ -12,6 +12,172 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Added — Audit roadmap L-series (medium-term improvements)
+
+Second pass on the architecture audit: the "потом" tier from the
+April-2026 roadmap. Scope: seven items (L3, L4, L5, L7, L8, L11,
+L13) that improve scalability and DX without requiring an ADR or
+a deploy-topology change. Items L1, L2, L6, L9, L10 are
+intentionally deferred to dedicated sessions (each crosses an
+architectural invariant); L12 fell out as dead after S3 removed
+`AppSettingModel`.
+
+- **L3 — Async-friendly Telegram upload.** `TelegramSender` now
+  off-loads file reads through `asyncio.to_thread(path.read_bytes)`
+  before handing the payload to `InputFile`. PTB's `InputFile`
+  runs `.read()` synchronously in its constructor, so a 49 MiB
+  upload was previously tens of milliseconds of CPU-blocking I/O
+  on the event loop. Memory usage is bounded by
+  `TELEGRAM_MAX_UPLOAD_MB × WORKER_CONCURRENCY` (≈ 200 MiB at the
+  defaults).
+- **L4 — Redis-backed notice throttle.** New
+  `RedisNoticeThrottle` (`SET NX EX` per scope key) replaces the
+  single-process `InMemoryNoticeThrottle` in `composition.build_bot`.
+  Two bot replicas behind a shared webhook no longer both send
+  "you're over the rate limit" to the same user. Fail-open on
+  Redis errors mirrors `RedisRateLimitGate`.
+- **L5 — Circuit breaker for upstream (yt-dlp).** Per-host
+  breaker in Redis (`cb:{host}:failures` + `cb:{host}:open_until`)
+  integrated into `YtDlpRunner`. When
+  `CB_FAILURE_THRESHOLD` consecutive throttle-shaped errors
+  (HTTP 429 / "rate limit" / "too many requests") land within
+  `CB_WINDOW_SECONDS`, the breaker opens for
+  `CB_COOLDOWN_SECONDS` — subsequent calls raise
+  `UpstreamUnavailableError` (retryable) instead of hammering a
+  throttled upstream and risking IP bans. New env vars
+  `CB_ENABLED` (default `true`), `CB_FAILURE_THRESHOLD` (`5`),
+  `CB_WINDOW_SECONDS` (`60`), `CB_COOLDOWN_SECONDS` (`300`).
+- **L7 — Optional Sentry / GlitchTip integration.**
+  `app/observability/sentry.py::configure_sentry(settings, role=...)`
+  is called by every entrypoint (`main_bot`, `main_api`,
+  `worker_settings._on_startup`, `cleanup_worker`,
+  `backup_worker`). No-op when `SENTRY_DSN=""`; when set, wires
+  the stdlib logging integration (`ERROR+` → event) with
+  `send_default_pii=False` and tags every event with the
+  originating process `role`. New env vars `SENTRY_DSN`,
+  `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` (default
+  `0.0`), `SENTRY_RELEASE`. `sentry-sdk==2.19.2` added to
+  `requirements/base.txt` so the code path is always available —
+  flipping it on is a single env-var redeploy, not a dep bump.
+- **L8 — Dependency lockfiles (`uv pip compile`).**
+  `requirements/{base,dev,prod}.lock` now capture fully-resolved
+  transitive pins with SHA-256 hashes. `Makefile` gains
+  `make lock` (regenerate) and `make lock-check` (CI-friendly
+  diff against a fresh compile). New CI job
+  `lockfile-check` fails PRs that edit `requirements/*.txt`
+  without regenerating the matching `.lock`. All prod
+  Dockerfiles (`bot`, `api`, `worker`) install with
+  `pip install --require-hashes -r requirements/prod.lock`, so
+  image contents are bit-stable across builds.
+  [`CONTRIBUTING.md`](CONTRIBUTING.md) documents the
+  edit-lock-commit workflow.
+- **L11 — Load-test scripts in `app/tests/load/`.**
+  Lifted the shell recipes from `docs/37-load-and-capacity.md`
+  §6 into executable scripts (`smoke.sh`, `concurrency.sh`,
+  `mix.sh`) plus a Locust-based alternative (`locustfile.py`).
+  Locust is intentionally **not** in `requirements/dev.txt` —
+  the L11 tests are opt-in; `pip install locust` when you
+  actually need open-model load with percentile reporting. All
+  scripts use the existing `/internal/test/enqueue` endpoint
+  (dev-only, gated three ways — see `docs/37` §6.1).
+  [`app/tests/load/README.md`](app/tests/load/README.md)
+  describes pre-requisites and the metric table to fill in per
+  run.
+- **L13 — Dedicated `cleanup_worker` composition.** New
+  `CleanupComposition` bundle and `build_cleanup(settings)`
+  builder. `cleanup_worker._amain` no longer reuses
+  `build_api` — the cleanup process used to incidentally start
+  a `/metrics` HTTP server (and an arq pool, and dev-only
+  shims), which created port-collision risk when `api` and
+  `cleanup` co-located on the same host. The new bundle carries
+  only the four dependencies `_run_cycle` actually touches:
+  `core`, `temp_links_repo`, `storage`, `media_cache_repo`,
+  `jobs_repo`.
+
+New tests: `test_redis_notice_throttle.py`,
+`test_redis_circuit_breaker.py`, `test_sentry_config.py`.
+
+`.env.example` + `deploy/{nl1,nl2}/.env.example` updated with
+`CB_*` and `SENTRY_*` keys (safe defaults — circuit breaker on,
+Sentry off).
+
+### Added — Audit roadmap S1–S10 (technical-debt sweep)
+
+Implements the "urgent" tier (S1–S10) of the April-2026
+architecture audit. All items below are operationally
+backwards-compatible: new env vars default to safe values
+matching pre-audit behaviour, and the new schema in
+`0002_drop_unused_tables.py` is reversible.
+
+- **S1 — Orphan-job reaper.** New abstract method
+  `JobsRepository.reap_orphan_processing(*, older_than_seconds)`
+  marks `download_jobs` rows stuck in `PROCESSING` (worker crash,
+  OOM-kill, stale advisory lock) as `FAILED` with reason
+  `internal_error`. `cleanup_worker` calls it every cycle using
+  the new `ORPHAN_JOB_AGE_SECONDS` env (default `7200` = 2 h).
+- **S2 — Off-site backup replication.** `deploy/scripts/backup.sh`
+  gained a `replicate_offsite` step that pushes the freshly
+  rotated dump to S3 (`aws s3 cp`) or any rclone remote
+  (`rclone copyto`) when `BACKUP_OFFSITE_KIND` ∈ `{s3,rclone,none}`
+  is set. Default `none` preserves prior behaviour.
+- **S3 — Drop unused tables.** Removed `AuditLogModel` and
+  `AppSettingModel` from `app/infrastructure/db/models.py`
+  (never written by any use case). Alembic revision
+  `0002_drop_unused_tables` drops `audit_logs` / `app_settings`;
+  `downgrade()` recreates the minimal schema for rollback.
+- **S4 — Replace `pickle` in Redis state store with versioned JSON.**
+  `RedisRequestStateStore` now serialises `AnalyzedMedia` payloads
+  via `json` with a `v1:` schema prefix. Eliminates the
+  arbitrary-code-execution risk on Redis tampering and removes the
+  `S301` lint exemption. Old `pickle`-encoded keys are treated as
+  cache misses (TTL-bounded; no migration required).
+- **S5 — Externalise SQLAlchemy pool.** New env vars
+  `DB_POOL_SIZE` (default `10`), `DB_MAX_OVERFLOW` (`5`),
+  `DB_POOL_TIMEOUT_S` (`30`), `DB_POOL_RECYCLE_S` (`1800`) wired
+  through `Settings` into `build_engine`. Defaults match the
+  previous hard-coded values.
+- **S6 — Harden `X-Internal-XAccel` trust.** API endpoint
+  `/api/v1/dl/{token}` now serves `X-Accel-Redirect` only when
+  **both** the loop-back marker header *and* the new
+  `XACCEL_ENABLED=true` env are set. Nginx
+  `media.conf.template` already overwrites any client-supplied
+  marker (`proxy_set_header X-Internal-XAccel "1";`); the
+  application-side gate prevents accidental exposure when the
+  bot/API is reached directly (e.g. tests, mis-configured ingress).
+- **S7 — Wire `MediaCacheRepository` into `AnalyzeLinkUseCase`.**
+  Successful provider lookups are now upserted into
+  `media_cache`; cache hits within
+  `MEDIA_CACHE_FRESH_SECONDS` short-circuit the second
+  `yt-dlp` extraction that previously ran during the
+  "analyze → choose option → enqueue" flow. Existing
+  `MEDIA_CACHE_MAX_AGE_SECONDS` continues to bound stale
+  records; cleanup_worker still purges older rows.
+- **S8 — Coverage in CI + nightly restore-drill.** `pytest`
+  invocation in `.github/workflows/ci.yml` now collects
+  coverage (`--cov=app --cov-report=xml`) and uploads
+  `coverage.xml` as an artifact. New
+  `.github/workflows/restore-drill.yml` workflow runs nightly
+  (and on PRs touching `migrations/` or
+  `deploy/scripts/`) — boots a throwaway Postgres, applies
+  the full Alembic chain, and asserts that S3-dropped tables
+  are gone while the active schema is intact.
+- **S9 — Outbound HTTPS proxy for `yt-dlp`.** New
+  `HTTPS_PROXY_URL` env (empty by default) is injected into
+  `yt-dlp` opts in both `extract_info` and `download`, allowing
+  egress through a regional proxy without leaking creds into
+  process env.
+- **S10 — Disk-space backpressure.** New `STORAGE_MIN_FREE_MB`
+  env (default `1024` MiB). `LocalStorage.assert_free_space()`
+  is invoked at the top of `ProcessDownloadUseCase._run()` (after
+  the PROCESSING transition so the orphan reaper sees the row
+  but before any allocation). Fail-permanent
+  `StorageError` returns the user-friendly "сервис временно
+  перегружен" message; the worker doesn't thrash a near-full
+  disk with retries.
+
+`.env.example` (root + `deploy/nl1` / `deploy/nl2`) updated with
+all new keys and their safe defaults.
+
 ### Changed — Python runtime floor: 3.11 → 3.14 (ADR-0009)
 
 The project's locked language floor moves from **CPython 3.11+** to

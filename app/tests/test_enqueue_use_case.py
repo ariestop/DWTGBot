@@ -44,6 +44,12 @@ class _FakeJobsRepo(JobsRepository):
             return None
         return await self.create(job)
 
+    async def reap_orphan_processing(self, *, older_than_seconds: int) -> int:
+        # S1 (audit fix): not exercised by the enqueue path; the cleanup
+        # worker calls this. The fake just satisfies the ABC contract.
+        del older_than_seconds
+        return 0
+
 
 class _FakeQueue:
     def __init__(self) -> None:

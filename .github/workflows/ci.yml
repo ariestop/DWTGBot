@@ -79,7 +79,7 @@ jobs:
           pip install -r requirements/base.txt
           pip install -r requirements/dev.txt
 
-      - name: pytest
+      - name: pytest (with coverage)
         env:
           BOT_TOKEN: "0000000000:test-token"
           APP_ENV: development
@@ -88,7 +88,20 @@ jobs:
           PUBLIC_BASE_URL: http://localhost:8080
           STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
           STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
-        run: pytest -m "not integration"
+        # S8 (audit fix): coverage is collected but NOT gated on a
+        # threshold yet — current coverage is around 30 % and a hard
+        # gate would block PRs while we backfill tests. The XML report
+        # is uploaded so dashboards / Codecov can track the trend; flip
+        # to ``--cov-fail-under=N`` once we land the per-area test
+        # backlog (S8 follow-up).
+        run: pytest -m "not integration" --cov=app --cov-report=term --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
 
   shell-lint:
     name: Shellcheck
@@ -101,6 +114,24 @@ jobs:
         with:
           scandir: ./deploy/scripts
           severity: warning
+
+  lockfile-check:
+    name: Lockfile freshness (L8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # L8 (audit fix): re-compile each *.txt into a tmp lock and diff
+      # against the committed *.lock. If a PR bumps a version in *.txt
+      # without regenerating *.lock, this step fails with the exact
+      # diff so the author can run ``make lock`` locally.
+      - name: Install uv
+        run: pip install uv
+      - name: Verify lockfiles are up to date
+        run: make lock-check
 
   docs-link-check:
     name: Docs link check

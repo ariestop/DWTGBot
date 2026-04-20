@@ -124,3 +124,15 @@ class TooManyJobsError(AppError):
     user_message = (
         "Сейчас у вас уже выполняется несколько задач. Дождитесь их завершения и попробуйте снова."
     )
+
+
+# ----- Circuit breaker (L5) -----
+
+
+class UpstreamUnavailableError(DownloadError):
+    """Raised by the yt-dlp circuit breaker when the per-host breaker is
+    open. Inherits ``is_retryable=True`` from ``DownloadError`` so arq
+    will reschedule — by the time the next attempt runs the breaker
+    may already have closed."""
+
+    user_message = "Источник временно ограничивает скачивание. Попробуйте через несколько минут."

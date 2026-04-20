@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "dwtgbot"
     POSTGRES_PASSWORD: str = ""
     DATABASE_URL: str = ""
+    # S5: SQLAlchemy AsyncEngine pool sizing. Defaults are tuned for the
+    # bot/api processes (mostly idle, occasional bursts). Worker should
+    # raise these via env when WORKER_CONCURRENCY > 5 to avoid pool
+    # exhaustion under load — see deploy/nl2/.env.example.
+    DB_POOL_SIZE: int = Field(5, ge=1, le=200)
+    DB_MAX_OVERFLOW: int = Field(10, ge=0, le=200)
+    DB_POOL_TIMEOUT_S: float = Field(30.0, ge=0.5, le=300.0)
+    DB_POOL_RECYCLE_S: int = Field(1800, ge=60)
 
     # --- Redis ---
     REDIS_HOST: str = "redis"
@@ -102,6 +110,11 @@ class Settings(BaseSettings):
     STORAGE_PATH: Path = Path("/var/lib/dwtgbot/storage")
     STORAGE_TMP_PATH: Path = Path("/var/lib/dwtgbot/tmp")
     MAX_FILE_SIZE_MB: int = Field(2048, ge=1)
+    # S10: minimum free space on STORAGE_PATH to accept new jobs / start
+    # a download. ``0`` disables the guard. The check is best-effort
+    # (statvfs); on a full filesystem we fail enqueue with TooManyJobsError
+    # and skip the download cycle in the worker (see LocalStorage.assert_free_space).
+    STORAGE_MIN_FREE_MB: int = Field(0, ge=0)
 
     # --- Public delivery ---
     PUBLIC_BASE_URL: str = "http://localhost:8080"
@@ -113,6 +126,14 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8080
     API_INTERNAL_TOKEN: str = ""
+    # S6 (audit fix): trust gate for the ``X-Internal-XAccel`` header
+    # that switches /d/{token} into nginx X-Accel-Redirect mode.
+    # Default: OFF — the api streams the file itself. Flip to ``true``
+    # only when running behind the bundled nginx config that
+    # *unconditionally* sets the header (deploy/nginx/conf.d/media.conf
+    # — see S6 comment there). Enabling without nginx in front lets a
+    # client supply the header and reach the protected file directly.
+    XACCEL_ENABLED: bool = False
     # Dev/CI-only test enqueue endpoint. MUST be empty in production
     # (validated by ``Settings.validate_runtime`` — see app/config.py).
     INTERNAL_TEST_TOKEN: str = ""
@@ -127,6 +148,11 @@ class Settings(BaseSettings):
     # --- Cleanup / cache ---
     CLEANUP_INTERVAL_SECONDS: int = Field(3600, ge=60)
     MEDIA_CACHE_TTL_SECONDS: int = Field(21_600, ge=60)
+    # S1 (audit fix): threshold for marking PROCESSING jobs as orphaned.
+    # MUST exceed JOB_TIMEOUT_SECONDS by a comfortable margin so a
+    # legitimately-slow job (e.g. 4K re-encode) is never reaped while
+    # still running. Default = 2 * JOB_TIMEOUT default + 5 min slack.
+    ORPHAN_JOB_AGE_SECONDS: int = Field(3900, ge=60)
 
     # --- Backup ---
     BACKUP_DIR: Path = Path("/var/backups/dwtgbot")
@@ -135,6 +161,39 @@ class Settings(BaseSettings):
     # --- Tooling ---
     FFMPEG_BIN: str = "ffmpeg"
     YTDLP_BIN: str = "yt-dlp"
+
+    # --- Outbound proxy (S9) ---
+    # Optional HTTP(S)/SOCKS5 proxy for yt-dlp upstream calls. Empty
+    # disables the feature; otherwise the URL is passed verbatim into
+    # yt-dlp ``proxy`` opt and into HTTPX clients (DEFAULT for outbound
+    # calls). Format: ``http://user:pass@host:port`` or
+    # ``socks5h://host:port``.
+    HTTPS_PROXY_URL: str = ""
+
+    # --- Sentry (L7) ---
+    # Error aggregation. Blank DSN disables the integration entirely
+    # (``configure_sentry`` is a no-op). Set DSN to the project URL
+    # from Sentry / GlitchTip; environment falls back to APP_ENV.
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = ""
+    # 0.0 = do not sample traces; bump to e.g. 0.1 to trace 10% of
+    # transactions. Keep off in prod until the budget is understood.
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(0.0, ge=0.0, le=1.0)
+    # Optional release marker (usually injected by CI with a git SHA
+    # or tag). Blank leaves Sentry to auto-derive from ``SENTRY_RELEASE``
+    # or fall back to "unknown".
+    SENTRY_RELEASE: str = ""
+
+    # --- Circuit breaker for yt-dlp upstream (L5) ---
+    # Tracked per upstream host in Redis so every worker in the fleet
+    # sees the same "open" / "closed" signal. Defaults are conservative:
+    # 5 consecutive 429/throttle responses within 60 s open the
+    # breaker for 5 minutes. Flip CB_ENABLED=false for environments
+    # without a shared Redis (e.g. local single-process dev).
+    CB_ENABLED: bool = True
+    CB_FAILURE_THRESHOLD: int = Field(5, ge=1)
+    CB_WINDOW_SECONDS: int = Field(60, ge=5)
+    CB_COOLDOWN_SECONDS: int = Field(300, ge=10)
 
     # --- Metrics / observability (docs/35-metrics-and-slo.md §7, ADR-0006) ---
     # Master switch. ``false`` keeps the bot lean and skips the /metrics

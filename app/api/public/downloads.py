@@ -110,7 +110,15 @@ async def download(token: str, request: Request) -> Response:
     # Prefer X-Accel-Redirect when behind nginx — nginx serves the file
     # via sendfile() while keeping our auth in front. The actual filesystem
     # path under nginx is the same STORAGE_PATH; we expose only its relative tail.
-    use_xaccel = request.headers.get("x-internal-xaccel", "0") == "1"
+    #
+    # S6 (audit fix): ``XACCEL_ENABLED`` is the trust gate. If it is
+    # ``False`` we *must not* honour the header — otherwise any client
+    # can set ``X-Internal-XAccel: 1`` against a directly-reachable api
+    # and pivot through ``/_protected/`` (when nginx is wired but the
+    # api is also exposed). The bundled nginx config sets this header
+    # itself and overwrites whatever the client sent (see media.conf
+    # template), so the runtime semantics are unchanged.
+    use_xaccel = settings.XACCEL_ENABLED and request.headers.get("x-internal-xaccel", "0") == "1"
     if use_xaccel:
         rel = file_path.relative_to(settings.STORAGE_PATH)
         response = Response(status_code=200)
