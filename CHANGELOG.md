@@ -25,7 +25,11 @@ checks but fail the API checks and restart forever.
 - **`deploy/scripts/healthcheck.sh`**: fixed the broken ``docker compose``
   probe (array expansion inside ``bash -c``); NL-1 postgres/redis/bot
   checks now use ``docker inspect`` health/status instead of fragile
-  ``compose ps --status`` greps.
+  ``compose ps --status`` greps. Internal ``/healthz`` / ``/readyz`` probes
+  no longer used ``bash -c 'compose_nl1 exec …'`` — **compose helpers are
+  shell functions and are invisible inside a child ``bash -c``**, so the
+  check always failed; replaced with ``docker exec`` + 20 s retry while
+  uvicorn binds. NL-2 nginx probe also uses ``docker exec``.
 - **`deploy/scripts/deploy_update.sh`**: skip pre-deploy backup when
   ``dwtgbot_postgres`` is not running (first boot).
 
