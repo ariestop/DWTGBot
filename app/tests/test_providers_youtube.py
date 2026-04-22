@@ -59,3 +59,40 @@ def test_no_estimated_size_when_duration_unknown() -> None:
     opts = _provider().build_options(_info([720], duration=None))
     audio = next(o for o in opts if o.key == "audio_mp3")
     assert audio.estimated_size_bytes is None
+
+
+def _info_with_real_sizes(size_by_height: dict[str, int]) -> MediaInfo:
+    # 1080p duration x 5000 kbps formula would give ~750 MB; we want the
+    # real value to clearly beat the formula so assertions below cannot
+    # accidentally pass on fallback math.
+    return MediaInfo(
+        platform=Platform.YOUTUBE,
+        media_id="abc",
+        title="Test",
+        kind=MediaKind.VIDEO,
+        duration_sec=1200.0,
+        raw={
+            "available_heights": [720, 1080],
+            "duration": 1200.0,
+            "size_by_height": size_by_height,
+        },
+    )
+
+
+def test_estimated_size_prefers_real_filesize_over_formula() -> None:
+    # Real 1080p clip: 95 MB; formula would report ~750 MB for the same
+    # duration. Verify the button reflects the real figure, which is the
+    # original user complaint.
+    real_1080 = 95 * 1024 * 1024
+    opts = _provider().build_options(_info_with_real_sizes({"1080": real_1080}))
+    video_1080 = next(o for o in opts if o.key == "video_1080")
+    assert video_1080.estimated_size_bytes == real_1080
+
+
+def test_estimated_size_falls_back_to_formula_when_filesize_missing() -> None:
+    # 720p has no real size → formula kicks in; 1080p does → uses real.
+    opts = _provider().build_options(_info_with_real_sizes({"1080": 50_000_000}))
+    video_720 = next(o for o in opts if o.key == "video_720")
+    video_1080 = next(o for o in opts if o.key == "video_1080")
+    assert video_720.estimated_size_bytes is not None and video_720.estimated_size_bytes > 0
+    assert video_1080.estimated_size_bytes == 50_000_000

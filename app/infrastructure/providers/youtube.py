@@ -41,6 +41,20 @@ class YouTubeProvider(BaseProvider):
                 if f.get("vcodec") not in (None, "none") and f.get("height")
             }
         )
+        # Per-bucket real size. yt-dlp already knows the true ``filesize``
+        # / ``filesize_approx`` of every format it offers; reading those
+        # is dramatically more accurate than the constant-bitrate formula
+        # ``_estimate_video_size`` used before (off by 3-6x on low-motion
+        # H.264 clips). JSON stores the map with string keys, so we
+        # normalize at write time to keep ``build_options`` lookups
+        # independent of cache round-trips. Fallback to the formula stays
+        # for sources that don't publish filesize (rare on YouTube but
+        # observed on private / age-gated items).
+        size_by_height = {
+            str(h): s
+            for h in _VIDEO_HEIGHTS
+            if (s := _real_video_size_for_height(formats, h)) is not None
+        }
 
         info = MediaInfo(
             platform=Platform.YOUTUBE,
@@ -58,6 +72,7 @@ class YouTubeProvider(BaseProvider):
                 "webpage_url": entry.get("webpage_url"),
                 "available_heights": heights,
                 "duration": entry.get("duration"),
+                "size_by_height": size_by_height,
             },
         )
         return info
@@ -66,12 +81,19 @@ class YouTubeProvider(BaseProvider):
         heights: list[int] = list(info.raw.get("available_heights") or [])
         max_h = max(heights) if heights else 0
         duration = info.raw.get("duration")
+        size_by_height = info.raw.get("size_by_height") or {}
 
         options: list[DownloadOption] = []
         for h in _VIDEO_HEIGHTS:
             # Show a bucket if either an exact match exists or the source has a higher
             # resolution that we can downscale-pick from.
             if h <= max_h or h in heights:
+                real_size = size_by_height.get(str(h))
+                estimated = (
+                    int(real_size)
+                    if isinstance(real_size, int | float) and real_size > 0
+                    else _estimate_video_size(h, duration)
+                )
                 options.append(
                     DownloadOption(
                         key=f"video_{h}",
@@ -79,7 +101,7 @@ class YouTubeProvider(BaseProvider):
                         kind=MediaKind.VIDEO,
                         height=h,
                         container="mp4",
-                        estimated_size_bytes=_estimate_video_size(h, duration),
+                        estimated_size_bytes=estimated,
                     )
                 )
 
@@ -206,8 +228,60 @@ def _estimate_video_size(height: int, duration_sec: float | None) -> int | None:
     if not duration_sec:
         return None
     # Rough bitrate buckets (kbps) for MP4/H.264 at common YT qualities.
+    # Only used as a *fallback* when yt-dlp does not publish a concrete
+    # filesize for the eligible format — see ``_real_video_size_for_height``
+    # for the happy-path lookup that drives the button labels today.
     bitrate_kbps = {360: 800, 480: 1200, 720: 2500, 1080: 5000}.get(height, 2500)
     return int(bitrate_kbps * 1000 / 8 * duration_sec)
+
+
+def _real_video_size_for_height(
+    formats: list[dict[str, Any]],
+    target_height: int,
+) -> int | None:
+    """Pick the ``video + audio`` filesize the download selector will
+    actually land on for a given bucket.
+
+    Mirrors the primary chain in ``YouTubeProvider.download``:
+    ``bestvideo[height<=h][vcodec^=avc1][ext=mp4] + bestaudio[ext=m4a]``.
+    We bias on ``avc1+mp4`` and ``m4a`` the same way yt-dlp does, so the
+    button estimate tracks the file the user will receive. When the
+    source lacks H.264 at this height (rare on YT — e.g. VP9-only
+    1080p60), returning ``None`` lets ``build_options`` fall back to
+    the bitrate-formula estimate rather than a misleading partial sum.
+    """
+
+    def _size(f: dict[str, Any]) -> int:
+        raw = f.get("filesize") or f.get("filesize_approx") or 0
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
+
+    video_candidates = [
+        f
+        for f in formats
+        if isinstance(f.get("height"), int)
+        and f["height"] <= target_height
+        and str(f.get("vcodec") or "").startswith("avc1")
+        and f.get("ext") == "mp4"
+        and _size(f) > 0
+    ]
+    if not video_candidates:
+        return None
+    # Highest eligible height, tie-break on bitrate (largest filesize).
+    best_video = max(video_candidates, key=lambda f: (int(f["height"]), _size(f)))
+    video_size = _size(best_video)
+
+    audio_candidates = [
+        f
+        for f in formats
+        if f.get("vcodec") in (None, "none")
+        and f.get("ext") == "m4a"
+        and _size(f) > 0
+    ]
+    audio_size = max((_size(f) for f in audio_candidates), default=0)
+    return video_size + audio_size
 
 
 def _estimate_audio_size(bitrate_kbps: int, duration_sec: float | None) -> int | None:
