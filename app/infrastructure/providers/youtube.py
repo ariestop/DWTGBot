@@ -276,9 +276,7 @@ def _real_video_size_for_height(
     audio_candidates = [
         f
         for f in formats
-        if f.get("vcodec") in (None, "none")
-        and f.get("ext") == "m4a"
-        and _size(f) > 0
+        if f.get("vcodec") in (None, "none") and f.get("ext") == "m4a" and _size(f) > 0
     ]
     audio_size = max((_size(f) for f in audio_candidates), default=0)
     return video_size + audio_size
