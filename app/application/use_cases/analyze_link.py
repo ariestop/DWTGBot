@@ -72,8 +72,23 @@ class AnalyzeLinkUseCase:
         if self._cache is not None:
             cached = await self._cache.get_fresh(detected.normalized)
             if cached is not None:
-                info = _info_from_cache(cached, platform=detected.platform)
-                served_from_cache = True
+                candidate = _info_from_cache(cached, platform=detected.platform)
+                # Legacy entries written before YouTube provider learned
+                # to stash real per-height filesizes would poison the
+                # button estimate with the bitrate-formula fallback for
+                # up to ``MEDIA_CACHE_TTL_SECONDS`` after the fix lands.
+                # Force a refetch rather than serving stale, misleading
+                # numbers — cost is one extra yt-dlp call per URL once
+                # until the new entry repopulates.
+                if _is_stale_youtube_cache(candidate):
+                    _logger.info(
+                        "media_cache_legacy_miss",
+                        platform=detected.platform.value,
+                        url=detected.normalized,
+                    )
+                else:
+                    info = candidate
+                    served_from_cache = True
 
         if info is None:
             info = await provider.get_info(detected.normalized)
@@ -184,3 +199,17 @@ def _info_from_cache(record: MediaCacheRecord, *, platform: Platform) -> MediaIn
         thumbnail_url=metadata.get("thumbnail_url"),
         raw=dict(metadata.get("raw") or {}) | {"source_url": record.source_url, "cached": True},
     )
+
+
+def _is_stale_youtube_cache(info: MediaInfo) -> bool:
+    """Return True if a cache row predates the ``size_by_height`` fix.
+
+    We look for the key explicitly: empty dicts are acceptable (happens
+    for sources where yt-dlp really published no filesize — button
+    falls back to the bitrate formula on purpose). ``missing``, on the
+    other hand, is the unambiguous shape of entries written before the
+    provider started populating this field.
+    """
+    if info.platform is not Platform.YOUTUBE:
+        return False
+    return "size_by_height" not in (info.raw or {})

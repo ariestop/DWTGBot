@@ -242,13 +242,24 @@ def _real_video_size_for_height(
     """Pick the ``video + audio`` filesize the download selector will
     actually land on for a given bucket.
 
-    Mirrors the primary chain in ``YouTubeProvider.download``:
-    ``bestvideo[height<=h][vcodec^=avc1][ext=mp4] + bestaudio[ext=m4a]``.
-    We bias on ``avc1+mp4`` and ``m4a`` the same way yt-dlp does, so the
-    button estimate tracks the file the user will receive. When the
-    source lacks H.264 at this height (rare on YT — e.g. VP9-only
-    1080p60), returning ``None`` lets ``build_options`` fall back to
-    the bitrate-formula estimate rather than a misleading partial sum.
+    Mirrors the full cascade from ``YouTubeProvider.download``:
+
+    1. ``bestvideo[height<=h][vcodec^=avc1][ext=mp4]``
+    2. ``bestvideo[height<=h][vcodec^=avc1]``
+    3. ``bestvideo[height<=h][ext=mp4]``
+    4. ``bestvideo[height<=h]``
+
+    Each chain is tried in order; we stop at the first one that has at
+    least one format with a concrete ``filesize`` / ``filesize_approx``.
+    This matters because on many YouTube videos 1080p only exists as
+    VP9/AV1 (no H.264 above 720p), so chain 1 is empty and a naive
+    estimator would fall back to the bitrate formula — off by 3-6x.
+    Broadening the match lets us report a real size for chain 3/4 too
+    (the VP9 filesize is close enough to the post-download size we
+    actually deliver, since the later ``_ensure_mobile_compatible``
+    transcode preserves the original video bitrate on -c copy paths).
+
+    Audio: best ``m4a``; fallback to any audio-only track.
     """
 
     def _size(f: dict[str, Any]) -> int:
@@ -258,27 +269,46 @@ def _real_video_size_for_height(
         except (TypeError, ValueError):
             return 0
 
-    video_candidates = [
-        f
-        for f in formats
-        if isinstance(f.get("height"), int)
-        and f["height"] <= target_height
-        and str(f.get("vcodec") or "").startswith("avc1")
-        and f.get("ext") == "mp4"
-        and _size(f) > 0
-    ]
-    if not video_candidates:
+    def _is_video(f: dict[str, Any]) -> bool:
+        return (
+            isinstance(f.get("height"), int)
+            and f["height"] <= target_height
+            and f.get("vcodec") not in (None, "none")
+            and _size(f) > 0
+        )
+
+    chains: tuple[Callable[[dict[str, Any]], bool], ...] = (
+        lambda f: str(f.get("vcodec") or "").startswith("avc1") and f.get("ext") == "mp4",
+        lambda f: str(f.get("vcodec") or "").startswith("avc1"),
+        lambda f: f.get("ext") == "mp4",
+        lambda _f: True,
+    )
+    best_video: dict[str, Any] | None = None
+    for predicate in chains:
+        eligible = [f for f in formats if _is_video(f) and predicate(f)]
+        if eligible:
+            # yt-dlp's ``bestvideo`` ranks by height, then bitrate --
+            # approximate the latter with filesize (which scales with
+            # bitrate x duration for a fixed clip).
+            best_video = max(eligible, key=lambda f: (int(f["height"]), _size(f)))
+            break
+    if best_video is None:
         return None
-    # Highest eligible height, tie-break on bitrate (largest filesize).
-    best_video = max(video_candidates, key=lambda f: (int(f["height"]), _size(f)))
     video_size = _size(best_video)
 
-    audio_candidates = [
+    # Audio cascade mirrors ``+bestaudio[ext=m4a] / +bestaudio``.
+    audio_candidates_m4a = [
         f
         for f in formats
         if f.get("vcodec") in (None, "none") and f.get("ext") == "m4a" and _size(f) > 0
     ]
-    audio_size = max((_size(f) for f in audio_candidates), default=0)
+    audio_candidates_any = [
+        f for f in formats if f.get("vcodec") in (None, "none") and _size(f) > 0
+    ]
+    audio_size = max(
+        (_size(f) for f in (audio_candidates_m4a or audio_candidates_any)),
+        default=0,
+    )
     return video_size + audio_size
 
 

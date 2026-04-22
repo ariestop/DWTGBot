@@ -96,3 +96,52 @@ def test_estimated_size_falls_back_to_formula_when_filesize_missing() -> None:
     video_1080 = next(o for o in opts if o.key == "video_1080")
     assert video_720.estimated_size_bytes is not None and video_720.estimated_size_bytes > 0
     assert video_1080.estimated_size_bytes == 50_000_000
+
+
+def test_real_size_cascade_picks_vp9_when_no_avc1_at_height() -> None:
+    """The most common YouTube layout today is H.264 only up to 720p
+    and VP9/AV1 at 1080p. The size estimator must fall through to the
+    VP9 filesize for the 1080p bucket instead of dropping to the
+    bitrate formula (root cause of the user report).
+    """
+    from app.infrastructure.providers.youtube import _real_video_size_for_height
+
+    formats = [
+        {
+            "height": 720,
+            "vcodec": "avc1.64001f",
+            "acodec": "none",
+            "ext": "mp4",
+            "filesize_approx": 80_000_000,
+        },
+        {
+            "height": 1080,
+            "vcodec": "vp09.00.40.08",
+            "acodec": "none",
+            "ext": "webm",
+            "filesize_approx": 120_000_000,
+        },
+        {
+            "height": None,
+            "vcodec": "none",
+            "acodec": "mp4a.40.2",
+            "ext": "m4a",
+            "filesize_approx": 5_000_000,
+        },
+    ]
+    # Chain 1 (avc1+mp4): picks avc1 720p = 80 MB; + 5 MB audio = 85 MB.
+    assert _real_video_size_for_height(formats, 1080) == 85_000_000
+    # Without any avc1 track at all, chain 3 (mp4) is empty too --
+    # chain 4 picks the vp9 1080p format.
+    vp9_only = [f for f in formats if not str(f.get("vcodec") or "").startswith("avc1")]
+    assert _real_video_size_for_height(vp9_only, 1080) == 125_000_000
+
+
+def test_real_size_returns_none_when_no_filesize_anywhere() -> None:
+    from app.infrastructure.providers.youtube import _real_video_size_for_height
+
+    formats = [
+        {"height": 720, "vcodec": "avc1", "acodec": "none", "ext": "mp4"},
+        {"height": 1080, "vcodec": "vp9", "acodec": "none", "ext": "webm"},
+    ]
+    assert _real_video_size_for_height(formats, 1080) is None
