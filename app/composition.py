@@ -31,6 +31,7 @@ from app.application.use_cases.analyze_link import AnalyzeLinkUseCase
 from app.application.use_cases.enqueue_download import EnqueueDownloadUseCase
 from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.bot.container import BotContainer
+from app.bot.services.progress_updater import ProgressUpdater
 from app.config import Settings
 from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
@@ -76,6 +77,11 @@ class BotComposition:
     # the future bot ``progress_updater`` can hang off it without
     # reshaping the composition.
     progress_reporter: ProgressReporter = field(default_factory=NoopProgressReporter)
+    # ADR-0010 §2.2 + task §4 PR 4: side-channel consumer. Constructed
+    # eagerly so the bot entrypoint can call ``.start(bot)`` after PTB
+    # initialisation; None when ``PROGRESS_TTL_SEC <= 0`` is ever added
+    # as a kill-switch (not exposed today).
+    progress_updater: ProgressUpdater | None = None
     # Optional /metrics server. Created only when METRICS_ENABLED=true.
     # The bot entrypoint owns the start/stop calls (main_bot.py).
     metrics_server: object | None = None
@@ -84,6 +90,8 @@ class BotComposition:
     queue_sampler: object | None = None
 
     async def aclose(self) -> None:
+        if self.progress_updater is not None:
+            await self.progress_updater.stop()
         if self.queue_sampler is not None:
             stop = getattr(self.queue_sampler, "stop", None)
             if stop is not None:
@@ -272,10 +280,16 @@ async def build_bot(settings: Settings) -> BotComposition:
 
     queue_sampler = _build_queue_sampler(settings, pool=arq_pool, metrics=job_metrics)
 
+    # ADR-0010 §2.2: the bot is the sole *reader* of the side-channel.
+    # Built unconditionally — PR 4 lands the consumer before PR 5 wires
+    # producers, so an idle updater is a no-op until events arrive.
+    progress_updater = ProgressUpdater(settings=settings, redis=core.redis)
+
     return BotComposition(
         core=core,
         container=container,
         arq_pool=arq_pool,
+        progress_updater=progress_updater,
         metrics_server=metrics_server,
         queue_sampler=queue_sampler,
     )

@@ -74,6 +74,13 @@ async def _amain() -> int:
         await application.initialize()
         app_initialized = True
         await application.start()
+        # ADR-0010 §2.2 + PR 4: the live-progress consumer needs a
+        # ready PTB ``Bot`` to issue edits. Start it *after*
+        # ``application.start()`` and *before* polling opens so the
+        # recovery scan catches any ``progress_meta:*`` keys created
+        # by the previous instance before the first update arrives.
+        if composition.progress_updater is not None:
+            await composition.progress_updater.start(application.bot)
         # ``application.updater`` is typed as ``Updater | None`` because PTB
         # supports webhook-only setups; we always run polling so it must be
         # present here. Fail loud if PTB ever changes that contract.

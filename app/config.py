@@ -173,6 +173,16 @@ class Settings(BaseSettings):
     # AND stage has not changed. Terminal stages always pass through.
     PROGRESS_REDRAW_INTERVAL_SEC: float = Field(2.0, ge=0.1, le=30.0)
     PROGRESS_DEBOUNCE_PERCENT: int = Field(3, ge=0, le=50)
+    # ADR-0010 §6 "Watchdog": bot-side updater replaces the placeholder
+    # caption with a «connection lost» notice after this many seconds
+    # without a publish event for an active job. Must stay well under
+    # PROGRESS_META_TTL_SEC so the user sees feedback long before the
+    # recovery scan would drop the job.
+    PROGRESS_STALE_WARN_SEC: int = Field(30, ge=5, le=600)
+    # Hard drop after this many seconds with no event — the placeholder
+    # is removed entirely so the chat does not show a zombie progress
+    # message after a worker crash. Must exceed ``PROGRESS_STALE_WARN_SEC``.
+    PROGRESS_STALE_DROP_SEC: int = Field(300, ge=30, le=3600)
     # S1 (audit fix): threshold for marking PROCESSING jobs as orphaned.
     # MUST exceed JOB_TIMEOUT_SECONDS by a comfortable margin so a
     # legitimately-slow job (e.g. 4K re-encode) is never reaped while
