@@ -125,7 +125,10 @@ services:
       retries: 3
 
   certbot:
-    image: certbot/certbot:latest
+    # Audit fix A15: pin the certbot image to a specific minor so a silent
+    # upstream release can't break the renew loop the first time it fires
+    # in production. Bump deliberately after reading release notes.
+    image: certbot/certbot:v5.5.0
     container_name: dwtgbot_certbot
     <<: *logging
     depends_on:

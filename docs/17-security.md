@@ -181,6 +181,20 @@ Per-endpoint headers added in `conf.d/media.conf.template`:
 | `/d/`, `/_protected/` | `Expires` | `0` | Same fallback; some intermediaries respect this even when `Cache-Control` is parsed. |
 | `/d/` | `429 Too Many Requests` | (response code) | `limit_req` / `limit_conn` rejections — see §2 row "Token guessing". |
 
+### Rate limiting (RL_ENABLED)
+
+`RL_ENABLED` ships **ON by default** (audit fix A11). The layered limiter
+(`docs/36-rate-limiting.md`, L1–L4) is the primary DoS control at the
+bot edge; with it off, one viral share or a hostile flood can saturate
+the worker pool and starve legitimate users.
+
+**Disabling `RL_ENABLED` is a policy decision**, not a deployment
+convenience. If you need it off (e.g. a private fleet with trusted
+users where observed false-positive rate is unacceptable), document
+the reason in an ADR referencing this section and operate with
+alternative safeguards (stricter `MAX_CONCURRENT_JOBS_PER_USER`,
+narrower `ALLOWED_HOSTS`, closed-network deployment).
+
 ### Auth
 
 | Surface | Auth |

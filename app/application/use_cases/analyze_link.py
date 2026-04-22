@@ -118,7 +118,12 @@ class AnalyzeLinkUseCase:
         try:
             await self._cache.upsert(record)
         except Exception:  # pragma: no cover  best-effort cache write
-            _logger.warning("media_cache_upsert_failed", source_url=source_url)
+            # Audit fix A12: use ``.exception`` so the stack trace lands
+            # in the log — the cache is best-effort, but silent
+            # ``.warning`` without exc_info erased the diagnostic trail
+            # for rare upsert errors (unique-violation races, DB pool
+            # exhaustion), making operator triage impossible.
+            _logger.exception("media_cache_upsert_failed", source_url=source_url)
 
 
 def _info_to_metadata(info: MediaInfo) -> dict[str, object]:

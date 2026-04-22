@@ -20,11 +20,16 @@
 # =====================================================================
 
 ARG PYTHON_VERSION=3.14.4
+# Audit fix A15: pin Debian codename so ``apt install awscli rclone``
+# resolves to a stable major.minor across rebuilds; otherwise ``-slim``
+# tracks Python's upstream default and flips silently on every Debian
+# release, re-pointing our off-site backup client at a new CLI.
+ARG DEBIAN_CODENAME=trixie
 ARG APP_USER=app
 ARG APP_UID=1000
 ARG APP_GID=1000
 
-FROM python:${PYTHON_VERSION}-slim AS builder
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -37,7 +42,7 @@ RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install -U pip wheel \
  && /opt/venv/bin/pip install --require-hashes -r requirements/prod.lock
 
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS runtime
 
 ARG APP_USER
 ARG APP_UID

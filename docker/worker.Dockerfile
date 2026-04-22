@@ -6,11 +6,18 @@
 # =====================================================================
 
 ARG PYTHON_VERSION=3.14.4
+# Audit fix A15: pin the base image to an explicit Debian codename so
+# ``apt install ffmpeg`` resolves to a stable major.minor across
+# rebuilds. Without the codename suffix, ``-slim`` tracks whatever the
+# Python image defaults to at pull time — which flips on every Debian
+# release (bookworm → trixie, …) and silently shifts ffmpeg from 5.x
+# to 6.x to 7.x between CI runs.
+ARG DEBIAN_CODENAME=trixie
 ARG APP_USER=app
 ARG APP_UID=1000
 ARG APP_GID=1000
 
-FROM python:${PYTHON_VERSION}-slim AS builder
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,7 +33,7 @@ RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install -U pip wheel \
  && /opt/venv/bin/pip install --require-hashes -r requirements/prod.lock
 
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS runtime
 
 ARG APP_USER
 ARG APP_UID

@@ -280,9 +280,13 @@ class Settings(BaseSettings):
     METRICS_QUEUE_SAMPLE_INTERVAL_S: float = Field(15.0, ge=1.0, le=300.0)
 
     # --- Rate limiting (docs/36-rate-limiting.md) ---
-    # Master switch. ``false`` is the safe default — limiter is wired but
-    # short-circuits to "allow" until you flip it on per the §11 rollout.
-    RL_ENABLED: bool = False
+    # Master switch. Audit fix A11: default flipped to ``True`` so a
+    # fresh deploy ships with rate-limiting ON. Public Telegram bots
+    # are an easy DoS target (one viral link, one malicious sender
+    # flood) and ``False`` by default left the service exposed when
+    # the operator forgot to turn RL on. Disabling is still possible
+    # and is expected to be documented via an ADR per docs/17-security.md.
+    RL_ENABLED: bool = True
     # ``"<limit>/<window_seconds>"`` notation, parsed by ``parse_rl_window``.
     RL_USER_BURST: str = "5/60"
     RL_USER_HOURLY: str = "20/3600"

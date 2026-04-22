@@ -86,6 +86,14 @@ class DownloadJobModel(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("retries_count >= 0", name="retries_non_negative"),
         Index("ix_download_jobs_status_created_at", "status", "created_at"),
+        # Audit fix A14: orphan-reaper filters on (status, updated_at).
+        # Without this index Postgres does a bitmap-OR + Seq Scan filter
+        # once the table grows past a few thousand rows. Leading column
+        # ``status`` is also usable for plain ``WHERE status = :x``
+        # scans — the existing single-column ``ix_download_jobs_status``
+        # stays useful but is now redundant with the leading-column
+        # prefix match; we keep it to avoid churning the schema.
+        Index("ix_download_jobs_status_updated_at", "status", "updated_at"),
     )
 
 

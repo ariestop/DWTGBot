@@ -84,12 +84,14 @@ def configure_sentry(settings: Settings, *, role: str) -> None:
             # tag, which is what most incident queries filter by.
             before_send=_tag_role(role),
         )
-    except Exception as exc:  # pragma: no cover  defensive
-        _logger.warning(
-            "sentry_init_failed",
-            kind=type(exc).__name__,
-            role=role,
-        )
+    except Exception:  # pragma: no cover  defensive
+        # Audit fix A12: ``.exception`` attaches the full stack so the
+        # exact reason Sentry refused to initialise (DNS failure,
+        # malformed DSN, SSL handshake) is recoverable from the log.
+        # The service still runs without Sentry — this is not fatal —
+        # but silently dropping the diagnostics was making support
+        # tickets unactionable.
+        _logger.exception("sentry_init_failed", role=role)
         return
 
     _logger.info("sentry_enabled", role=role, environment=environment)
