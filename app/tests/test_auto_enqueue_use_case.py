@@ -55,6 +55,50 @@ class _FakeProgressReporter:
         return None
 
 
+class _FakePostTextStore:
+    """In-memory ``PostTextStore`` double.
+
+    Records every ``put`` so assertions can pin down both the payload
+    and the fact that the use case writes *after* the DB row lands.
+    """
+
+    def __init__(self) -> None:
+        self.puts: list[tuple[int, str]] = []
+
+    async def put(self, *, job_id: int, text: str) -> None:
+        self.puts.append((job_id, text))
+
+    async def get(self, *, job_id: int) -> str | None:
+        for jid, text in self.puts:
+            if jid == job_id:
+                return text
+        return None
+
+    async def exists(self, *, job_id: int) -> bool:
+        return any(jid == job_id for jid, _ in self.puts)
+
+
+def _make_uc(
+    *,
+    provider,
+    repo,
+    queue,
+    reporter,
+    post_text: _FakePostTextStore | None = None,
+    max_concurrent_per_user: int = 3,
+    post_text_min_chars: int = 10,
+) -> AutoEnqueueDownloadUseCase:
+    return AutoEnqueueDownloadUseCase(
+        providers=_FakeRegistry(provider),
+        jobs_repo=repo,
+        queue=queue,
+        progress_reporter=reporter,
+        post_text_store=post_text if post_text is not None else _FakePostTextStore(),
+        max_concurrent_per_user=max_concurrent_per_user,
+        post_text_min_chars=post_text_min_chars,
+    )
+
+
 class _FakeProvider:
     """Duck-typed Provider: only ``default_option`` is exercised here."""
 
@@ -85,7 +129,7 @@ def _make_analyzed() -> AnalyzedMedia:
         duration_sec=30,
         items=(),
         thumbnail_url="https://example.com/thumb.jpg",
-        description="Hello",
+        description="Hello, world — this is long enough",
         raw={"source_url": "https://youtu.be/abc123"},
     )
     option = DownloadOption(
@@ -115,16 +159,11 @@ async def test_auto_enqueue_happy_path() -> None:
     repo = _FakeJobsRepo()
     queue = _FakeQueue()
     reporter = _FakeProgressReporter()
+    post_text = _FakePostTextStore()
     analyzed = _make_analyzed()
     provider = _FakeProvider(default=analyzed.options[0])
 
-    uc = AutoEnqueueDownloadUseCase(
-        providers=_FakeRegistry(provider),
-        jobs_repo=repo,
-        queue=queue,
-        progress_reporter=reporter,
-        max_concurrent_per_user=3,
-    )
+    uc = _make_uc(provider=provider, repo=repo, queue=queue, reporter=reporter, post_text=post_text)
 
     result = await uc.execute(_make_input(analyzed))
 
@@ -137,6 +176,8 @@ async def test_auto_enqueue_happy_path() -> None:
     assert rec.job_id == 100
     assert rec.message_id == 999
     assert rec.thumbnail_url == "https://example.com/thumb.jpg"
+    # Post-text written verbatim (stripped) under the created job id.
+    assert post_text.puts == [(100, "Hello, world — this is long enough")]
 
 
 @pytest.mark.asyncio
@@ -147,13 +188,8 @@ async def test_auto_enqueue_rejects_at_user_cap() -> None:
     analyzed = _make_analyzed()
     provider = _FakeProvider(default=analyzed.options[0])
 
-    uc = AutoEnqueueDownloadUseCase(
-        providers=_FakeRegistry(provider),
-        jobs_repo=repo,
-        queue=queue,
-        progress_reporter=reporter,
-        max_concurrent_per_user=3,
-    )
+    post_text = _FakePostTextStore()
+    uc = _make_uc(provider=provider, repo=repo, queue=queue, reporter=reporter, post_text=post_text)
 
     with pytest.raises(TooManyJobsError):
         await uc.execute(_make_input(analyzed))
@@ -162,6 +198,7 @@ async def test_auto_enqueue_rejects_at_user_cap() -> None:
     # placeholder with an error and the user gets a chance to retry.
     assert queue.payloads == []
     assert reporter.starts == []
+    assert post_text.puts == []
 
 
 @pytest.mark.asyncio
@@ -183,13 +220,7 @@ async def test_auto_enqueue_swallows_reporter_failure() -> None:
     analyzed = _make_analyzed()
     provider = _FakeProvider(default=analyzed.options[0])
 
-    uc = AutoEnqueueDownloadUseCase(
-        providers=_FakeRegistry(provider),
-        jobs_repo=repo,
-        queue=queue,
-        progress_reporter=reporter,
-        max_concurrent_per_user=3,
-    )
+    uc = _make_uc(provider=provider, repo=repo, queue=queue, reporter=reporter)
 
     result = await uc.execute(_make_input(analyzed))
 
@@ -218,16 +249,15 @@ async def test_auto_enqueue_flags_missing_description() -> None:
     analyzed = AnalyzedMedia(info=info, options=analyzed.options)
     provider = _FakeProvider(default=analyzed.options[0])
 
-    uc = AutoEnqueueDownloadUseCase(
-        providers=_FakeRegistry(provider),
-        jobs_repo=repo,
-        queue=queue,
-        progress_reporter=reporter,
-        max_concurrent_per_user=3,
-    )
+    post_text = _FakePostTextStore()
+    uc = _make_uc(provider=provider, repo=repo, queue=queue, reporter=reporter, post_text=post_text)
 
     result = await uc.execute(_make_input(analyzed))
     assert result.has_description is False
+    # Whitespace-only description falls below the min-chars threshold —
+    # the store MUST NOT receive a write, otherwise ``DeliveryService``
+    # would render a button that pops an empty reply.
+    assert post_text.puts == []
 
 
 def test_auto_enqueue_constructor_rejects_zero_cap() -> None:
@@ -236,10 +266,102 @@ def test_auto_enqueue_constructor_rejects_zero_cap() -> None:
     queue = _FakeQueue()
     option = DownloadOption(key="v", label="v", container="mp4", kind=MediaKind.VIDEO)
     with pytest.raises(ValueError):
-        AutoEnqueueDownloadUseCase(
-            providers=_FakeRegistry(_FakeProvider(default=option)),
-            jobs_repo=repo,
+        _make_uc(
+            provider=_FakeProvider(default=option),
+            repo=repo,
             queue=queue,
-            progress_reporter=reporter,
+            reporter=reporter,
             max_concurrent_per_user=0,
         )
+
+
+def test_auto_enqueue_constructor_rejects_zero_min_chars() -> None:
+    reporter = _FakeProgressReporter()
+    repo = _FakeJobsRepo()
+    queue = _FakeQueue()
+    option = DownloadOption(key="v", label="v", container="mp4", kind=MediaKind.VIDEO)
+    # Symmetric guard — zero would defeat the "skip short description"
+    # product rule, so the constructor rejects it eagerly instead of
+    # letting bad config creep into a release.
+    with pytest.raises(ValueError):
+        _make_uc(
+            provider=_FakeProvider(default=option),
+            repo=repo,
+            queue=queue,
+            reporter=reporter,
+            post_text_min_chars=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_auto_enqueue_skips_short_description() -> None:
+    """Descriptions shorter than ``post_text_min_chars`` do not get
+    persisted, and the use case reports ``has_description=False`` so
+    the bot does not reserve UI state for an empty button."""
+    repo = _FakeJobsRepo()
+    queue = _FakeQueue()
+    reporter = _FakeProgressReporter()
+    post_text = _FakePostTextStore()
+    analyzed = _make_analyzed()
+    info = MediaInfo(
+        platform=analyzed.info.platform,
+        media_id=analyzed.info.media_id,
+        title=analyzed.info.title,
+        kind=analyzed.info.kind,
+        duration_sec=analyzed.info.duration_sec,
+        items=analyzed.info.items,
+        thumbnail_url=analyzed.info.thumbnail_url,
+        description="hi!",
+        raw=analyzed.info.raw,
+    )
+    analyzed = AnalyzedMedia(info=info, options=analyzed.options)
+    provider = _FakeProvider(default=analyzed.options[0])
+
+    uc = _make_uc(
+        provider=provider,
+        repo=repo,
+        queue=queue,
+        reporter=reporter,
+        post_text=post_text,
+        post_text_min_chars=10,
+    )
+
+    result = await uc.execute(_make_input(analyzed))
+
+    assert result.has_description is False
+    assert post_text.puts == []
+
+
+@pytest.mark.asyncio
+async def test_auto_enqueue_swallows_post_text_put_failure() -> None:
+    """A Redis outage on the post-text side channel must NOT abort
+    the main enqueue path. Same contract as the reporter; a missing
+    post-text surfaces later as the "больше недоступен" alert."""
+
+    class _BoomStore(_FakePostTextStore):
+        async def put(self, *, job_id: int, text: str) -> None:  # type: ignore[override]
+            raise RuntimeError("redis is sad")
+
+    repo = _FakeJobsRepo()
+    queue = _FakeQueue()
+    reporter = _FakeProgressReporter()
+    analyzed = _make_analyzed()
+    provider = _FakeProvider(default=analyzed.options[0])
+
+    uc = _make_uc(
+        provider=provider,
+        repo=repo,
+        queue=queue,
+        reporter=reporter,
+        post_text=_BoomStore(),
+    )
+
+    result = await uc.execute(_make_input(analyzed))
+
+    assert result.job_id == 100
+    assert queue.payloads and queue.payloads[0].job_id == 100
+    # ``has_description=True`` reflects that the description was long
+    # enough to qualify — the button-visibility check at delivery
+    # time uses ``EXISTS``, so a failed write degrades to "no button"
+    # without confusing downstream logic.
+    assert result.has_description is True

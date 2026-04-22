@@ -18,6 +18,7 @@ from app.application.ports.progress_reporter import ProgressReporter
 from app.application.services.delivery_service import DeliveryService
 from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
+from app.application.services.post_text_store import PostTextStore
 from app.application.services.providers import ProviderRegistry
 from app.application.services.queue import QueueProducer
 from app.application.services.rate_limit import NoticeThrottle
@@ -40,6 +41,7 @@ from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.infrastructure.cache.redis_job_cancellation import RedisJobCancellationStore
 from app.infrastructure.cache.redis_notice_throttle import RedisNoticeThrottle
 from app.infrastructure.cache.redis_pool import build_redis
+from app.infrastructure.cache.redis_post_text_store import RedisPostTextStore
 from app.infrastructure.cache.redis_progress_reporter import RedisProgressReporter
 from app.infrastructure.cache.redis_rate_limit_gate import RedisRateLimitGate
 from app.infrastructure.cache.redis_state_store import RedisRequestStateStore
@@ -269,13 +271,22 @@ async def build_bot(settings: Settings) -> BotComposition:
         redis=core.redis,
         settings=settings,
     )
+    # ADR-0010 §2.3: post-text side channel. Writer path is in the
+    # auto-enqueue use case, reader path is the callback handler.
+    # Shared instance so both keep TTL semantics in one place.
+    post_text_store: PostTextStore = RedisPostTextStore(
+        redis=core.redis,
+        settings=settings,
+    )
 
     auto_enqueue = AutoEnqueueDownloadUseCase(
         providers=providers,
         jobs_repo=jobs_repo,
         queue=queue,
         progress_reporter=bot_progress_reporter,
+        post_text_store=post_text_store,
         max_concurrent_per_user=settings.MAX_CONCURRENT_JOBS_PER_USER,
+        post_text_min_chars=settings.POST_TEXT_MIN_CHARS,
         metrics=job_metrics,
     )
 
@@ -305,6 +316,7 @@ async def build_bot(settings: Settings) -> BotComposition:
         job_metrics=job_metrics,
         progress_reporter=bot_progress_reporter,
         job_cancellation=job_cancellation,
+        post_text_store=post_text_store,
     )
 
     queue_sampler = _build_queue_sampler(settings, pool=arq_pool, metrics=job_metrics)
@@ -402,11 +414,19 @@ def build_worker(settings: Settings) -> WorkerComposition:
 
     sender = TelegramSender(settings)
     temp_link_service = TempLinkService(settings=settings, repo=temp_links_repo)
+    # ADR-0010 §2.3: DeliveryService renders the post-text button
+    # iff the side-channel key is present at delivery time. Separate
+    # instance from the bot's — both share Redis namespace.
+    post_text_store: PostTextStore = RedisPostTextStore(
+        redis=core.redis,
+        settings=settings,
+    )
     delivery = DeliveryService(
         settings=settings,
         sender=sender,
         storage=storage,
         temp_links=temp_link_service,
+        post_text_store=post_text_store,
     )
 
     # ADR-0007: worker has its own /metrics + JobMetrics sink.

@@ -8,6 +8,7 @@ from app.bot.callbacks.codec import (
     MAX_CALLBACK_LEN,
     CancelJobCallback,
     DownloadCallback,
+    PostTextCallback,
     encode_cancel,
 )
 
@@ -65,4 +66,35 @@ class TestCancelJobCallback:
     def test_encode_stays_within_telegram_cap(self) -> None:
         # 64-byte ceiling — even an astronomical 10^18 id fits.
         encoded = CancelJobCallback(job_id=10**18).encode()
+        assert len(encoded) <= MAX_CALLBACK_LEN
+
+
+class TestPostTextCallback:
+    """Wire format ``pt|<job_id>`` — ADR-0010 §2.3 post-text button."""
+
+    def test_roundtrip(self) -> None:
+        cb = PostTextCallback(job_id=12345)
+        assert cb.encode() == "pt|12345"
+        assert PostTextCallback.try_decode(cb.encode()) == cb
+
+    def test_decode_rejects_wrong_prefix(self) -> None:
+        # Specifically guard against collisions with neighbouring
+        # prefixes — they share the same length so a naive
+        # ``startswith`` would mis-route.
+        assert PostTextCallback.try_decode("dl|1|v") is None
+        assert PostTextCallback.try_decode("cj|1") is None
+        assert PostTextCallback.try_decode("x|1") is None
+        assert PostTextCallback.try_decode("") is None
+
+    def test_decode_rejects_non_numeric(self) -> None:
+        assert PostTextCallback.try_decode("pt|abc") is None
+        assert PostTextCallback.try_decode("pt|") is None
+        assert PostTextCallback.try_decode("pt|1.5") is None
+
+    def test_decode_rejects_non_positive_id(self) -> None:
+        assert PostTextCallback.try_decode("pt|0") is None
+        assert PostTextCallback.try_decode("pt|-1") is None
+
+    def test_encode_stays_within_telegram_cap(self) -> None:
+        encoded = PostTextCallback(job_id=10**18).encode()
         assert len(encoded) <= MAX_CALLBACK_LEN

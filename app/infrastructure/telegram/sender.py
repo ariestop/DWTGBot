@@ -26,7 +26,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from telegram import Bot, InputFile
+from telegram import Bot, InlineKeyboardMarkup, InputFile
 from telegram.constants import ParseMode
 from telegram.request import HTTPXRequest
 
@@ -117,11 +117,27 @@ class TelegramSender:
     async def shutdown(self) -> None:
         await self._bot.shutdown()
 
-    async def send_text(self, chat_id: int, text: str) -> None:
-        await self._bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+    async def send_text(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> None:
+        await self._bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
+        )
 
     async def send_video(
-        self, chat_id: int, file_path: Path, caption: str | None = None
+        self,
+        chat_id: int,
+        file_path: Path,
+        caption: str | None = None,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> str | None:
         # Probe first (cheap: one ffprobe subprocess, no decode). If Telegram
         # receives explicit width/height/duration it renders a proportional
@@ -138,11 +154,17 @@ class TelegramSender:
             width=meta.width,
             height=meta.height,
             duration=meta.duration,
+            reply_markup=reply_markup,
         )
         return msg.video.file_id if msg.video else None
 
     async def send_audio(
-        self, chat_id: int, file_path: Path, caption: str | None = None
+        self,
+        chat_id: int,
+        file_path: Path,
+        caption: str | None = None,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
         msg = await self._bot.send_audio(
@@ -150,11 +172,17 @@ class TelegramSender:
             audio=InputFile(data, filename=file_path.name),
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
+            reply_markup=reply_markup,
         )
         return msg.audio.file_id if msg.audio else None
 
     async def send_photo(
-        self, chat_id: int, file_path: Path, caption: str | None = None
+        self,
+        chat_id: int,
+        file_path: Path,
+        caption: str | None = None,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
         msg = await self._bot.send_photo(
@@ -162,11 +190,17 @@ class TelegramSender:
             photo=InputFile(data, filename=file_path.name),
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
+            reply_markup=reply_markup,
         )
         return msg.photo[-1].file_id if msg.photo else None
 
     async def send_document(
-        self, chat_id: int, file_path: Path, caption: str | None = None
+        self,
+        chat_id: int,
+        file_path: Path,
+        caption: str | None = None,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
         msg = await self._bot.send_document(
@@ -174,5 +208,6 @@ class TelegramSender:
             document=InputFile(data, filename=file_path.name),
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
+            reply_markup=reply_markup,
         )
         return msg.document.file_id if msg.document else None

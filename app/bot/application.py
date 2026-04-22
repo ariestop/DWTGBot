@@ -21,8 +21,9 @@ from telegram.ext import (
 )
 
 from app.bot.callbacks.cancel_job import handle_cancel_job_callback
-from app.bot.callbacks.codec import PREFIX_CANCEL_JOB, SEP
+from app.bot.callbacks.codec import PREFIX_CANCEL_JOB, PREFIX_POST_TEXT, SEP
 from app.bot.callbacks.download import handle_download_callback
+from app.bot.callbacks.post_text import handle_post_text_callback
 from app.bot.container import CONTAINER_KEY, BotContainer
 from app.bot.handlers.commands import about, health, help_cmd, start
 from app.bot.handlers.errors import on_error
@@ -68,6 +69,16 @@ def build_application(settings: Settings, container: BotContainer) -> Applicatio
         CallbackQueryHandler(
             instrument(handle_cancel_job_callback),
             pattern=rf"^{PREFIX_CANCEL_JOB}\{SEP}\d+$",
+        )
+    )
+    # Post-text handler (ADR-0010 §2.3). Same specificity as cancel —
+    # register before the catch-all download handler so its regex
+    # actually matches before ``dl|*`` starts its "unknown action"
+    # reply path.
+    application.add_handler(
+        CallbackQueryHandler(
+            instrument(handle_post_text_callback),
+            pattern=rf"^{PREFIX_POST_TEXT}\{SEP}\d+$",
         )
     )
     application.add_handler(CallbackQueryHandler(instrument(handle_download_callback)))

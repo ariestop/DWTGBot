@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from app.application.ports.progress_reporter import ProgressReporter
 from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics
+from app.application.services.post_text_store import PostTextStore
 from app.application.services.rate_limit import NoticeThrottle
 from app.application.services.rate_limit_gate import RateLimitGate
 from app.application.services.rate_limit_metrics import RateLimitMetrics
@@ -51,6 +52,10 @@ class BotContainer:
     # the cooperative cancel flag writer consumed by the worker.
     progress_reporter: ProgressReporter
     job_cancellation: JobCancellationStore
+    # Source post description side channel (ADR-0010 §2.3). Bot-side
+    # needs ``get`` for the handler; the writer lives in the
+    # auto-enqueue use case.
+    post_text_store: PostTextStore
 
 
 CONTAINER_KEY = "container"

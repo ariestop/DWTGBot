@@ -173,6 +173,17 @@ class Settings(BaseSettings):
     # so a cancel that races a slow job is still honoured on the final
     # phase-boundary check. 30 min matches ``PROGRESS_META_TTL_SEC``.
     CANCEL_FLAG_TTL_SEC: int = Field(1800, ge=60, le=7200)
+    # Lifetime of the ``post_text:{job_id}`` Redis string populated by
+    # the auto-enqueue flow. 24h is the product choice (ADR-0010 §2.3):
+    # long enough that a user can come back to a forwarded video the
+    # next day, short enough that an abandoned job does not pin
+    # arbitrary text in Redis forever.
+    POST_TEXT_TTL_SEC: int = Field(86_400, ge=600, le=604_800)
+    # Minimum ``len(description.strip())`` before we bother persisting
+    # the post text and rendering the button. Anything shorter is
+    # likely noise (e.g. "#shorts") and rendering the button would
+    # just let the user tap into an empty reply.
+    POST_TEXT_MIN_CHARS: int = Field(10, ge=1, le=1000)
 
     # --- Instant download: live progress (ADR-0010 §2.2) ---
     # TTL on progress:{job_id} hash. 10 min is well above the worst-case

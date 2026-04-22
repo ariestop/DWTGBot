@@ -15,6 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+from app.application.services.post_text_store import PostTextStore
 from app.application.services.temp_link_service import TempLinkService
 from app.config import Settings
 from app.domain.entities.media_info import DownloadResult
@@ -30,6 +33,21 @@ _logger = get_logger(__name__)
 # are predictable and easy to debug. Cap how many we send individually before
 # preferring a zipped temp link.
 MAX_INDIVIDUAL_FILES = 10
+
+# Label on the inline button that reveals the source post's
+# description. Kept in sync with ADR-0010 §2.3; changing the label
+# does not require a callback-data migration (data is still ``pt|N``)
+# but translators should edit this constant, not the callback encoder.
+_POST_TEXT_BUTTON_LABEL = "Получить текст поста 👇"
+
+# Wire format ``pt|<job_id>``. Inlined here to avoid an
+# application → bot import (see `.cursor/rules/20-architecture-layers`).
+# Source of truth for decoding: ``app.bot.callbacks.codec.PostTextCallback``.
+_POST_TEXT_CALLBACK_PREFIX = "pt"
+
+
+def _post_text_callback_data(job_id: int) -> str:
+    return f"{_POST_TEXT_CALLBACK_PREFIX}|{job_id}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,11 +67,16 @@ class DeliveryService:
         sender: TelegramSender,
         storage: LocalStorage,
         temp_links: TempLinkService,
+        post_text_store: PostTextStore | None = None,
     ) -> None:
         self._settings = settings
         self._sender = sender
         self._storage = storage
         self._temp_links = temp_links
+        # Optional so legacy call-sites (tests, ad-hoc scripts) still
+        # construct ``DeliveryService`` without wiring the store. In
+        # production ``composition.build_worker`` always provides it.
+        self._post_text = post_text_store
 
     async def deliver(
         self,
@@ -67,6 +90,13 @@ class DeliveryService:
 
         max_tg = self._settings.telegram_max_upload_bytes
 
+        # Build the post-text button once per delivery. EXISTS is cheap
+        # (<1ms on LAN Redis) and the double-check here guards against
+        # the narrow window where the TTL expires between auto-enqueue
+        # and delivery — rendering a button that immediately alerts
+        # "больше недоступен" would look broken.
+        post_text_markup = await self._post_text_markup(job_id=job_id)
+
         # Single file path
         if len(files) == 1:
             f = files[0]
@@ -77,6 +107,7 @@ class DeliveryService:
                     f,
                     kind=result.kind,
                     caption=_caption(result, size, footer=self._settings.BRAND_FOOTER),
+                    reply_markup=post_text_markup,
                 )
                 return DeliveryOutcome(
                     method=DeliveryMethod.TELEGRAM_UPLOAD,
@@ -85,7 +116,12 @@ class DeliveryService:
                     delivered_path=str(f),
                     file_size=size,
                 )
-            return await self._deliver_via_link(job_id=job_id, chat_id=chat_id, file=f)
+            return await self._deliver_via_link(
+                job_id=job_id,
+                chat_id=chat_id,
+                file=f,
+                reply_markup=post_text_markup,
+            )
 
         # Gallery path
         small_each = all(f.stat().st_size <= max_tg for f in files)
@@ -97,6 +133,7 @@ class DeliveryService:
             await self._sender.send_text(
                 chat_id,
                 _caption(result, result.total_size_bytes, footer=self._settings.BRAND_FOOTER),
+                reply_markup=post_text_markup,
             )
             return DeliveryOutcome(
                 method=DeliveryMethod.TELEGRAM_UPLOAD,
@@ -108,9 +145,21 @@ class DeliveryService:
 
         # Too big or too many → zip + temp link
         zip_path = self._storage.package_zip(files, job_id=job_id, base_name=result.title)
-        return await self._deliver_via_link(job_id=job_id, chat_id=chat_id, file=zip_path)
+        return await self._deliver_via_link(
+            job_id=job_id,
+            chat_id=chat_id,
+            file=zip_path,
+            reply_markup=post_text_markup,
+        )
 
-    async def _deliver_via_link(self, *, job_id: int, chat_id: int, file: Path) -> DeliveryOutcome:
+    async def _deliver_via_link(
+        self,
+        *,
+        job_id: int,
+        chat_id: int,
+        file: Path,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> DeliveryOutcome:
         size = file.stat().st_size
         if size > self._settings.max_file_size_bytes:
             raise FileTooLargeError(f"File {file.name} exceeds MAX_FILE_SIZE_MB")
@@ -123,7 +172,7 @@ class DeliveryService:
         footer = self._settings.BRAND_FOOTER
         if footer:
             message = f"{message}\n\n{footer}"
-        await self._sender.send_text(chat_id, message)
+        await self._sender.send_text(chat_id, message, reply_markup=reply_markup)
         _logger.info("delivered_via_temp_link", job_id=job_id, size=size, file=file.name)
         return DeliveryOutcome(
             method=DeliveryMethod.TEMP_LINK,
@@ -134,15 +183,42 @@ class DeliveryService:
         )
 
     async def _upload_one(
-        self, chat_id: int, file: Path, *, kind: MediaKind, caption: str | None
+        self,
+        chat_id: int,
+        file: Path,
+        *,
+        kind: MediaKind,
+        caption: str | None,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> str | None:
         if kind is MediaKind.VIDEO:
-            return await self._sender.send_video(chat_id, file, caption)
+            return await self._sender.send_video(chat_id, file, caption, reply_markup=reply_markup)
         if kind is MediaKind.AUDIO:
-            return await self._sender.send_audio(chat_id, file, caption)
+            return await self._sender.send_audio(chat_id, file, caption, reply_markup=reply_markup)
         if kind is MediaKind.PHOTO:
-            return await self._sender.send_photo(chat_id, file, caption)
-        return await self._sender.send_document(chat_id, file, caption)
+            return await self._sender.send_photo(chat_id, file, caption, reply_markup=reply_markup)
+        return await self._sender.send_document(chat_id, file, caption, reply_markup=reply_markup)
+
+    async def _post_text_markup(self, *, job_id: int) -> InlineKeyboardMarkup | None:
+        """Return the "Получить текст поста" keyboard iff the key
+        exists. Any failure (no store wired, Redis outage) maps to
+        ``None`` so delivery proceeds without a button — losing the
+        button is a graceful degradation, losing the video would not
+        be."""
+        if self._post_text is None:
+            return None
+        try:
+            present = await self._post_text.exists(job_id=job_id)
+        except Exception:  # pragma: no cover  defensive
+            _logger.exception("delivery_post_text_exists_failed", job_id=job_id)
+            return None
+        if not present:
+            return None
+        button = InlineKeyboardButton(
+            _POST_TEXT_BUTTON_LABEL,
+            callback_data=_post_text_callback_data(job_id),
+        )
+        return InlineKeyboardMarkup([[button]])
 
 
 def _caption(result: DownloadResult, size_bytes: int, *, footer: str = "") -> str:

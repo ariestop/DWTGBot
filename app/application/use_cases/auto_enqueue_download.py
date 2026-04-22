@@ -52,6 +52,7 @@ from app.application.dto.jobs import WorkerJobPayload
 from app.application.dto.media import AnalyzedMedia
 from app.application.ports.progress_reporter import ProgressReporter
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
+from app.application.services.post_text_store import PostTextStore
 from app.application.services.providers import ProviderRegistry
 from app.application.services.queue import QueueProducer
 from app.domain.entities.download_job import DownloadJob
@@ -98,16 +99,22 @@ class AutoEnqueueDownloadUseCase:
         jobs_repo: JobsRepository,
         queue: QueueProducer,
         progress_reporter: ProgressReporter,
+        post_text_store: PostTextStore,
         max_concurrent_per_user: int,
+        post_text_min_chars: int,
         metrics: JobMetrics | None = None,
     ) -> None:
         if max_concurrent_per_user < 1:
             raise ValueError("max_concurrent_per_user must be >= 1")
+        if post_text_min_chars < 1:
+            raise ValueError("post_text_min_chars must be >= 1")
         self._providers = providers
         self._jobs = jobs_repo
         self._queue = queue
         self._reporter = progress_reporter
+        self._post_text = post_text_store
         self._max_per_user = max_concurrent_per_user
+        self._post_text_min_chars = post_text_min_chars
         self._metrics: JobMetrics = metrics if metrics is not None else NoopJobMetrics()
 
     async def execute(self, payload: AutoEnqueueInput) -> AutoEnqueueResult:
@@ -158,17 +165,33 @@ class AutoEnqueueDownloadUseCase:
         except Exception:  # pragma: no cover  defensive
             _logger.exception("auto_enqueue_progress_start_failed", job_id=created.id)
 
+        # Post-text side-channel (ADR-0010 §2.3). We store the
+        # description as early as possible so the delivery-time
+        # button-visibility check in ``DeliveryService`` is just
+        # ``EXISTS post_text:{job_id}`` — no provider re-query, no
+        # second truncation. Short descriptions are dropped below the
+        # min-chars threshold to avoid rendering a button that leads
+        # to an empty text message (edge case E8).
+        stripped = (info.description or "").strip()
+        has_post_text = len(stripped) >= self._post_text_min_chars
+        if has_post_text:
+            try:
+                await self._post_text.put(job_id=created.id, text=stripped)
+            except Exception:  # pragma: no cover  defensive
+                _logger.exception("auto_enqueue_post_text_put_failed", job_id=created.id)
+
         _logger.info(
             "job_auto_enqueued",
             job_id=created.id,
             platform=_platform_str(info.platform),
             option=selected.key,
             user_id=payload.user_id,
+            post_text_stored=has_post_text,
         )
         return AutoEnqueueResult(
             job_id=created.id,
             selected=selected,
-            has_description=bool(info.description and info.description.strip()),
+            has_description=has_post_text,
         )
 
 

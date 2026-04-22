@@ -16,6 +16,7 @@ from dataclasses import dataclass
 PREFIX_DOWNLOAD = "dl"
 PREFIX_CANCEL = "x"
 PREFIX_CANCEL_JOB = "cj"
+PREFIX_POST_TEXT = "pt"
 SEP = "|"
 MAX_CALLBACK_LEN = 64
 
@@ -68,6 +69,41 @@ class CancelJobCallback:
     @classmethod
     def try_decode(cls, raw: str) -> CancelJobCallback | None:
         if not raw or not raw.startswith(PREFIX_CANCEL_JOB + SEP):
+            return None
+        parts = raw.split(SEP, 1)
+        if len(parts) != 2:
+            return None
+        _, job_id_str = parts
+        try:
+            job_id = int(job_id_str)
+        except ValueError:
+            return None
+        if job_id <= 0:
+            return None
+        return cls(job_id=job_id)
+
+
+@dataclass(frozen=True, slots=True)
+class PostTextCallback:
+    """Reveal the source-post description under an existing delivery.
+
+    Wire format: ``pt|<job_id>``. Semantics in
+    :mod:`app.bot.callbacks.post_text` — the handler looks up the text
+    in Redis and replies with it as 1..N chunked text messages. See
+    ADR-0010 §2.3.
+    """
+
+    job_id: int
+
+    def encode(self) -> str:
+        encoded = SEP.join((PREFIX_POST_TEXT, str(self.job_id)))
+        if len(encoded) > MAX_CALLBACK_LEN:
+            raise ValueError(f"callback_data too long: {len(encoded)} > {MAX_CALLBACK_LEN}")
+        return encoded
+
+    @classmethod
+    def try_decode(cls, raw: str) -> PostTextCallback | None:
+        if not raw or not raw.startswith(PREFIX_POST_TEXT + SEP):
             return None
         parts = raw.split(SEP, 1)
         if len(parts) != 2:
