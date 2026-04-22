@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from app.application.ports.progress_reporter import ProgressReporter
 from app.application.services.delivery_service import DeliveryService
+from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.providers import Provider, ProviderRegistry
 from app.config import Settings
@@ -17,7 +18,7 @@ from app.domain.enums import JobStatus, ProgressStage
 from app.domain.observability import file_size_class
 from app.domain.reason_class import ReasonClass, classify_exception
 from app.domain.repositories.jobs_repo import JobsRepository
-from app.exceptions import AppError, FileTooLargeError, StorageError
+from app.exceptions import AppError, FileTooLargeError, JobCancelledError, StorageError
 from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.storage.local_storage import LocalStorage
 from app.infrastructure.telegram.sender import TelegramSender
@@ -45,6 +46,7 @@ class ProcessDownloadUseCase:
         settings: Settings,
         metrics: JobMetrics | None = None,
         progress_reporter: ProgressReporter | None = None,
+        cancellation: JobCancellationStore | None = None,
     ) -> None:
         self._jobs = jobs_repo
         self._providers = providers
@@ -62,6 +64,11 @@ class ProcessDownloadUseCase:
         self._reporter: ProgressReporter = (
             progress_reporter if progress_reporter is not None else NoopProgressReporter()
         )
+        # ADR-0010 §2.1: cooperative cancellation. ``None`` means "no
+        # cancel plumbing" — every ``_check_cancel`` call becomes a
+        # no-op, the worker keeps running the classic flow. Production
+        # wires a ``RedisJobCancellationStore``.
+        self._cancellation = cancellation
 
     async def execute(self, payload: ProcessDownloadInput) -> None:
         job = await self._jobs.get(payload.job_id)
@@ -120,6 +127,10 @@ class ProcessDownloadUseCase:
             # in the DB; the reporter just gives the UI a "we are working
             # on it" signal before the slow I/O.
             await self._emit_progress(job.id, percent=5.0, stage=ProgressStage.ANALYZING)
+            # First cancel-flag check: user may have tapped cancel while
+            # the job was still sitting on the queue; don't start
+            # network I/O if so.
+            await self._check_cancel(job.id)
 
             provider = self._providers.get(job.platform)
             info = await provider.get_info(job.source_url)
@@ -141,6 +152,9 @@ class ProcessDownloadUseCase:
             # The boundary write ensures the UI transitions even for
             # providers / sources that do not emit hook frames (rare).
             await self._emit_progress(job.id, percent=0.0, stage=ProgressStage.DOWNLOADING)
+            # Second cancel-flag check: avoids a wasted yt-dlp session
+            # if the user cancelled during the ANALYZING phase.
+            await self._check_cancel(job.id)
             on_progress = self._scaled_download_hook(job.id, provider=provider)
             result = await provider.download(
                 job.source_url,
@@ -204,6 +218,16 @@ class ProcessDownloadUseCase:
                 reason_class=ReasonClass.OK.value,
             )
 
+        except JobCancelledError:
+            # Cooperative cancel — user-initiated, non-retryable. The
+            # bot already emitted ``reporter.cancel`` when the callback
+            # fired, so the placeholder UI is already correct; here we
+            # only reconcile the DB row and clear the flag so a
+            # reused job_id (shouldn't happen, but belt + braces) does
+            # not pick up a stale cancel.
+            _logger.info("job_cancelled_by_user", job_id=job.id)
+            await self._handle_cancellation(job)
+            return
         except AppError as exc:
             reason = classify_exception(exc)
             if exc.is_retryable:
@@ -354,6 +378,48 @@ class ProcessDownloadUseCase:
                 await self._sender.send_text(job.chat_id, f"⚠️ {user_text}")
             except Exception:  # pragma: no cover  best-effort
                 _logger.exception("notify_user_about_failure_failed")
+
+    async def _check_cancel(self, job_id: int | None) -> None:
+        """Raise :class:`JobCancelledError` if the user cancelled this job.
+
+        No-op when no cancellation store is wired (tests / legacy
+        branch). The store swallows its own Redis errors and returns
+        ``False`` on outage — we never block progress on a flag-store
+        flake.
+        """
+        if job_id is None or self._cancellation is None:
+            return
+        if await self._cancellation.is_cancelled(job_id=job_id):
+            raise JobCancelledError(f"job {job_id} cancelled by user")
+
+    async def _handle_cancellation(self, job: DownloadJob) -> None:
+        """Reconcile a cancelled job: DB → FAILED row, Redis → clear flag."""
+        # Reuse FAILED status to avoid a DB migration in this PR; the
+        # user-visible stage on the reporter is still CANCELLED, which
+        # is the distinction the UI cares about. See docs/tasks/
+        # instant-download-ux.md §4 PR 5 "cancel MVP".
+        previous = job.status
+        job.mark_failed("cancelled by user")
+        try:
+            await self._jobs.update(job)
+        finally:
+            # USER_ERROR is the right SLO bucket — cancellation is the
+            # user's choice, not a service regression. Matches how
+            # ``TooManyJobsError`` is classified in reason_class.py.
+            self._metrics.inc_status_change(
+                to=JobStatus.FAILED, reason_class=ReasonClass.USER_ERROR
+            )
+            _logger.info(
+                "job_status_changed",
+                from_=previous.value,
+                to=JobStatus.FAILED.value,
+                reason_class=ReasonClass.USER_ERROR.value,
+            )
+        if self._cancellation is not None and job.id is not None:
+            try:
+                await self._cancellation.clear(job_id=job.id)
+            except Exception:  # pragma: no cover  defensive
+                _logger.exception("cancel_flag_clear_failed", job_id=job.id)
 
     async def _emit_progress(
         self,

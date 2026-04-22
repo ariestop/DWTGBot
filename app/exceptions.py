@@ -136,3 +136,20 @@ class UpstreamUnavailableError(DownloadError):
     may already have closed."""
 
     user_message = "Источник временно ограничивает скачивание. Попробуйте через несколько минут."
+
+
+# ----- Cancellation (ADR-0010 §2.1 cancel-job) -----
+
+
+class JobCancelledError(AppError):
+    """Raised when a phase-boundary check sees a live ``cancel:{job_id}`` flag.
+
+    Non-retryable by design — the user asked to stop, re-queueing would
+    undo the explicit intent. The worker catches this separately from
+    generic ``AppError`` so we never emit the ``⚠️`` user-visible notice
+    (DeliveryService never runs) and the reporter terminal stage is
+    ``CANCELLED`` instead of ``FAILED``.
+    """
+
+    user_message = "Отменено."
+    is_retryable = False

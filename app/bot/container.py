@@ -11,12 +11,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.application.ports.progress_reporter import ProgressReporter
+from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics
 from app.application.services.rate_limit import NoticeThrottle
 from app.application.services.rate_limit_gate import RateLimitGate
 from app.application.services.rate_limit_metrics import RateLimitMetrics
 from app.application.services.request_state_store import RequestStateStore
 from app.application.use_cases.analyze_link import AnalyzeLinkUseCase
+from app.application.use_cases.auto_enqueue_download import AutoEnqueueDownloadUseCase
 from app.application.use_cases.enqueue_download import EnqueueDownloadUseCase
 from app.config import Settings
 
@@ -26,6 +29,10 @@ class BotContainer:
     settings: Settings
     analyze_link: AnalyzeLinkUseCase
     enqueue_download: EnqueueDownloadUseCase
+    # ADR-0010 §2.1: auto-enqueue path used when
+    # ``Settings.INSTANT_DOWNLOAD_ENABLED`` is on. Falls back to the
+    # legacy picker (``enqueue_download``) when flag is off.
+    auto_enqueue_download: AutoEnqueueDownloadUseCase
     request_state: RequestStateStore
     # Rate-limiting (docs/36-rate-limiting.md). The gate is a Noop when
     # ``RL_ENABLED=false`` so handlers can call ``evaluate`` unconditionally.
@@ -39,6 +46,11 @@ class BotContainer:
     # the use case and the metrics middleware always have a real
     # callable, even when METRICS_ENABLED=false.
     job_metrics: JobMetrics
+    # Instant-download side channel (ADR-0010). Bot-side needs
+    # ``reporter.cancel`` for the cancel button; ``cancellation`` is
+    # the cooperative cancel flag writer consumed by the worker.
+    progress_reporter: ProgressReporter
+    job_cancellation: JobCancellationStore
 
 
 CONTAINER_KEY = "container"

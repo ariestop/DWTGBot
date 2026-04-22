@@ -73,7 +73,10 @@ class DeliveryService:
             size = f.stat().st_size
             if size <= max_tg:
                 file_id = await self._upload_one(
-                    chat_id, f, kind=result.kind, caption=_caption(result, size)
+                    chat_id,
+                    f,
+                    kind=result.kind,
+                    caption=_caption(result, size, footer=self._settings.BRAND_FOOTER),
                 )
                 return DeliveryOutcome(
                     method=DeliveryMethod.TELEGRAM_UPLOAD,
@@ -91,7 +94,10 @@ class DeliveryService:
             for f in files:
                 fid = await self._upload_one(chat_id, f, kind=_infer_kind(f), caption=None)
                 primary_file_id = primary_file_id or fid
-            await self._sender.send_text(chat_id, _caption(result, result.total_size_bytes))
+            await self._sender.send_text(
+                chat_id,
+                _caption(result, result.total_size_bytes, footer=self._settings.BRAND_FOOTER),
+            )
             return DeliveryOutcome(
                 method=DeliveryMethod.TELEGRAM_UPLOAD,
                 public_url=None,
@@ -110,11 +116,14 @@ class DeliveryService:
             raise FileTooLargeError(f"File {file.name} exceeds MAX_FILE_SIZE_MB")
 
         _, url = await self._temp_links.issue(job_id=job_id, file_path=str(file))
-        await self._sender.send_text(
-            chat_id,
+        message = (
             f"📦 Файл слишком большой для Telegram ({_format_size(size)}).\n"
-            f'Скачать (TTL ограничен): <a href="{url}">{file.name}</a>',
+            f'Скачать (TTL ограничен): <a href="{url}">{file.name}</a>'
         )
+        footer = self._settings.BRAND_FOOTER
+        if footer:
+            message = f"{message}\n\n{footer}"
+        await self._sender.send_text(chat_id, message)
         _logger.info("delivered_via_temp_link", job_id=job_id, size=size, file=file.name)
         return DeliveryOutcome(
             method=DeliveryMethod.TEMP_LINK,
@@ -136,8 +145,11 @@ class DeliveryService:
         return await self._sender.send_document(chat_id, file, caption)
 
 
-def _caption(result: DownloadResult, size_bytes: int) -> str:
-    return f"<b>{_escape(result.title)}</b>\n{_format_size(size_bytes)}"
+def _caption(result: DownloadResult, size_bytes: int, *, footer: str = "") -> str:
+    base = f"<b>{_escape(result.title)}</b>\n{_format_size(size_bytes)}"
+    if not footer:
+        return base
+    return f"{base}\n\n{_escape(footer)}"
 
 
 def _escape(text: str) -> str:

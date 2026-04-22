@@ -32,7 +32,7 @@ def test_noop_matches_protocol_shape() -> None:
     it zero-cost on hot paths; this test pins the contract instead.
     """
     reporter = NoopProgressReporter()
-    required_methods = ("start", "update", "finish", "fail")
+    required_methods = ("start", "update", "finish", "fail", "cancel")
     for name in required_methods:
         assert hasattr(reporter, name), f"NoopProgressReporter missing {name}()"
         impl = getattr(reporter, name)
@@ -73,6 +73,12 @@ async def test_noop_fail_idempotent() -> None:
     reporter = NoopProgressReporter()
     assert await reporter.fail(job_id=1, reason="boom") is None
     assert await reporter.fail(job_id=1, reason="boom again") is None
+
+
+async def test_noop_cancel_idempotent() -> None:
+    reporter = NoopProgressReporter()
+    assert await reporter.cancel(job_id=1) is None
+    assert await reporter.cancel(job_id=1) is None
 
 
 @pytest.mark.parametrize("percent", [0.0, 0.5, 37.4, 99.9, 100.0])

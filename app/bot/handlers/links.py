@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from app.application.dto.media import AnalyzedMedia
 from app.application.services.rate_limit import evaluate as evaluate_rate_limit
-from app.bot.container import get_container
+from app.application.use_cases.auto_enqueue_download import AutoEnqueueInput
+from app.bot.callbacks.codec import CancelJobCallback
+from app.bot.container import BotContainer, get_container
 from app.bot.keyboards.download_options import build_options_keyboard
 from app.domain.rate_limit import LimitDecision
-from app.exceptions import AppError, InvalidUrlError, UnsupportedPlatformError
+from app.exceptions import AppError, InvalidUrlError, TooManyJobsError, UnsupportedPlatformError
 from app.logging_config import get_logger
 from app.utils.correlation import bind_context, new_request_id
 from app.utils.url import extract_first_url, normalize_domain
@@ -21,6 +25,7 @@ _logger = get_logger(__name__)
 _RETRY_TEMPLATE = (
     "⏳ Слишком много запросов. Попробуйте снова через {n} {unit}.\n(лимит: {category})"
 )
+_ANALYZE_CAPTION = "Анализирую ссылку…"
 
 
 def _format_retry_after(seconds: int) -> tuple[int, str]:
@@ -41,7 +46,11 @@ def _format_user_message(decision: LimitDecision) -> str:
     return _RETRY_TEMPLATE.format(n=n, unit=unit, category=category)
 
 
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  # noqa: PLR0911
+    # Seven early returns, each is a distinct guard: missing message,
+    # rate-limit silent-drop, rate-limit reply, invalid URL, provider
+    # app error, unexpected provider error, no options. Flattening
+    # these would obscure the log events tied to each branch.
     message = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
@@ -73,10 +82,6 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             request_id=correlation_id,
         )
         if not decision.allowed:
-            # §4.3 — only the first deny per RL_NOTICE_TTL window is loud.
-            # ``should_notify`` is also our "first deny" oracle: if it
-            # returns True, this is the first deny in the current window
-            # for this user, and we count it for §8.1 ("noisy users" topk).
             scope_key = f"u:{user.id}"
             should_speak = await container.notice_throttle.should_notify(
                 scope_key=scope_key,
@@ -119,6 +124,20 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             return
 
+        if container.settings.INSTANT_DOWNLOAD_ENABLED:
+            await _handle_instant_download(
+                message=message,
+                chat_id=chat.id,
+                user_id=user.id,
+                container=container,
+                analyzed=result.analyzed,
+                correlation_id=correlation_id,
+            )
+            return
+
+        # Legacy picker flow — preserved behind the flag so an operator
+        # can roll back by flipping ``INSTANT_DOWNLOAD_ENABLED=false``
+        # without a redeploy (ADR-0010 §2.1 risk R1).
         info = result.analyzed.info
         keyboard = build_options_keyboard(result.request_id, result.analyzed.options)
         title = info.title or "медиа"
@@ -127,6 +146,134 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             parse_mode="HTML",
             reply_markup=keyboard,
         )
+
+
+async def _handle_instant_download(
+    *,
+    message,
+    chat_id: int,
+    user_id: int,
+    container: BotContainer,
+    analyzed: AnalyzedMedia,
+    correlation_id: str,
+) -> None:
+    """Send a placeholder + auto-enqueue.
+
+    Ordering matters: we send the placeholder *before* we call
+    ``auto_enqueue.execute`` so the reporter has a ``message_id`` to
+    persist in ``progress_meta:{job_id}`` right away. If enqueue fails
+    we edit the placeholder in-place to the error so the user sees one
+    coherent message lifecycle instead of two.
+    """
+    info = analyzed.info
+    placeholder = await _send_placeholder(message, thumbnail_url=info.thumbnail_url)
+    if placeholder is None:
+        # Telegram rejected both the photo and the text fallback —
+        # nothing we can do beyond the (now absent) UI. Log and drop.
+        _logger.error("instant_placeholder_failed")
+        return
+
+    try:
+        enqueue_result = await container.auto_enqueue_download.execute(
+            AutoEnqueueInput(
+                user_id=user_id,
+                chat_id=chat_id,
+                analyzed=analyzed,
+                source_url=_resolve_source_url(analyzed),
+                placeholder_message_id=placeholder.message_id,
+                correlation_id=correlation_id,
+            )
+        )
+    except TooManyJobsError as exc:
+        _logger.info("instant_enqueue_rejected_cap", reason=str(exc))
+        await _edit_placeholder_text(placeholder, exc.user_message)
+        return
+    except AppError as exc:
+        _logger.warning("instant_enqueue_failed", error=str(exc))
+        await _edit_placeholder_text(placeholder, exc.user_message)
+        return
+    except Exception as exc:
+        _logger.exception("instant_enqueue_unexpected_error", error=str(exc))
+        await _edit_placeholder_text(placeholder, "Не удалось поставить задачу в очередь.")
+        return
+
+    # Attach the cancel button now. The initial caption stays
+    # "Анализирую ссылку…" — the progress_updater will flip it to
+    # "Скачиваю" as soon as the worker emits the first event.
+    # ``edit_reply_markup`` works identically for photo and text
+    # messages (PTB normalises), so a single call covers both paths.
+    cancel_keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "❌ Отменить",
+                    callback_data=CancelJobCallback(job_id=enqueue_result.job_id).encode(),
+                )
+            ]
+        ],
+    )
+    try:
+        await placeholder.edit_reply_markup(reply_markup=cancel_keyboard)
+    except TelegramError:
+        # Non-fatal: the user can still wait for the auto-delete on
+        # DONE / CANCELLED. The cancel button is a convenience, not a
+        # correctness requirement.
+        _logger.warning("instant_attach_cancel_failed", job_id=enqueue_result.job_id)
+
+
+async def _send_placeholder(message, *, thumbnail_url: str | None):
+    """Send photo+caption if we have a thumbnail, else plain text.
+
+    Returns the Telegram ``Message`` object on success, ``None`` if the
+    client rejected both paths. Telegram can reject a remote-URL photo
+    for many reasons (wrong content-type, 403 on the CDN, etc.) — the
+    text fallback keeps the UX intact.
+    """
+    if thumbnail_url:
+        try:
+            return await message.reply_photo(
+                photo=thumbnail_url,
+                caption=_ANALYZE_CAPTION,
+            )
+        except TelegramError:
+            _logger.info("instant_placeholder_photo_failed", thumbnail=thumbnail_url)
+    try:
+        return await message.reply_text(_ANALYZE_CAPTION)
+    except TelegramError:
+        _logger.exception("instant_placeholder_text_failed")
+        return None
+
+
+async def _edit_placeholder_text(placeholder, text: str) -> None:
+    """Replace a placeholder's caption/text with an error message.
+
+    Tolerant of both photo (``edit_caption``) and text
+    (``edit_text``) placeholders so the error UX is uniform.
+    """
+    try:
+        if placeholder.photo:
+            await placeholder.edit_caption(caption=text)
+        else:
+            await placeholder.edit_text(text=text)
+    except TelegramError:
+        # Last-ditch fallback — the placeholder may have been deleted
+        # by the user; we don't want to drag an AppError up the stack.
+        _logger.info("instant_placeholder_edit_failed")
+
+
+def _resolve_source_url(analyzed: AnalyzedMedia) -> str:
+    """Best-match source URL from provider ``raw`` bag.
+
+    Mirrors the picker flow's helper in
+    ``app/bot/callbacks/download.py`` so both paths persist the
+    same ``source_url`` into ``download_jobs.source_url``.
+    """
+    raw = analyzed.info.raw or {}
+    for key in ("source_url", "webpage_url", "original_url"):
+        value = raw.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 def _escape(text: str) -> str:

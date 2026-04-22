@@ -57,3 +57,6 @@ class NoopProgressReporter(ProgressReporter):
 
     async def fail(self, *, job_id: int, reason: str) -> None:
         return None
+
+    async def cancel(self, *, job_id: int) -> None:
+        return None

@@ -84,11 +84,14 @@ async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT
             return
 
         await container.request_state.delete(parsed.request_id)
+        # ADR-0010 §2.1 task §4 item 4: the internal job id is no
+        # longer surfaced to the user — nothing actionable they can
+        # do with it and it clutters the placeholder. ``result.job_id``
+        # is still logged above for operator triage.
+        del result
         if query.message is not None:
             await query.edit_message_text(
-                f"⏳ Скачиваю «{selected.label}». Это может занять немного времени.\n"
-                f"id задачи: <code>{result.job_id}</code>",
-                parse_mode="HTML",
+                f"⏳ Скачиваю «{selected.label}». Это может занять немного времени.",
             )
 
 

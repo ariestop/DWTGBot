@@ -20,6 +20,8 @@ from telegram.ext import (
     filters,
 )
 
+from app.bot.callbacks.cancel_job import handle_cancel_job_callback
+from app.bot.callbacks.codec import PREFIX_CANCEL_JOB, SEP
 from app.bot.callbacks.download import handle_download_callback
 from app.bot.container import CONTAINER_KEY, BotContainer
 from app.bot.handlers.commands import about, health, help_cmd, start
@@ -58,6 +60,16 @@ def build_application(settings: Settings, container: BotContainer) -> Applicatio
         MessageHandler(filters.TEXT & ~filters.COMMAND, instrument(handle_link))
     )
 
+    # Cancel-job handler must run *before* the generic download
+    # callback handler — otherwise the catch-all ``dl|*`` route would
+    # swallow ``cj|<job_id>`` callbacks with an "unknown action" reply.
+    # Registration order in PTB is also execution order within a group.
+    application.add_handler(
+        CallbackQueryHandler(
+            instrument(handle_cancel_job_callback),
+            pattern=rf"^{PREFIX_CANCEL_JOB}\{SEP}\d+$",
+        )
+    )
     application.add_handler(CallbackQueryHandler(instrument(handle_download_callback)))
 
     application.add_error_handler(on_error)

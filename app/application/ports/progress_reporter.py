@@ -100,3 +100,15 @@ class ProgressReporter(Protocol):
         display. Secrets and stack traces MUST NOT appear here — they
         belong in the logs, not in user-visible captions. Idempotent.
         """
+
+    async def cancel(self, *, job_id: int) -> None:
+        """
+        Publish the terminal cancellation state for a job.
+
+        Distinct from :meth:`fail` so the updater can render "Отменено"
+        instead of an error message before deleting the placeholder.
+        Idempotent. Called by the bot's ``cancel_job`` handler the
+        moment the user taps the cancel button — the worker
+        independently raises :class:`JobCancelledError` at the next
+        phase boundary and reconciles the job row.
+        """

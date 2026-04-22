@@ -6,6 +6,7 @@ import pytest
 
 from app.bot.callbacks.codec import (
     MAX_CALLBACK_LEN,
+    CancelJobCallback,
     DownloadCallback,
     encode_cancel,
 )
@@ -38,3 +39,30 @@ class TestEncode:
 class TestCancel:
     def test_cancel_format(self) -> None:
         assert encode_cancel("abc") == "x|abc"
+
+
+class TestCancelJobCallback:
+    """Wire format ``cj|<job_id>`` — ADR-0010 §2.1 cancel button."""
+
+    def test_roundtrip(self) -> None:
+        cb = CancelJobCallback(job_id=12345)
+        assert cb.encode() == "cj|12345"
+        assert CancelJobCallback.try_decode(cb.encode()) == cb
+
+    def test_decode_rejects_wrong_prefix(self) -> None:
+        assert CancelJobCallback.try_decode("dl|1|v") is None
+        assert CancelJobCallback.try_decode("x|1") is None
+        assert CancelJobCallback.try_decode("") is None
+
+    def test_decode_rejects_non_numeric(self) -> None:
+        assert CancelJobCallback.try_decode("cj|abc") is None
+        assert CancelJobCallback.try_decode("cj|") is None
+
+    def test_decode_rejects_non_positive_id(self) -> None:
+        assert CancelJobCallback.try_decode("cj|0") is None
+        assert CancelJobCallback.try_decode("cj|-5") is None
+
+    def test_encode_stays_within_telegram_cap(self) -> None:
+        # 64-byte ceiling — even an astronomical 10^18 id fits.
+        encoded = CancelJobCallback(job_id=10**18).encode()
+        assert len(encoded) <= MAX_CALLBACK_LEN

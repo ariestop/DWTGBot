@@ -159,6 +159,21 @@ class Settings(BaseSettings):
     # in a few Telegram messages when chunked.
     POST_TEXT_MAX_CHARS: int = Field(10_000, ge=100, le=100_000)
 
+    # --- Instant-download feature flag (ADR-0010 §2.1) ---
+    # Master switch for the auto-enqueue + live-progress UX. When
+    # ``true`` (default), a URL message triggers immediate download
+    # without the quality picker; when ``false`` the legacy picker
+    # flow runs 1-to-1 (the flag is load-bearing for rollback).
+    INSTANT_DOWNLOAD_ENABLED: bool = True
+    # Appended verbatim after the final media caption (two newlines
+    # separator). Empty string disables the footer entirely — tests
+    # and dev deployments often want a clean caption.
+    BRAND_FOOTER: str = "Спасибо за использование нашего бота @dwtgbot"
+    # TTL on ``cancel:{job_id}`` flag. Must exceed JOB_TIMEOUT_SECONDS
+    # so a cancel that races a slow job is still honoured on the final
+    # phase-boundary check. 30 min matches ``PROGRESS_META_TTL_SEC``.
+    CANCEL_FLAG_TTL_SEC: int = Field(1800, ge=60, le=7200)
+
     # --- Instant download: live progress (ADR-0010 §2.2) ---
     # TTL on progress:{job_id} hash. 10 min is well above the worst-case
     # job time (JOB_TIMEOUT_SECONDS) but small enough that orphaned

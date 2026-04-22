@@ -22,6 +22,7 @@ from app.exceptions import (
     DownloadTimeoutError,
     FfmpegError,
     InvalidUrlError,
+    JobCancelledError,
     MediaNotFoundError,
     MediaPrivateError,
     ProviderError,
@@ -60,6 +61,10 @@ _USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
     TooManyJobsError,
     TempLinkExpiredError,
     TempLinkExhaustedError,
+    # User-initiated cancel (ADR-0010 §2.1). Classified as user_error
+    # so the SLO denominator excludes these — a cancel is not a service
+    # failure.
+    JobCancelledError,
 )
 
 # Failures originating in the upstream provider / yt-dlp / ffmpeg.

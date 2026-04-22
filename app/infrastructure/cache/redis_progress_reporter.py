@@ -192,6 +192,9 @@ class RedisProgressReporter(ProgressReporter):
     async def fail(self, *, job_id: int, reason: str) -> None:
         await self._terminal(job_id, ProgressStage.FAILED, reason=reason)
 
+    async def cancel(self, *, job_id: int) -> None:
+        await self._terminal(job_id, ProgressStage.CANCELLED, reason=None)
+
     # ---- sync bridge for yt-dlp progress hook ------------------------------
 
     def download_hook(self, *, job_id: int) -> Callable[[float], None]:

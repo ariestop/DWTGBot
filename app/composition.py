@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.ports.progress_reporter import ProgressReporter
 from app.application.services.delivery_service import DeliveryService
+from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.providers import ProviderRegistry
 from app.application.services.queue import QueueProducer
@@ -28,6 +29,7 @@ from app.application.services.rate_limit_metrics import (
 from app.application.services.request_state_store import RequestStateStore
 from app.application.services.temp_link_service import TempLinkService
 from app.application.use_cases.analyze_link import AnalyzeLinkUseCase
+from app.application.use_cases.auto_enqueue_download import AutoEnqueueDownloadUseCase
 from app.application.use_cases.enqueue_download import EnqueueDownloadUseCase
 from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.bot.container import BotContainer
@@ -35,6 +37,7 @@ from app.bot.services.progress_updater import ProgressUpdater
 from app.config import Settings
 from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
+from app.infrastructure.cache.redis_job_cancellation import RedisJobCancellationStore
 from app.infrastructure.cache.redis_notice_throttle import RedisNoticeThrottle
 from app.infrastructure.cache.redis_pool import build_redis
 from app.infrastructure.cache.redis_progress_reporter import RedisProgressReporter
@@ -253,6 +256,29 @@ async def build_bot(settings: Settings) -> BotComposition:
         metrics=job_metrics,
     )
 
+    # ADR-0010 §2.1: bot needs its own RedisProgressReporter to call
+    # ``reporter.cancel`` from the cancel-button handler. The worker
+    # builds a separate instance (different lifetime / sync-bridge);
+    # both share the same Redis namespace via ``_progress_key`` naming.
+    bot_progress_reporter: ProgressReporter = RedisProgressReporter(
+        redis=core.redis,
+        redis_url=settings.redis_url,
+        settings=settings,
+    )
+    job_cancellation: JobCancellationStore = RedisJobCancellationStore(
+        redis=core.redis,
+        settings=settings,
+    )
+
+    auto_enqueue = AutoEnqueueDownloadUseCase(
+        providers=providers,
+        jobs_repo=jobs_repo,
+        queue=queue,
+        progress_reporter=bot_progress_reporter,
+        max_concurrent_per_user=settings.MAX_CONCURRENT_JOBS_PER_USER,
+        metrics=job_metrics,
+    )
+
     rate_limit_gate: RateLimitGate
     if settings.RL_ENABLED:
         rate_limit_gate = RedisRateLimitGate(
@@ -271,11 +297,14 @@ async def build_bot(settings: Settings) -> BotComposition:
         settings=settings,
         analyze_link=analyze,
         enqueue_download=enqueue,
+        auto_enqueue_download=auto_enqueue,
         request_state=state_store,
         rate_limit_gate=rate_limit_gate,
         notice_throttle=notice_throttle,
         metrics=rl_metrics,
         job_metrics=job_metrics,
+        progress_reporter=bot_progress_reporter,
+        job_cancellation=job_cancellation,
     )
 
     queue_sampler = _build_queue_sampler(settings, pool=arq_pool, metrics=job_metrics)
@@ -289,6 +318,7 @@ async def build_bot(settings: Settings) -> BotComposition:
         core=core,
         container=container,
         arq_pool=arq_pool,
+        progress_reporter=bot_progress_reporter,
         progress_updater=progress_updater,
         metrics_server=metrics_server,
         queue_sampler=queue_sampler,
@@ -397,6 +427,10 @@ def build_worker(settings: Settings) -> WorkerComposition:
         redis_url=settings.redis_url,
         settings=settings,
     )
+    cancellation: JobCancellationStore = RedisJobCancellationStore(
+        redis=core.redis,
+        settings=settings,
+    )
 
     use_case = ProcessDownloadUseCase(
         jobs_repo=jobs_repo,
@@ -407,6 +441,7 @@ def build_worker(settings: Settings) -> WorkerComposition:
         settings=settings,
         metrics=job_metrics,
         progress_reporter=progress_reporter,
+        cancellation=cancellation,
     )
     return WorkerComposition(
         core=core,
