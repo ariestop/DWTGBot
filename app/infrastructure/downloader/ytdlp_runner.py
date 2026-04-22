@@ -31,6 +31,7 @@ from yt_dlp.utils import DownloadError as YtDlpDownloadError
 from app.config import Settings
 from app.exceptions import (
     DownloadError,
+    DownloadTimeoutError,
     MediaNotFoundError,
     MediaPrivateError,
     ProviderError,
@@ -363,8 +364,33 @@ class YtDlpRunner:
             opts.update(extra_opts)
         self._apply_proxy(opts)
 
+        # Audit fix A10: bound the yt-dlp call by
+        # ``DOWNLOAD_TIMEOUT_SECONDS`` independently of arq's
+        # ``JOB_TIMEOUT_SECONDS``. Without this, a hung/slow source
+        # consumed the entire job budget (download + transcode + upload)
+        # and arq prematurely killed the worker mid-ffmpeg.
+        #
+        # Known limitation: ``asyncio.wait_for`` on ``to_thread`` cannot
+        # cancel the in-flight thread — the background yt-dlp work keeps
+        # running until its socket timeout (``socket_timeout=30``) trips.
+        # The caller has already returned ``DownloadError("timeout")``,
+        # so the job is correctly marked failed; the thread terminates
+        # shortly after and its output files are GC'd by the cleanup
+        # sweep. A clean kill requires moving yt-dlp to a subprocess
+        # (tracked as a follow-up — see audit-fixes phase 3 backlog).
+        download_timeout = self._settings.DOWNLOAD_TIMEOUT_SECONDS
         try:
-            await asyncio.to_thread(self._download_sync, url, opts)
+            await asyncio.wait_for(
+                asyncio.to_thread(self._download_sync, url, opts),
+                timeout=download_timeout,
+            )
+        except TimeoutError as exc:
+            _logger.warning(
+                "ytdlp_download_timeout",
+                url=url,
+                timeout_s=download_timeout,
+            )
+            raise DownloadTimeoutError(f"yt-dlp timed out after {download_timeout}s") from exc
         except YtDlpDownloadError as exc:
             await self._report_if_throttle(host, exc)
             raise self._classify(exc) from exc

@@ -36,10 +36,14 @@ services:
       - storage:/var/lib/dwtgbot/storage
       - storage_tmp:/var/lib/dwtgbot/tmp
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/healthz >/dev/null"]
+      # Audit fix A2: /readyz (not /healthz) so worker's
+      # depends_on.condition=service_healthy reflects actual downstream
+      # reachability, not just process liveness.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/readyz >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 3
+      start_period: 30s
 
   worker:
     image: ${IMAGE_WORKER:?IMAGE_WORKER must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-worker:sha-abc1234)}

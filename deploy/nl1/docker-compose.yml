@@ -52,10 +52,19 @@ services:
     # ``--requirepass`` is set (official image honours REDISCLI_AUTH).
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD}
+    # Audit fix A4: bound Redis memory + evict under pressure.
+    # ``volatile-lru`` (not ``allkeys-lru``) is deliberate: arq queue
+    # keys (``arq:queue``, ``arq:job:*``) are stored without TTL and
+    # must not be evicted — losing them silently drops enqueued jobs.
+    # All application-managed keys (progress:*, progress_meta:*,
+    # post_text:*, cancel:*, request_state:*) set TTL, so they are
+    # the only LRU candidates under memory pressure.
     command: >
       redis-server
       --save 60 1000
       --appendonly yes
+      --maxmemory ${REDIS_MAXMEMORY:-1gb}
+      --maxmemory-policy volatile-lru
       ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
     volumes:
       - redis_data:/data
@@ -116,10 +125,15 @@ services:
     networks:
       - dwtgbot_internal
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/healthz >/dev/null"]
+      # Audit fix A2: /readyz checks downstream deps (Postgres, Redis,
+      # storage). /healthz (liveness) used to report "healthy" even when
+      # Postgres was unreachable, causing dependent containers to start
+      # with false-green depends_on.condition=service_healthy.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/readyz >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 3
+      start_period: 30s
     # No external ports — only used by docker healthchecks and as an
     # admin debug endpoint reachable inside the private network.
 

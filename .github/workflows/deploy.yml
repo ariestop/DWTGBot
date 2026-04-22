@@ -59,7 +59,18 @@ jobs:
             ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
 
   nl2:
-    if: ${{ inputs.target == 'nl2' || inputs.target == 'both' }}
+    # Audit fix A3: bare ``needs: [nl1]`` silently skipped nl2 when
+    # ``target: nl2`` was dispatched (because nl1 was skipped, the
+    # implicit success-predicate on ``needs`` evaluates to false).
+    # ``always()`` forces evaluation, and we require nl1 to be either
+    # ``success`` (target=both, nl1 passed) or ``skipped``
+    # (target=nl2 only). A failed nl1 still blocks nl2.
+    if: >-
+      ${{
+        always()
+        && (inputs.target == 'nl2' || inputs.target == 'both')
+        && (needs.nl1.result == 'success' || needs.nl1.result == 'skipped')
+      }}
     needs: [nl1]
     runs-on: ubuntu-latest
     timeout-minutes: 25

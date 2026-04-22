@@ -31,14 +31,21 @@ else
 fi
 
 log_step "Triggering one-shot DB+files cleanup cycle"
+# Audit fix A1: cleanup_worker was refactored (audit fix L13) to use
+# ``build_cleanup`` (async) instead of the now-removed ``build_api``
+# helper. ``_run_cycle`` takes ``orphan_age_seconds`` as a keyword-only
+# arg and pulls MediaCacheRepo off the composition internally — no need
+# to construct it here.
 compose_nl2 run --rm cleanup python -c \
-  "import asyncio; from app.workers.cleanup_worker import _run_cycle, build_api;
-from app.config import get_settings;
-from app.infrastructure.db.repositories.media_cache_repo_impl import SqlAlchemyMediaCacheRepository;
+  "import asyncio
+from app.composition import build_cleanup
+from app.config import get_settings
+from app.workers.cleanup_worker import _run_cycle
 async def main():
-    s = get_settings(); c = build_api(s)
+    s = get_settings()
+    c = await build_cleanup(s)
     try:
-        await _run_cycle(c, SqlAlchemyMediaCacheRepository(c.core.sessionmaker))
+        await _run_cycle(c, orphan_age_seconds=s.ORPHAN_JOB_AGE_SECONDS)
     finally:
         await c.aclose()
 asyncio.run(main())"
