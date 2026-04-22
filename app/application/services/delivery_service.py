@@ -12,6 +12,7 @@ calls the sender / temp link / storage objects it was given.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +52,20 @@ _POST_TEXT_HINT = "Нажмите, чтобы получить текст пос
 # application → bot import (see `.cursor/rules/20-architecture-layers`).
 # Source of truth for decoding: ``app.bot.callbacks.codec.PostTextCallback``.
 _POST_TEXT_CALLBACK_PREFIX = "pt"
+
+# Direct-upload retry budget for files within the 49 MB Telegram limit.
+# Telegram's ``send_*`` endpoints occasionally flake mid-upload
+# (``TimedOut`` on a stalled multipart POST, ``NetworkError`` on a
+# connection reset) even for files the server would happily accept on
+# the next attempt. Instead of degrading to a temp link — which the
+# user explicitly does not want below 49 MB — retry a small number of
+# times with a short fixed wait. If every attempt still fails, the
+# last exception propagates to arq and the job enters its normal retry
+# lifecycle; the generic terminal error is reserved for genuinely
+# stuck jobs rather than one-off upload blips on files we can trivially
+# deliver directly.
+_UPLOAD_RETRY_ATTEMPTS = 3
+_UPLOAD_RETRY_BACKOFF_S = 3.0
 
 
 def _post_text_callback_data(job_id: int) -> str:
@@ -119,45 +134,18 @@ class DeliveryService:
             f = files[0]
             size = f.stat().st_size
             if size <= max_tg:
-                try:
-                    file_id = await self._upload_one(
-                        chat_id,
-                        f,
-                        kind=result.kind,
-                        caption=_with_post_text_hint(
-                            _caption(result, size, footer=self._settings.BRAND_FOOTER),
-                            post_text_markup=post_text_markup,
-                        ),
-                        reply_markup=post_text_markup,
-                    )
-                except TelegramError as exc:
-                    # Fall back to a temp link when Telegram rejects the
-                    # direct upload. Most common causes: transient
-                    # ``BadRequest`` on the video endpoint (Telegram
-                    # tightens validation without warning — unusual
-                    # colour primaries, odd aspect ratio, ffmpeg-style
-                    # fragmented MP4 boxes), or a network blip late in
-                    # the multipart POST. Previously these escaped as
-                    # non-``AppError`` exceptions, arq retried, and the
-                    # last attempt surfaced the generic fallback text
-                    # (see ``mark_terminally_failed``) -- even though
-                    # the file was already on disk and perfectly
-                    # deliverable via the temp-link path that we use
-                    # unconditionally for >50 MB files.
-                    _logger.warning(
-                        "telegram_upload_fallback_to_link",
-                        job_id=job_id,
-                        size=size,
-                        file=f.name,
-                        error_class=type(exc).__name__,
-                        error=str(exc),
-                    )
-                    return await self._deliver_via_link(
-                        job_id=job_id,
-                        chat_id=chat_id,
-                        file=f,
-                        reply_markup=post_text_markup,
-                    )
+                file_id = await self._upload_one_with_retry(
+                    job_id=job_id,
+                    chat_id=chat_id,
+                    file=f,
+                    size=size,
+                    kind=result.kind,
+                    caption=_with_post_text_hint(
+                        _caption(result, size, footer=self._settings.BRAND_FOOTER),
+                        post_text_markup=post_text_markup,
+                    ),
+                    reply_markup=post_text_markup,
+                )
                 return DeliveryOutcome(
                     method=DeliveryMethod.TELEGRAM_UPLOAD,
                     public_url=None,
@@ -251,6 +239,68 @@ class DeliveryService:
         if kind is MediaKind.PHOTO:
             return await self._sender.send_photo(chat_id, file, caption, reply_markup=reply_markup)
         return await self._sender.send_document(chat_id, file, caption, reply_markup=reply_markup)
+
+    async def _upload_one_with_retry(
+        self,
+        *,
+        job_id: int,
+        chat_id: int,
+        file: Path,
+        size: int,
+        kind: MediaKind,
+        caption: str | None,
+        reply_markup: InlineKeyboardMarkup | None,
+    ) -> str | None:
+        """Direct Telegram upload with a short retry budget.
+
+        Files within the ``telegram_max_upload_bytes`` window must be
+        delivered as a real media message — never as a temp link — per
+        the product contract. Telegram's upload endpoints still flake
+        occasionally (server-side multipart stalls, CDN-layer resets
+        during the final PUT). A two-retry budget with a small fixed
+        wait resolves the vast majority of those without impacting the
+        happy path; persistent failures propagate to arq's job-level
+        retry so the worker behaves predictably instead of silently
+        switching to a link on a file the user expected inline.
+        """
+        attempts = max(1, _UPLOAD_RETRY_ATTEMPTS)
+        last_exc: TelegramError | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._upload_one(
+                    chat_id,
+                    file,
+                    kind=kind,
+                    caption=caption,
+                    reply_markup=reply_markup,
+                )
+            except TelegramError as exc:
+                last_exc = exc
+                if attempt >= attempts:
+                    _logger.warning(
+                        "telegram_upload_retries_exhausted",
+                        job_id=job_id,
+                        size=size,
+                        file=file.name,
+                        attempts=attempt,
+                        error_class=type(exc).__name__,
+                        error=str(exc),
+                    )
+                    raise
+                _logger.info(
+                    "telegram_upload_retry",
+                    job_id=job_id,
+                    size=size,
+                    file=file.name,
+                    attempt=attempt,
+                    error_class=type(exc).__name__,
+                    error=str(exc),
+                )
+                await asyncio.sleep(_UPLOAD_RETRY_BACKOFF_S)
+        # Unreachable: the loop either returns or raises. The ``assert``
+        # keeps type-checkers happy about the Optional return type.
+        assert last_exc is not None  # pragma: no cover
+        raise last_exc  # pragma: no cover
 
     async def _post_text_markup(self, *, job_id: int) -> InlineKeyboardMarkup | None:
         """Return the "Получить текст поста" keyboard iff the key
