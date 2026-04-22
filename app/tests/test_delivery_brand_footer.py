@@ -19,7 +19,7 @@ def _result(title: str = "Demo") -> DownloadResult:
 
 def test_caption_without_footer_matches_legacy_shape() -> None:
     caption = _caption(_result(), 1024, footer="")
-    assert caption == "<b>Demo</b>\n1.0 KB"
+    assert caption == "<b>Demo</b>\nРазмер файла: 1.0 KB"
 
 
 def test_caption_with_footer_appends_with_blank_line() -> None:

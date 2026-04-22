@@ -222,7 +222,7 @@ class DeliveryService:
 
 
 def _caption(result: DownloadResult, size_bytes: int, *, footer: str = "") -> str:
-    base = f"<b>{_escape(result.title)}</b>\n{_format_size(size_bytes)}"
+    base = f"<b>{_escape(result.title)}</b>\nРазмер файла: {_format_size(size_bytes)}"
     if not footer:
         return base
     return f"{base}\n\n{_escape(footer)}"

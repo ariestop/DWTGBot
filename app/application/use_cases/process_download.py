@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -162,6 +163,12 @@ class ProcessDownloadUseCase:
                 target_dir=str(target),
                 on_progress=on_progress,
             )
+            # Providers fall back to ``out_dir.name`` (= the numeric job
+            # id) when they don't have a better source-side title — that
+            # would surface the internal queue id as the caption title.
+            # Prefer the real ``MediaInfo.title`` whenever it is non-empty.
+            if info.title:
+                result = dataclasses.replace(result, title=info.title)
 
             # Phase 3 — PROCESSING (mobile-compat transcode + delivery
             # prep). We cannot observe ffmpeg progress cheaply; a single
