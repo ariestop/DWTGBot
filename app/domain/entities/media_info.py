@@ -39,7 +39,16 @@ class MediaItem:
 
 @dataclass(frozen=True, slots=True)
 class MediaInfo:
-    """Provider-agnostic metadata for a URL."""
+    """Provider-agnostic metadata for a URL.
+
+    ``description`` is the post/caption text from the source (YouTube
+    description, Instagram caption). Empty string when the source does
+    not provide one. Providers MUST truncate to
+    ``Settings.POST_TEXT_MAX_CHARS`` before populating this field —
+    domain stays IO-free but enforces the invariant that the string is
+    bounded. Consumed by the "Получить текст поста" button flow
+    (ADR-0010 §2.3).
+    """
 
     platform: Platform
     media_id: str
@@ -48,6 +57,7 @@ class MediaInfo:
     duration_sec: float | None = None
     items: tuple[MediaItem, ...] = field(default_factory=tuple)
     thumbnail_url: str | None = None
+    description: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
 

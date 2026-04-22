@@ -8,12 +8,13 @@ application. Each entrypoint (bot / api / worker) calls one of the
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from arq.connections import ArqRedis
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.application.ports.progress_reporter import ProgressReporter
 from app.application.services.delivery_service import DeliveryService
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.providers import ProviderRegistry
@@ -31,6 +32,7 @@ from app.application.use_cases.enqueue_download import EnqueueDownloadUseCase
 from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.bot.container import BotContainer
 from app.config import Settings
+from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.infrastructure.cache.redis_notice_throttle import RedisNoticeThrottle
 from app.infrastructure.cache.redis_pool import build_redis
@@ -67,6 +69,12 @@ class BotComposition:
     core: CoreInfra
     container: BotContainer
     arq_pool: ArqRedis
+    # ADR-0010 §2.2: side-channel progress writer. In PR 1 this is a
+    # Noop across the board; later PRs swap it for RedisProgressReporter
+    # behind ``INSTANT_DOWNLOAD_ENABLED``. Kept as a top-level field so
+    # the future bot ``progress_updater`` can hang off it without
+    # reshaping the composition.
+    progress_reporter: ProgressReporter = field(default_factory=NoopProgressReporter)
     # Optional /metrics server. Created only when METRICS_ENABLED=true.
     # The bot entrypoint owns the start/stop calls (main_bot.py).
     metrics_server: object | None = None
@@ -100,6 +108,10 @@ class WorkerComposition:
     # sink. Lifecycle is wired through the arq on_startup / on_shutdown
     # hooks in ``app/infrastructure/queue/worker_settings.py``.
     job_metrics: JobMetrics
+    # ADR-0010 §2.2: see ``BotComposition.progress_reporter``. The
+    # worker holds the same port so ``ProcessDownloadUseCase`` (in a
+    # later PR) receives it via DI rather than reaching into globals.
+    progress_reporter: ProgressReporter = field(default_factory=NoopProgressReporter)
     metrics_server: object | None = None
 
     async def aclose(self) -> None:

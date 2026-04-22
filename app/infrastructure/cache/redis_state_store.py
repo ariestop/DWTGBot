@@ -125,6 +125,7 @@ def _info_to_dict(info: MediaInfo) -> dict[str, Any]:
         "duration_sec": info.duration_sec,
         "items": [_item_to_dict(i) for i in info.items],
         "thumbnail_url": info.thumbnail_url,
+        "description": info.description,
         "raw": info.raw,
     }
 
@@ -167,6 +168,10 @@ def _info_from_dict(data: dict[str, Any]) -> MediaInfo:
         duration_sec=data.get("duration_sec"),
         items=tuple(_item_from_dict(i) for i in data.get("items", [])),
         thumbnail_url=data.get("thumbnail_url"),
+        # ``description`` was added in ADR-0010. Older ``v1:`` envelopes
+        # written before that roll-out simply omit the key — default to
+        # "" rather than treating the whole payload as a schema mismatch.
+        description=data.get("description") or "",
         raw=dict(data.get("raw") or {}),
     )
 
