@@ -205,7 +205,14 @@ class Settings(BaseSettings):
     # without a publish event for an active job. Must stay well under
     # PROGRESS_META_TTL_SEC so the user sees feedback long before the
     # recovery scan would drop the job.
-    PROGRESS_STALE_WARN_SEC: int = Field(30, ge=5, le=600)
+    #
+    # Bumped 30s → 90s: yt-dlp's ``progress_hooks`` only fire for the
+    # "downloading" status, so HLS fragment boundaries and postprocess
+    # merge on Instagram/other platforms produce routine 30-60s silent
+    # gaps that used to trigger the scary "connection lost" caption for
+    # a perfectly healthy worker. 90s is still tight enough to catch a
+    # real crash inside the user's patience window.
+    PROGRESS_STALE_WARN_SEC: int = Field(90, ge=5, le=600)
     # Hard drop after this many seconds with no event — the placeholder
     # is removed entirely so the chat does not show a zombie progress
     # message after a worker crash. Must exceed ``PROGRESS_STALE_WARN_SEC``.

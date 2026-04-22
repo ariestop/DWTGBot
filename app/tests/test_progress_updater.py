@@ -421,7 +421,7 @@ async def test_watchdog_shows_stale_notice_after_threshold() -> None:
 
     assert len(bot.captions) == 1
     _, _, caption = bot.captions[0]
-    assert "потеряна" in caption.lower()
+    assert "продолжается" in caption.lower()
     assert job.stale_notified is True
 
 

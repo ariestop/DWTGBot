@@ -77,7 +77,14 @@ _STAGE_PHRASES: dict[ProgressStage, str] = {
     ProgressStage.CANCELLED: "Отменено",
     ProgressStage.FAILED: "Не удалось скачать",
 }
-_STALE_CAPTION = "Связь с worker'ом потеряна, скачивание продолжается…"
+# yt-dlp's ``progress_hooks`` emit only during the "downloading" status.
+# HLS fragment transitions and the postprocess merge step (Instagram,
+# some YouTube formats) therefore produce routine silent gaps where the
+# worker is perfectly healthy and ffmpeg is just muxing. The previous
+# "lost connection" wording read like a crash to users even when the
+# download finished seconds later — surface the real shape of the
+# situation instead.
+_STALE_CAPTION = "Скачивание продолжается, это может занять ещё немного времени…"
 
 
 def _progress_key(job_id: int) -> str:

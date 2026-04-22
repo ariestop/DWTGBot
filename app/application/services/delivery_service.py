@@ -38,7 +38,13 @@ MAX_INDIVIDUAL_FILES = 10
 # description. Kept in sync with ADR-0010 §2.3; changing the label
 # does not require a callback-data migration (data is still ``pt|N``)
 # but translators should edit this constant, not the callback encoder.
-_POST_TEXT_BUTTON_LABEL = "Получить текст поста 👇"
+_POST_TEXT_BUTTON_LABEL = "Получить текст поста"
+# Invitation line appended to the media caption / summary text when a
+# post-text button is going to be shown. Without this hint the button
+# alone read as orphaned UI — users missed that tapping it reveals the
+# original caption. We keep it as a separate constant so translators
+# can edit wording without touching delivery plumbing.
+_POST_TEXT_HINT = "Нажмите, чтобы получить текст поста 👇"
 
 # Wire format ``pt|<job_id>``. Inlined here to avoid an
 # application → bot import (see `.cursor/rules/20-architecture-layers`).
@@ -48,6 +54,16 @@ _POST_TEXT_CALLBACK_PREFIX = "pt"
 
 def _post_text_callback_data(job_id: int) -> str:
     return f"{_POST_TEXT_CALLBACK_PREFIX}|{job_id}"
+
+
+def _with_post_text_hint(caption: str, *, post_text_markup: object | None) -> str:
+    """Append the "tap the button" hint to ``caption`` when a button
+    will actually be attached to this message. Callers already have the
+    markup in hand, so threading it through avoids a second EXISTS
+    round-trip against Redis."""
+    if post_text_markup is None:
+        return caption
+    return f"{caption}\n\n{_POST_TEXT_HINT}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +122,10 @@ class DeliveryService:
                     chat_id,
                     f,
                     kind=result.kind,
-                    caption=_caption(result, size, footer=self._settings.BRAND_FOOTER),
+                    caption=_with_post_text_hint(
+                        _caption(result, size, footer=self._settings.BRAND_FOOTER),
+                        post_text_markup=post_text_markup,
+                    ),
                     reply_markup=post_text_markup,
                 )
                 return DeliveryOutcome(
@@ -132,7 +151,10 @@ class DeliveryService:
                 primary_file_id = primary_file_id or fid
             await self._sender.send_text(
                 chat_id,
-                _caption(result, result.total_size_bytes, footer=self._settings.BRAND_FOOTER),
+                _with_post_text_hint(
+                    _caption(result, result.total_size_bytes, footer=self._settings.BRAND_FOOTER),
+                    post_text_markup=post_text_markup,
+                ),
                 reply_markup=post_text_markup,
             )
             return DeliveryOutcome(
@@ -172,6 +194,7 @@ class DeliveryService:
         footer = self._settings.BRAND_FOOTER
         if footer:
             message = f"{message}\n\n{footer}"
+        message = _with_post_text_hint(message, post_text_markup=reply_markup)
         await self._sender.send_text(chat_id, message, reply_markup=reply_markup)
         _logger.info("delivered_via_temp_link", job_id=job_id, size=size, file=file.name)
         return DeliveryOutcome(

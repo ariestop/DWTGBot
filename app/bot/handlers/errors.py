@@ -13,7 +13,12 @@ _logger = get_logger(__name__)
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     err = context.error
-    user_message = "Внутренняя ошибка. Уже разбираемся."
+    # Non-AppError paths are almost always transient at this layer
+    # (Instagram 429, Telegram RetryAfter, brief Redis blip). The
+    # previous "Внутренняя ошибка. Уже разбираемся." read like a
+    # ticketed server bug and scared users into not retrying — even
+    # though a second attempt usually went through. Say so instead.
+    user_message = "Что-то пошло не так. Попробуйте отправить ссылку ещё раз."
     if isinstance(err, AppError):
         user_message = err.user_message
 
