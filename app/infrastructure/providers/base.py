@@ -37,6 +37,17 @@ class BaseProvider(ABC):
     def build_options(self, info: MediaInfo) -> list[DownloadOption]: ...
 
     @abstractmethod
+    def default_option(self, info: MediaInfo) -> DownloadOption:
+        """Return the option chosen when the user skipped the picker UI.
+
+        See ``app.application.services.providers.Provider.default_option``
+        for the contract. Concrete providers MUST raise ``DownloadError``
+        if no default exists for the given ``info`` — silent fallbacks
+        mask upstream regressions (ADR-0010 §2.1).
+        """
+        ...
+
+    @abstractmethod
     async def download(
         self,
         url: str,

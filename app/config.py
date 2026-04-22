@@ -153,6 +153,11 @@ class Settings(BaseSettings):
     # --- Cleanup / cache ---
     CLEANUP_INTERVAL_SECONDS: int = Field(3600, ge=60)
     MEDIA_CACHE_TTL_SECONDS: int = Field(21_600, ge=60)
+    # Upper bound for ``MediaInfo.description`` characters. Providers MUST
+    # truncate to this value (see ADR-0010 §2.3). 10k chars is enough for
+    # realistic YouTube descriptions / Instagram captions and still fits
+    # in a few Telegram messages when chunked.
+    POST_TEXT_MAX_CHARS: int = Field(10_000, ge=100, le=100_000)
     # S1 (audit fix): threshold for marking PROCESSING jobs as orphaned.
     # MUST exceed JOB_TIMEOUT_SECONDS by a comfortable margin so a
     # legitimately-slow job (e.g. 4K re-encode) is never reaped while

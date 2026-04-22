@@ -12,6 +12,7 @@ from app.domain.entities.media_info import (
     MediaInfo,
 )
 from app.domain.enums import MediaKind, Platform
+from app.domain.text_utils import truncate_description
 from app.exceptions import DownloadError
 from app.infrastructure.providers.base import BaseProvider
 from app.logging_config import get_logger
@@ -47,6 +48,10 @@ class YouTubeProvider(BaseProvider):
             kind=MediaKind.VIDEO,
             duration_sec=float(entry["duration"]) if entry.get("duration") else None,
             thumbnail_url=entry.get("thumbnail"),
+            description=truncate_description(
+                entry.get("description"),
+                max_chars=self._settings.POST_TEXT_MAX_CHARS,
+            ),
             raw={
                 "source_url": url,
                 "webpage_url": entry.get("webpage_url"),
@@ -89,6 +94,27 @@ class YouTubeProvider(BaseProvider):
             )
         )
         return options
+
+    def default_option(self, info: MediaInfo) -> DownloadOption:
+        # Instant-download flow skips the picker UI, so we pick the
+        # highest video bucket the source supports. Audio-only is a
+        # minority case on YouTube and users can still request it via
+        # the classic picker path (INSTANT_DOWNLOAD_ENABLED=false).
+        # ADR-0010 §2.1: raise DownloadError on genuinely unsupported
+        # payloads rather than silently returning audio — a follow-up
+        # upstream fix should surface, not be masked.
+        options = self.build_options(info)
+        video_options = [
+            o
+            for o in options
+            if o.kind is MediaKind.VIDEO and o.height is not None and o.key.startswith("video_")
+        ]
+        if not video_options:
+            raise DownloadError(
+                f"No downloadable video heights for {info.media_id or info.title!r}"
+            )
+        # build_options emits buckets in ascending height order; pick the tallest.
+        return max(video_options, key=lambda o: o.height or 0)
 
     async def download(
         self,

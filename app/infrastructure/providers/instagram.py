@@ -29,6 +29,7 @@ from app.domain.entities.media_info import (
     MediaItem,
 )
 from app.domain.enums import MediaKind, Platform
+from app.domain.text_utils import truncate_description
 from app.exceptions import DownloadError
 from app.infrastructure.providers.base import BaseProvider
 from app.logging_config import get_logger
@@ -51,6 +52,14 @@ class InstagramProvider(BaseProvider):
             kind = items[0].kind
 
         title = str(raw.get("title") or raw.get("description") or "Instagram media")[:200]
+        # IG captions live under ``description`` in the yt-dlp sanitized
+        # dict. ``title`` above may alias to the same value when title is
+        # missing (legacy shortcuts), so description is still useful as
+        # the full-length caption for the "Получить текст поста" flow.
+        description = truncate_description(
+            raw.get("description"),
+            max_chars=self._settings.POST_TEXT_MAX_CHARS,
+        )
 
         return MediaInfo(
             platform=Platform.INSTAGRAM,
@@ -60,6 +69,7 @@ class InstagramProvider(BaseProvider):
             duration_sec=float(raw["duration"]) if raw.get("duration") else None,
             items=items,
             thumbnail_url=raw.get("thumbnail"),
+            description=description,
             raw={
                 "source_url": url,
                 "webpage_url": raw.get("webpage_url"),
@@ -98,6 +108,26 @@ class InstagramProvider(BaseProvider):
                 DownloadOption(key="single_photo", label="Скачать фото", kind=MediaKind.PHOTO)
             )
         return options
+
+    def default_option(self, info: MediaInfo) -> DownloadOption:
+        # Instagram has at most one "shape" per post, so the default is
+        # the only option we build: gallery_all for carousels, single_*
+        # for standalone reels/photos. ADR-0010 §2.1 forbids silent
+        # fallback — if build_options yields nothing we raise instead.
+        options = self.build_options(info)
+        if not options:
+            raise DownloadError(
+                f"Instagram post has no downloadable shape (kind={info.kind.value})"
+            )
+        if info.kind is MediaKind.GALLERY:
+            for opt in options:
+                if opt.key == "gallery_all":
+                    return opt
+            # Fallthrough guards against a future build_options refactor
+            # that drops gallery_all — explicit error beats a subtly
+            # wrong default for mixed carousels.
+            raise DownloadError("Instagram gallery default (gallery_all) missing from options")
+        return options[0]
 
     async def download(
         self,
