@@ -36,6 +36,24 @@ from app.logging_config import get_logger
 _logger = get_logger(__name__)
 
 
+# Bandwidth-sensitive upload budget. python-telegram-bot's per-call
+# ``write_timeout`` defaults to DEFAULT_NONE (~20 s) regardless of the
+# transport-level ``HTTPXRequest.write_timeout``, which is what made
+# 30-50 MB uploads hit ``TimedOut`` at ~25 s even though the transport
+# had 120 s configured. Lift both together so files up to
+# ``TELEGRAM_MAX_UPLOAD_MB`` (49 MB) fit inside a 1 Mbps pipe without
+# tripping either layer. We still rely on the fallback in
+# ``DeliveryService.deliver`` for genuinely unreachable networks, but
+# the happy path now completes instead of silently degrading every
+# file in the 30-50 MB range into a temp-link.
+_UPLOAD_TIMEOUT_S = 300.0
+# Read-side budget: Telegram's response after the upload lands is
+# small, but at P99 it can sit in the queue for a few seconds while
+# the server re-encodes metadata. Keep it aligned with the write
+# budget so a slow response doesn't surface as an artificial retry.
+_READ_TIMEOUT_S = 120.0
+
+
 async def _read_bytes(path: Path) -> bytes:
     """Read file contents in a worker thread.
 
@@ -108,7 +126,11 @@ class TelegramSender:
     def __init__(self, settings: Settings) -> None:
         self._bot = Bot(
             token=settings.BOT_TOKEN,
-            request=HTTPXRequest(connect_timeout=10, read_timeout=120, write_timeout=120),
+            request=HTTPXRequest(
+                connect_timeout=10,
+                read_timeout=_READ_TIMEOUT_S,
+                write_timeout=_UPLOAD_TIMEOUT_S,
+            ),
         )
 
     async def initialize(self) -> None:
@@ -155,6 +177,8 @@ class TelegramSender:
             height=meta.height,
             duration=meta.duration,
             reply_markup=reply_markup,
+            write_timeout=_UPLOAD_TIMEOUT_S,
+            read_timeout=_READ_TIMEOUT_S,
         )
         return msg.video.file_id if msg.video else None
 
@@ -173,6 +197,8 @@ class TelegramSender:
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
             reply_markup=reply_markup,
+            write_timeout=_UPLOAD_TIMEOUT_S,
+            read_timeout=_READ_TIMEOUT_S,
         )
         return msg.audio.file_id if msg.audio else None
 
@@ -191,6 +217,8 @@ class TelegramSender:
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
             reply_markup=reply_markup,
+            write_timeout=_UPLOAD_TIMEOUT_S,
+            read_timeout=_READ_TIMEOUT_S,
         )
         return msg.photo[-1].file_id if msg.photo else None
 
@@ -209,5 +237,7 @@ class TelegramSender:
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
             reply_markup=reply_markup,
+            write_timeout=_UPLOAD_TIMEOUT_S,
+            read_timeout=_READ_TIMEOUT_S,
         )
         return msg.document.file_id if msg.document else None
