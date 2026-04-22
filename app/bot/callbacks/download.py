@@ -86,11 +86,6 @@ async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT
             return
 
         await container.request_state.delete(parsed.request_id)
-        # ADR-0010 §2.1 task §4 item 4: the internal job id is no
-        # longer surfaced to the user — nothing actionable they can
-        # do with it and it clutters the placeholder. ``result.job_id``
-        # is still logged above for operator triage.
-        del result
         if query.message is not None:
             # Audit fix A6: defense-in-depth — ``selected.label`` is
             # assembled by provider logic today and is currently
@@ -105,6 +100,40 @@ async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT
             await query.edit_message_text(
                 f"⏳ Скачиваю «{safe_label}». Это может занять немного времени.",
             )
+            # Register the (now edited) picker message as the progress
+            # placeholder so ``ProgressUpdater`` flips its text live as
+            # yt-dlp emits percent events — same surface the instant
+            # flow gets from ``AutoEnqueueDownloadUseCase``. The legacy
+            # picker path (YouTube, and any platform re-added to
+            # ``picker_platforms`` in ``handle_link``) used to skip
+            # this wiring and therefore showed no progress bar at all.
+            #
+            # We intentionally pass ``thumbnail_url=None``: the picker
+            # placeholder is a plain text message, so the updater must
+            # call ``edit_message_text`` (not ``edit_message_caption``)
+            # — ``_ActiveJob.from_meta`` drives that choice off the
+            # presence/absence of ``thumbnail_url`` in the meta hash.
+            #
+            # Reporter failures are swallowed by the reporter itself
+            # (ADR-0010 §2.2): we never let a broken progress channel
+            # undo an enqueue that already succeeded.
+            try:
+                await container.progress_reporter.start(
+                    job_id=result.job_id,
+                    chat_id=chat.id,
+                    message_id=query.message.message_id,
+                    thumbnail_url=None,
+                )
+            except Exception:  # pragma: no cover  defensive
+                _logger.exception(
+                    "picker_progress_start_failed",
+                    job_id=result.job_id,
+                )
+        # ADR-0010 §2.1 task §4 item 4: the internal job id is no
+        # longer surfaced to the user — nothing actionable they can
+        # do with it and it clutters the placeholder. ``result.job_id``
+        # is still logged above for operator triage.
+        del result
 
 
 def _resolve_source_url(analyzed: AnalyzedMedia) -> str:
