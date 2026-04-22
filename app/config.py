@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -317,10 +318,23 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        # When DATABASE_URL is set explicitly the operator is responsible
+        # for percent-encoding the password themselves — we cannot know
+        # whether characters like ``@`` or ``:`` are intended separators
+        # or literal bytes inside a pre-built DSN.
         if self.DATABASE_URL:
             return self.DATABASE_URL
+        # Audit fix A8: compose the DSN with percent-encoded credentials
+        # so a password containing URI-reserved characters (``@``, ``:``,
+        # ``/``, ``?``, ``#``, ``%``, etc.) doesn't corrupt the parse.
+        # ``quote`` with ``safe=""`` escapes *all* reserved bytes incl.
+        # the forward slash. The username gets the same treatment for
+        # consistency, even though ``POSTGRES_USER`` is admin-controlled
+        # and unlikely to contain exotic characters.
+        user = quote(self.POSTGRES_USER, safe="")
+        password = quote(self.POSTGRES_PASSWORD, safe="")
         return (
-            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"postgresql+asyncpg://{user}:{password}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 

@@ -27,10 +27,17 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_table("app_settings")
-    op.drop_index("ix_audit_logs_created_at", table_name="audit_logs")
-    op.drop_index("ix_audit_logs_event_type", table_name="audit_logs")
-    op.drop_table("audit_logs")
+    # Audit fix A7: make the upgrade idempotent. An unconditional
+    # ``DROP TABLE`` fails in environments where the artefacts were
+    # already removed out-of-band (forks that never created them,
+    # partial-rollback states, disaster-recovery restores from a
+    # base dump taken after 0002 had run). Postgres' ``IF EXISTS``
+    # clause on both indexes and tables keeps the migration a
+    # pure no-op when the object is absent.
+    op.execute("DROP INDEX IF EXISTS ix_audit_logs_created_at")
+    op.execute("DROP INDEX IF EXISTS ix_audit_logs_event_type")
+    op.execute("DROP TABLE IF EXISTS audit_logs")
+    op.execute("DROP TABLE IF EXISTS app_settings")
 
 
 def downgrade() -> None:

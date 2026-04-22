@@ -21,12 +21,38 @@ x-logging: &logging
       max-size: "10m"
       max-file: "5"
 
+# Audit fix A9: cgroup resource caps per service. Without these, a
+# runaway process (query-storm, leak) could starve the host and take
+# unrelated containers down with it. Values are tuned for a small-box
+# control plane (4-8 GB RAM host); override via .env if the real
+# workload justifies more.
+#
+# ``memswap_limit`` mirrors ``mem_limit`` to forbid swap — swap-thrash
+# under OOM pressure is worse than a clean kill. Docker needs cgroup
+# v2 (default on modern kernels) for this to stick.
+x-limits-small: &limits-small
+  mem_limit: 512m
+  memswap_limit: 512m
+  cpus: 1.0
+
+x-limits-db: &limits-db
+  mem_limit: 1g
+  memswap_limit: 1g
+  cpus: 1.0
+
+x-limits-redis: &limits-redis
+  # ``maxmemory`` (A4) is 1 GB of dataset; leave ~128 MB headroom for
+  # process overhead and AOF rewrite scratch.
+  mem_limit: 1152m
+  memswap_limit: 1152m
+  cpus: 0.5
+
 services:
 
   postgres:
     image: postgres:16-alpine
     container_name: dwtgbot_postgres
-    <<: [*restart, *logging]
+    <<: [*restart, *logging, *limits-db]
     environment:
       POSTGRES_DB:       ${POSTGRES_DB}
       POSTGRES_USER:     ${POSTGRES_USER}
@@ -47,7 +73,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: dwtgbot_redis
-    <<: [*restart, *logging]
+    <<: [*restart, *logging, *limits-redis]
     # So ``redis-cli`` in the healthcheck authenticates when
     # ``--requirepass`` is set (official image honours REDISCLI_AUTH).
     environment:
@@ -97,7 +123,7 @@ services:
   bot:
     image: ${IMAGE_BOT:?IMAGE_BOT must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-bot:sha-abc1234)}
     container_name: dwtgbot_bot
-    <<: [*app-env, *restart, *logging]
+    <<: [*app-env, *restart, *logging, *limits-small]
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,7 +142,7 @@ services:
   api:
     image: ${IMAGE_API:?IMAGE_API must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-api:sha-abc1234)}
     container_name: dwtgbot_api_nl1
-    <<: [*app-env, *restart, *logging]
+    <<: [*app-env, *restart, *logging, *limits-small]
     depends_on:
       postgres:
         condition: service_healthy
@@ -140,7 +166,7 @@ services:
   backup:
     image: ${IMAGE_BACKUP:?IMAGE_BACKUP must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-backup:sha-abc1234)}
     container_name: dwtgbot_backup
-    <<: [*app-env, *restart, *logging]
+    <<: [*app-env, *restart, *logging, *limits-small]
     depends_on:
       postgres:
         condition: service_healthy

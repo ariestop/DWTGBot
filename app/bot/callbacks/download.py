@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -90,8 +92,18 @@ async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT
         # is still logged above for operator triage.
         del result
         if query.message is not None:
+            # Audit fix A6: defense-in-depth — ``selected.label`` is
+            # assembled by provider logic today and is currently
+            # whitelist-safe ("Видео 720p", "Фото", etc.), but any
+            # future change that flows user- or upstream-supplied
+            # strings into the label (e.g. source-side track title)
+            # would become an HTML injection sink the moment this
+            # call is flipped to ``parse_mode="HTML"`` — which is
+            # already the default for sibling bot handlers
+            # (``handlers/links.py``). Escape at the sink.
+            safe_label = html.escape(selected.label)
             await query.edit_message_text(
-                f"⏳ Скачиваю «{selected.label}». Это может занять немного времени.",
+                f"⏳ Скачиваю «{safe_label}». Это может занять немного времени.",
             )
 
 
