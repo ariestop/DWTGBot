@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.application.ports.progress_reporter import ProgressReporter
 from app.application.services.delivery_service import DeliveryService
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
-from app.application.services.providers import ProviderRegistry
+from app.application.services.providers import Provider, ProviderRegistry
 from app.config import Settings
 from app.domain.entities.download_job import DownloadJob
 from app.domain.entities.media_info import DownloadOption
-from app.domain.enums import JobStatus
+from app.domain.enums import JobStatus, ProgressStage
 from app.domain.observability import file_size_class
 from app.domain.reason_class import ReasonClass, classify_exception
 from app.domain.repositories.jobs_repo import JobsRepository
 from app.exceptions import AppError, FileTooLargeError, StorageError
+from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.storage.local_storage import LocalStorage
 from app.infrastructure.telegram.sender import TelegramSender
 from app.logging_config import get_logger
@@ -41,6 +44,7 @@ class ProcessDownloadUseCase:
         sender: TelegramSender,
         settings: Settings,
         metrics: JobMetrics | None = None,
+        progress_reporter: ProgressReporter | None = None,
     ) -> None:
         self._jobs = jobs_repo
         self._providers = providers
@@ -52,6 +56,12 @@ class ProcessDownloadUseCase:
         # without metrics keep passing. ``composition.build_worker``
         # always wires a real sink.
         self._metrics: JobMetrics = metrics if metrics is not None else NoopJobMetrics()
+        # ADR-0010 §2.2: reporter is an optional side channel. Default
+        # Noop keeps legacy picker tests insulated from progress
+        # infrastructure; production wiring injects RedisProgressReporter.
+        self._reporter: ProgressReporter = (
+            progress_reporter if progress_reporter is not None else NoopProgressReporter()
+        )
 
     async def execute(self, payload: ProcessDownloadInput) -> None:
         job = await self._jobs.get(payload.job_id)
@@ -68,7 +78,15 @@ class ProcessDownloadUseCase:
         ):
             await self._run(job)
 
-    async def _run(self, job: DownloadJob) -> None:
+    async def _run(self, job: DownloadJob) -> None:  # noqa: PLR0915
+        # PLR0915: the method exceeds 50 statements because ADR-0010
+        # added four progress-emission boundaries. Splitting the happy
+        # path into a helper would bury the exception handlers, which
+        # are tightly coupled to the inline variable state (started_
+        # monotonic, reason classification, etc). Kept linear for
+        # readability; the metric boundary comments serve as section
+        # headers. If it grows again, extract delivery + done-bookkeeping
+        # into a helper.
         # Monotonic clock — immune to wall-clock jumps from NTP. Used
         # for ``job_duration_seconds`` (ADR-0007 §2.1, A4/A5 SLO).
         started_monotonic = time.monotonic()
@@ -98,6 +116,11 @@ class ProcessDownloadUseCase:
                         ),
                     ) from exc
 
+            # Phase 1 — ANALYZING (~5%). We already have ``PROCESSING``
+            # in the DB; the reporter just gives the UI a "we are working
+            # on it" signal before the slow I/O.
+            await self._emit_progress(job.id, percent=5.0, stage=ProgressStage.ANALYZING)
+
             provider = self._providers.get(job.platform)
             info = await provider.get_info(job.source_url)
             options = provider.build_options(info)
@@ -111,8 +134,28 @@ class ProcessDownloadUseCase:
             self._reject_if_estimate_exceeds_cap(selected)
 
             target = self._storage.job_dir(job.id or 0)
-            result = await provider.download(job.source_url, selected, target_dir=str(target))
 
+            # Phase 2 — DOWNLOADING 0→70%. yt-dlp fires progress_hooks
+            # mid-stream; the hook writes directly to Redis (sync
+            # bridge) so we keep the use-case single-threaded here.
+            # The boundary write ensures the UI transitions even for
+            # providers / sources that do not emit hook frames (rare).
+            await self._emit_progress(job.id, percent=0.0, stage=ProgressStage.DOWNLOADING)
+            on_progress = self._scaled_download_hook(job.id, provider=provider)
+            result = await provider.download(
+                job.source_url,
+                selected,
+                target_dir=str(target),
+                on_progress=on_progress,
+            )
+
+            # Phase 3 — PROCESSING (mobile-compat transcode + delivery
+            # prep). We cannot observe ffmpeg progress cheaply; a single
+            # 70% boundary is enough until the delivery step.
+            await self._emit_progress(job.id, percent=70.0, stage=ProgressStage.PROCESSING)
+
+            # Phase 4 — UPLOADING (Telegram send or temp-link issue).
+            await self._emit_progress(job.id, percent=95.0, stage=ProgressStage.UPLOADING)
             outcome = await self._delivery.deliver(
                 job_id=job.id or 0,
                 chat_id=job.chat_id,
@@ -130,6 +173,15 @@ class ProcessDownloadUseCase:
                 public_url=outcome.public_url,
             )
             await self._jobs.update(job)
+
+            # Terminal success: reporter.finish clears the placeholder
+            # via the progress_updater. Reporter swallows Redis errors
+            # (ADR-0010), so this call cannot mask a download failure.
+            if job.id is not None:
+                try:
+                    await self._reporter.finish(job_id=job.id)
+                except Exception:  # pragma: no cover  defensive
+                    _logger.exception("progress_finish_failed", job_id=job.id)
 
             # Duration first so the Histogram + the Counter land on the
             # same scrape; then the status-change + log keep the events
@@ -160,6 +212,11 @@ class ProcessDownloadUseCase:
                 # cleaner than flapping back to PENDING — and the
                 # task-level wrapper marks it FAILED only when arq
                 # exhausts ``max_tries`` (see infrastructure/queue/tasks.py).
+                #
+                # Intentionally NOT calling reporter.fail here: the job
+                # is not terminally failed yet. mark_terminally_failed
+                # is the single terminal sink (called by the arq task
+                # wrapper) and it emits reporter.fail exactly once.
                 _logger.warning(
                     "job_failed_retryable",
                     error=str(exc),
@@ -288,7 +345,64 @@ class ProcessDownloadUseCase:
                 to=JobStatus.FAILED.value,
                 reason_class=reason.value,
             )
+            if job.id is not None:
+                try:
+                    await self._reporter.fail(job_id=job.id, reason=user_text)
+                except Exception:  # pragma: no cover  defensive
+                    _logger.exception("progress_fail_failed", job_id=job.id)
             try:
                 await self._sender.send_text(job.chat_id, f"⚠️ {user_text}")
             except Exception:  # pragma: no cover  best-effort
                 _logger.exception("notify_user_about_failure_failed")
+
+    async def _emit_progress(
+        self,
+        job_id: int | None,
+        *,
+        percent: float,
+        stage: ProgressStage,
+    ) -> None:
+        """Forward a phase-boundary progress event to the reporter.
+
+        Swallows every exception: ADR-0010 §2.2 forbids progress
+        bookkeeping from breaking the main download. ``job.id`` can be
+        ``None`` for synthetic fixtures (tests construct a DownloadJob
+        without persisting it); those calls are no-ops.
+        """
+        if job_id is None:
+            return
+        try:
+            await self._reporter.update(job_id=job_id, percent=percent, stage=stage)
+        except Exception:  # pragma: no cover  defensive
+            _logger.exception("progress_emit_failed", job_id=job_id, stage=stage.value)
+
+    def _scaled_download_hook(
+        self,
+        job_id: int | None,
+        *,
+        provider: Provider,
+    ) -> Callable[[float], None] | None:
+        """Build the sync callback yt-dlp writes percent into.
+
+        We scale the 0..100 yt-dlp percent into 0..70 so the reported
+        number never overshoots the PROCESSING boundary. Also acts as a
+        seam for tests: a ``NoopProgressReporter`` does not implement
+        ``download_hook`` (by design — it is not part of the Protocol),
+        so we introspect the concrete class.
+        """
+        if job_id is None:
+            return None
+        build = getattr(self._reporter, "download_hook", None)
+        if build is None:
+            return None
+        # ``provider`` is available in case a future hook wants to
+        # distinguish YT vs IG (e.g. different percent scaling). Not
+        # used yet — reference kept so the signature stays stable.
+        del provider
+        inner = build(job_id=job_id)
+
+        def _scaled(pct: float) -> None:
+            scaled = max(0.0, min(70.0, pct * 0.7))
+            inner(scaled)
+
+        return _scaled

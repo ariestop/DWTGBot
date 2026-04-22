@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 
 from app.config import Settings
@@ -54,6 +55,7 @@ class BaseProvider(ABC):
         option: DownloadOption,
         *,
         target_dir: str,
+        on_progress: Callable[[float], None] | None = None,
     ) -> DownloadResult: ...
 
     @staticmethod

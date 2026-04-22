@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -302,8 +303,18 @@ class YtDlpRunner:
         merge_output_format: str | None = None,
         extra_opts: dict[str, Any] | None = None,
         force_transcode: bool = False,
+        on_progress: Callable[[float], None] | None = None,
     ) -> list[Path]:
-        """Download the media. Returns list of resulting file paths in target_dir."""
+        """Download the media. Returns list of resulting file paths in target_dir.
+
+        ``on_progress`` is invoked from yt-dlp's ``progress_hooks`` with
+        a float percent in [0.0, 100.0]. The callback runs inside the
+        ``asyncio.to_thread`` worker, NOT in the caller's event loop,
+        so it must be purely synchronous and thread-safe. Errors raised
+        by the callback are swallowed (yt-dlp has no recovery path for
+        hook failures and we do not want progress reporting to abort a
+        download). See ADR-0010 §2.2.
+        """
         host = _host_of(url)
         await self._trip_if_open(host)
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -311,6 +322,11 @@ class YtDlpRunner:
         opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
+            # noprogress stays True to keep yt-dlp from spamming stderr
+            # with ANSI redraws; the Python-level progress_hook below is
+            # the authoritative progress surface and is unaffected by
+            # this flag (see yt-dlp source: YoutubeDL.to_screen is the
+            # gated path, not the hook dispatcher).
             "noprogress": True,
             "format": format_spec,
             "outtmpl": str(target_dir / "%(title).80B [%(id)s].%(ext)s"),
@@ -321,6 +337,8 @@ class YtDlpRunner:
             "fragment_retries": 2,
             "noplaylist": False,
         }
+        if on_progress is not None:
+            opts["progress_hooks"] = [_make_progress_hook(on_progress)]
         # yt-dlp treats ``ffmpeg_location`` as an absolute path to the binary
         # or a directory containing it and verifies via ``os.path.exists``. A
         # bare name like ``"ffmpeg"`` therefore resolves to False and the
@@ -462,3 +480,61 @@ def _looks_like_throttle(exc: YtDlpDownloadError) -> bool:
     """
     msg = str(exc).lower()
     return any(marker in msg for marker in _THROTTLE_MARKERS)
+
+
+def _make_progress_hook(
+    on_progress: Callable[[float], None],
+) -> Callable[[dict[str, Any]], None]:
+    """Wrap ``on_progress`` into yt-dlp's ``progress_hooks`` protocol.
+
+    yt-dlp emits dicts like ``{"status": "downloading", "downloaded_bytes":
+    123, "total_bytes": 456, "_percent_str": " 25.0%", ...}``. The
+    ``_percent_str`` key is the most portable: yt-dlp computes it from
+    whichever total field is actually populated (``total_bytes``,
+    ``total_bytes_estimate``, or a manifest-derived count) and formats
+    it as a percentage ready for display. We parse it and forward as a
+    float; if the string is missing or malformed we fall back to
+    computing from bytes counters. Hook errors are logged and
+    swallowed to preserve the download.
+    """
+
+    def _hook(d: dict[str, Any]) -> None:
+        try:
+            if d.get("status") != "downloading":
+                return
+            percent = _extract_percent(d)
+            if percent is None:
+                return
+            on_progress(percent)
+        except Exception:  # pragma: no cover  defensive
+            _logger.exception("ytdlp_progress_hook_error")
+
+    return _hook
+
+
+def _extract_percent(d: dict[str, Any]) -> float | None:
+    """Pull a 0..100 percent out of a yt-dlp progress dict.
+
+    Priority order mirrors yt-dlp's own internal computation so the
+    hook reports the same values users saw on the terminal:
+
+    1. ``_percent_str`` — best signal, pre-formatted (e.g. ``" 25.0%"``).
+    2. ``downloaded_bytes`` / ``total_bytes`` — exact when available.
+    3. ``downloaded_bytes`` / ``total_bytes_estimate`` — approximate for
+       HLS/DASH.
+    4. None — caller skips the write.
+    """
+    raw = d.get("_percent_str")
+    if isinstance(raw, str):
+        cleaned = raw.strip().rstrip("%").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            pass
+
+    downloaded = d.get("downloaded_bytes")
+    total = d.get("total_bytes") or d.get("total_bytes_estimate")
+    if isinstance(downloaded, int | float) and isinstance(total, int | float) and total > 0:
+        return max(0.0, min(100.0, (downloaded / total) * 100.0))
+
+    return None

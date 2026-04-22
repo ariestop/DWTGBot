@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,7 @@ class YouTubeProvider(BaseProvider):
         option: DownloadOption,
         *,
         target_dir: str,
+        on_progress: Callable[[float], None] | None = None,
     ) -> DownloadResult:
         out_dir = self._target_path(target_dir)
 
@@ -137,6 +139,7 @@ class YouTubeProvider(BaseProvider):
                         "preferredquality": str(option.bitrate_kbps or 192),
                     }
                 ],
+                on_progress=on_progress,
             )
             files = [p for p in files if p.suffix.lower() == ".mp3"] or files
             return self._build_result(files, info_title=out_dir.name, kind=MediaKind.AUDIO)
@@ -165,6 +168,7 @@ class YouTubeProvider(BaseProvider):
                 format_spec=fmt,
                 target_dir=out_dir,
                 merge_output_format="mp4",
+                on_progress=on_progress,
             )
             return self._build_result(files, info_title=out_dir.name, kind=MediaKind.VIDEO)
 

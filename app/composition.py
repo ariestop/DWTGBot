@@ -36,6 +36,7 @@ from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.infrastructure.cache.redis_notice_throttle import RedisNoticeThrottle
 from app.infrastructure.cache.redis_pool import build_redis
+from app.infrastructure.cache.redis_progress_reporter import RedisProgressReporter
 from app.infrastructure.cache.redis_rate_limit_gate import RedisRateLimitGate
 from app.infrastructure.cache.redis_state_store import RedisRequestStateStore
 from app.infrastructure.db.repositories.jobs_repo_impl import SqlAlchemyJobsRepository
@@ -119,6 +120,13 @@ class WorkerComposition:
             stop = getattr(self.metrics_server, "stop", None)
             if stop is not None:
                 await stop()
+        # Let the reporter release its sync Redis client (if any).
+        # ProgressReporter is a Protocol, concrete implementations are
+        # free to add extra teardown hooks; duck-type via hasattr so we
+        # do not force every impl to wear the sync-bridge responsibility.
+        close_sync = getattr(self.progress_reporter, "close_sync_client", None)
+        if close_sync is not None:
+            close_sync()
         await self.sender.shutdown()
         await self.core.redis.aclose()  # type: ignore[attr-defined]
         await self.core.engine.dispose()
@@ -364,6 +372,18 @@ def build_worker(settings: Settings) -> WorkerComposition:
         # set once. Used as the denominator in the B4 saturation query.
         job_metrics.set_worker_concurrency(concurrency=settings.WORKER_CONCURRENCY)
 
+    # ADR-0010 §2.2: side-channel progress writer. Active in every
+    # worker process -- the consumer (bot progress_updater) is the
+    # one gated by ``INSTANT_DOWNLOAD_ENABLED`` (PR 5). Writing to
+    # Redis while no one reads is cheap (TTL 10 min, PROGRESS_TTL_SEC)
+    # and keeps the deploy order flexible (can flip the feature
+    # without restarting workers).
+    progress_reporter: ProgressReporter = RedisProgressReporter(
+        redis=core.redis,
+        redis_url=settings.redis_url,
+        settings=settings,
+    )
+
     use_case = ProcessDownloadUseCase(
         jobs_repo=jobs_repo,
         providers=providers,
@@ -372,6 +392,7 @@ def build_worker(settings: Settings) -> WorkerComposition:
         sender=sender,
         settings=settings,
         metrics=job_metrics,
+        progress_reporter=progress_reporter,
     )
     return WorkerComposition(
         core=core,
@@ -379,6 +400,7 @@ def build_worker(settings: Settings) -> WorkerComposition:
         sender=sender,
         storage=storage,
         job_metrics=job_metrics,
+        progress_reporter=progress_reporter,
         metrics_server=metrics_server,
     )
 

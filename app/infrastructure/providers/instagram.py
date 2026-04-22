@@ -19,6 +19,7 @@ size and Telegram limits.
 from __future__ import annotations
 
 import mimetypes
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +136,7 @@ class InstagramProvider(BaseProvider):
         option: DownloadOption,
         *,
         target_dir: str,
+        on_progress: Callable[[float], None] | None = None,
     ) -> DownloadResult:
         out_dir = self._target_path(target_dir)
 
@@ -153,6 +155,7 @@ class InstagramProvider(BaseProvider):
             merge_output_format="mp4",
             extra_opts=({"playlist_items": playlist_items} if playlist_items else None),
             force_transcode=True,
+            on_progress=on_progress,
         )
 
         if option.kind is MediaKind.PHOTO:

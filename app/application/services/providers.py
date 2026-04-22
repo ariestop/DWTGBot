@@ -9,6 +9,7 @@ and platform-agnostic.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 from app.domain.entities.media_info import (
@@ -48,7 +49,17 @@ class Provider(Protocol):
         option: DownloadOption,
         *,
         target_dir: str,
-    ) -> DownloadResult: ...
+        on_progress: Callable[[float], None] | None = None,
+    ) -> DownloadResult:
+        """Download the media into ``target_dir``.
+
+        ``on_progress`` — optional sync callback invoked from the
+        underlying downloader (yt-dlp) with a ``[0.0, 100.0]`` percent
+        as the download advances. Must be thread-safe and
+        non-blocking; providers pass it through unchanged. See
+        ADR-0010 §2.2.
+        """
+        ...
 
 
 class ProviderRegistry(Protocol):

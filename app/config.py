@@ -158,6 +158,21 @@ class Settings(BaseSettings):
     # realistic YouTube descriptions / Instagram captions and still fits
     # in a few Telegram messages when chunked.
     POST_TEXT_MAX_CHARS: int = Field(10_000, ge=100, le=100_000)
+
+    # --- Instant download: live progress (ADR-0010 §2.2) ---
+    # TTL on progress:{job_id} hash. 10 min is well above the worst-case
+    # job time (JOB_TIMEOUT_SECONDS) but small enough that orphaned
+    # keys after a worker crash disappear quickly.
+    PROGRESS_TTL_SEC: int = Field(600, ge=60, le=3600)
+    # TTL on progress_meta:{job_id} (chat_id, message_id, started_at).
+    # Bot uses these for recovery on restart; must exceed PROGRESS_TTL_SEC
+    # so a restarting bot still sees the meta after a brief reporting gap.
+    PROGRESS_META_TTL_SEC: int = Field(1800, ge=60, le=7200)
+    # Per-job throttle in the reporter: drop updates closer together than
+    # this many seconds when percent delta is below ``PROGRESS_DEBOUNCE_PERCENT``
+    # AND stage has not changed. Terminal stages always pass through.
+    PROGRESS_REDRAW_INTERVAL_SEC: float = Field(2.0, ge=0.1, le=30.0)
+    PROGRESS_DEBOUNCE_PERCENT: int = Field(3, ge=0, le=50)
     # S1 (audit fix): threshold for marking PROCESSING jobs as orphaned.
     # MUST exceed JOB_TIMEOUT_SECONDS by a comfortable margin so a
     # legitimately-slow job (e.g. 4K re-encode) is never reaped while
