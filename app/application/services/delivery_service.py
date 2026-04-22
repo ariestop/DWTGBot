@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import TelegramError
 
 from app.application.services.post_text_store import PostTextStore
 from app.application.services.temp_link_service import TempLinkService
@@ -118,16 +119,45 @@ class DeliveryService:
             f = files[0]
             size = f.stat().st_size
             if size <= max_tg:
-                file_id = await self._upload_one(
-                    chat_id,
-                    f,
-                    kind=result.kind,
-                    caption=_with_post_text_hint(
-                        _caption(result, size, footer=self._settings.BRAND_FOOTER),
-                        post_text_markup=post_text_markup,
-                    ),
-                    reply_markup=post_text_markup,
-                )
+                try:
+                    file_id = await self._upload_one(
+                        chat_id,
+                        f,
+                        kind=result.kind,
+                        caption=_with_post_text_hint(
+                            _caption(result, size, footer=self._settings.BRAND_FOOTER),
+                            post_text_markup=post_text_markup,
+                        ),
+                        reply_markup=post_text_markup,
+                    )
+                except TelegramError as exc:
+                    # Fall back to a temp link when Telegram rejects the
+                    # direct upload. Most common causes: transient
+                    # ``BadRequest`` on the video endpoint (Telegram
+                    # tightens validation without warning — unusual
+                    # colour primaries, odd aspect ratio, ffmpeg-style
+                    # fragmented MP4 boxes), or a network blip late in
+                    # the multipart POST. Previously these escaped as
+                    # non-``AppError`` exceptions, arq retried, and the
+                    # last attempt surfaced the generic fallback text
+                    # (see ``mark_terminally_failed``) -- even though
+                    # the file was already on disk and perfectly
+                    # deliverable via the temp-link path that we use
+                    # unconditionally for >50 MB files.
+                    _logger.warning(
+                        "telegram_upload_fallback_to_link",
+                        job_id=job_id,
+                        size=size,
+                        file=f.name,
+                        error_class=type(exc).__name__,
+                        error=str(exc),
+                    )
+                    return await self._deliver_via_link(
+                        job_id=job_id,
+                        chat_id=chat_id,
+                        file=f,
+                        reply_markup=post_text_markup,
+                    )
                 return DeliveryOutcome(
                     method=DeliveryMethod.TELEGRAM_UPLOAD,
                     public_url=None,
