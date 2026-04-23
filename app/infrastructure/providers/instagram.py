@@ -18,10 +18,13 @@ size and Telegram limits.
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import ProxyHandler, Request, build_opener
 
 from app.domain.entities.media_info import (
     DownloadOption,
@@ -34,6 +37,7 @@ from app.domain.text_utils import truncate_description
 from app.exceptions import DownloadError
 from app.infrastructure.providers.base import BaseProvider
 from app.logging_config import get_logger
+from app.utils.url import is_allowed_host
 
 _logger = get_logger(__name__)
 
@@ -130,6 +134,39 @@ class InstagramProvider(BaseProvider):
             raise DownloadError("Instagram gallery default (gallery_all) missing from options")
         return options[0]
 
+    async def probe_size(
+        self,
+        url: str,
+        *,
+        info: MediaInfo,
+        option: DownloadOption,
+    ) -> int | None:
+        playlist_items = self._compute_playlist_items(option, url=url)
+        probed = await self._ytdlp.probe_size(
+            url,
+            format_spec="bestvideo*+bestaudio/best",
+            extra_opts=({"playlist_items": playlist_items} if playlist_items else None),
+        )
+        if probed is not None:
+            return probed
+        urls = [item.url for item in self._items_for_option(info, option) if item.url]
+        if not urls:
+            return None
+        lengths = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    _head_content_length,
+                    media_url,
+                    proxy_url=(self._settings.HTTPS_PROXY_URL or "").strip() or None,
+                )
+                for media_url in urls
+            )
+        )
+        if any(length is None for length in lengths):
+            return None
+        known_lengths = [length for length in lengths if length is not None]
+        return sum(known_lengths)
+
     async def download(
         self,
         url: str,
@@ -194,6 +231,15 @@ class InstagramProvider(BaseProvider):
         del option, url
         return None
 
+    def _items_for_option(self, info: MediaInfo, option: DownloadOption) -> tuple[MediaItem, ...]:
+        if info.kind is not MediaKind.GALLERY:
+            return info.items or ()
+        if option.key == "gallery_videos":
+            return tuple(item for item in info.items if item.kind is MediaKind.VIDEO)
+        if option.key == "gallery_photos":
+            return tuple(item for item in info.items if item.kind is MediaKind.PHOTO)
+        return info.items
+
 
 # -------------------------- helpers --------------------------
 
@@ -235,3 +281,25 @@ def _looks_like_image(path: Path) -> bool:
 
 def _looks_like_video(path: Path) -> bool:
     return path.suffix.lower() in _VIDEO_EXTS
+
+
+def _head_content_length(url: str, *, proxy_url: str | None) -> int | None:
+    if not is_allowed_host(url):
+        return None
+    handlers = []
+    if proxy_url:
+        handlers.append(ProxyHandler({"http": proxy_url, "https": proxy_url}))
+    opener = build_opener(*handlers)
+    request = Request(url, method="HEAD")  # noqa: S310 - host allowlist enforced above
+    try:
+        with opener.open(request, timeout=30) as response:
+            value = response.headers.get("Content-Length")
+    except (HTTPError, URLError, OSError, ValueError):
+        return None
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None

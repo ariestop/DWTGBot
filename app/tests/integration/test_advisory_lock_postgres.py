@@ -40,6 +40,7 @@ from sqlalchemy.sql import text
 from app.domain.entities.download_job import DownloadJob
 from app.domain.entities.temp_link import TempLink
 from app.domain.enums import JobStatus, Platform
+from app.exceptions import JobConcurrentUpdateError
 from app.infrastructure.db.base import Base
 from app.infrastructure.db.repositories.jobs_repo_impl import SqlAlchemyJobsRepository
 from app.infrastructure.db.repositories.temp_links_repo_impl import (
@@ -159,6 +160,30 @@ async def test_create_if_under_cap_does_not_serialise_different_users(
     assert all(outcomes), "every distinct user should succeed independently"
     for uid in user_ids:
         assert await repo.count_active_for_user(uid) == 1
+
+
+async def test_jobs_repo_update_rejects_stale_status_version(sessionmaker) -> None:
+    repo = SqlAlchemyJobsRepository(sessionmaker)
+    created = await repo.create(_make_job(user_id=4444, source_url="https://example.test/lock"))
+    assert created.id is not None
+    assert created.status_version == 0
+
+    current = await repo.get(created.id)
+    assert current is not None
+    current.mark_processing()
+    updated = await repo.update(current)
+    assert updated.status is JobStatus.PROCESSING
+    assert updated.status_version == 1
+
+    stale = created
+    stale.mark_failed("stale writer")
+    with pytest.raises(JobConcurrentUpdateError):
+        await repo.update(stale)
+
+    latest = await repo.get(created.id)
+    assert latest is not None
+    assert latest.status is JobStatus.PROCESSING
+    assert latest.status_version == 1
 
 
 # ----------------------------------------------------------------------

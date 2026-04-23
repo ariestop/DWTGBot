@@ -49,6 +49,15 @@ class BaseProvider(ABC):
         ...
 
     @abstractmethod
+    async def probe_size(
+        self,
+        url: str,
+        *,
+        info: MediaInfo,
+        option: DownloadOption,
+    ) -> int | None: ...
+
+    @abstractmethod
     async def download(
         self,
         url: str,

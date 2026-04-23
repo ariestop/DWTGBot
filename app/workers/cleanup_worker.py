@@ -10,7 +10,7 @@ Runs as a long-lived process (separate container) and performs:
 The interval is set by ``CLEANUP_INTERVAL_SECONDS``.
 
 L13 (audit fix): uses ``composition.build_cleanup`` instead of
-``build_api`` — no /metrics server, no arq pool, no dev-only shims.
+``build_api`` — no arq pool, no dev-only shims.
 """
 
 from __future__ import annotations
@@ -18,10 +18,12 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.composition import CleanupComposition, build_cleanup
 from app.config import get_settings
+from app.domain.enums import JobStatus
 from app.logging_config import configure_logging, get_logger
 from app.observability.sentry import configure_sentry
 
@@ -63,6 +65,44 @@ async def _run_cycle(
     if reaped:
         log.warning("orphan_jobs_reaped", count=reaped, age_threshold_s=orphan_age_seconds)
 
+    removed_orphan_dirs = await _sweep_orphan_job_dirs(composition, older_than_seconds=86_400)
+    if removed_orphan_dirs:
+        composition.job_metrics.inc_storage_orphan_dirs_removed(count=removed_orphan_dirs)
+        log.info("orphan_job_dirs_removed", count=removed_orphan_dirs)
+
+
+async def _sweep_orphan_job_dirs(
+    composition: CleanupComposition,
+    *,
+    older_than_seconds: int,
+) -> int:
+    jobs_dir = composition.storage.root / "jobs"
+    if not jobs_dir.exists():
+        return 0
+    cutoff = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
+    removed = 0
+    for entry in jobs_dir.iterdir():
+        if not entry.is_dir() or not entry.name.isdigit():
+            continue
+        mtime = datetime.fromtimestamp(entry.stat().st_mtime, UTC)
+        if mtime >= cutoff:
+            continue
+        job_id = int(entry.name)
+        job = await composition.jobs_repo.get(job_id)
+        if job is not None and job.status not in (JobStatus.DONE, JobStatus.FAILED):
+            continue
+        try:
+            composition.storage.remove_path(entry)
+        except Exception:  # pragma: no cover  best-effort
+            get_logger("dwtgbot.cleanup").exception(
+                "orphan_job_dir_remove_failed",
+                job_id=job_id,
+                path=str(entry),
+            )
+            continue
+        removed += 1
+    return removed
+
 
 async def _amain() -> int:
     settings = get_settings()
@@ -77,6 +117,10 @@ async def _amain() -> int:
         return 2
 
     composition = await build_cleanup(settings)
+    if composition.metrics_server is not None:
+        start = getattr(composition.metrics_server, "start", None)
+        if start is not None:
+            await start()
 
     stop = asyncio.Event()
 

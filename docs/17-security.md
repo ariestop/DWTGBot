@@ -83,7 +83,7 @@ plus the absence of `ports:` declarations in the compose stacks.
 | **DB credential leak** | compromised NL-1 → admin access | strong password, private VLAN only, no public listen |
 | **Container escape** | yt-dlp parser exploit | non-root `app:1000`, minimal base image, no `--privileged` |
 | **Supply chain (yt-dlp/ffmpeg)** | malicious dependency update | pinned versions, GHCR image digests, manual yt-dlp bumps |
-| **Malicious URL → SSRF / RCE** | yt-dlp loading shady plugins | yt-dlp is sandboxed by us via `to_thread` (no shell), but vigilance on plugin extras |
+| **Malicious URL → SSRF / RCE** | yt-dlp following redirects to internal / metadata hosts | yt-dlp is constrained by `allowed_extractors` + `match_filter` host allowlist; optional `HTTPS_PROXY_URL` adds outbound ACL on NL-2 |
 | **Cookie / session leak** | Instagram cookies in logs | mounted as file, never logged; pattern: file path only |
 | **Replay of expired link** | resharing public URL | TTL + counter; `is_active=false` after exhaustion |
 | **TLS downgrade / no TLS** | MITM | TLS 1.2+ only; HSTS `max-age=63072000; preload` |
@@ -202,14 +202,27 @@ narrower `ALLOWED_HOSTS`, closed-network deployment).
 | Bot ↔ Telegram | `BOT_TOKEN` |
 | `/d/{token}` | the token in the URL |
 | `/healthz` | none (intentional) |
-| `/readyz` | none (intentional; only reachable on private network or via nginx if explicitly proxied) |
-| Internal admin endpoints (future) | `API_INTERNAL_TOKEN` (Bearer) |
+| `/readyz` | `API_INTERNAL_TOKEN` via `X-Internal-Token` |
+| `/internal/*` | `API_INTERNAL_TOKEN` (plus endpoint-specific auth where applicable) |
 | SSH | key-based; root login disabled; sudoers narrow |
 | GHCR image pulls | `GITHUB_TOKEN` (in CI) / personal token (local) |
 
-`API_INTERNAL_TOKEN` is required in production by `validate_runtime`; the
-hooks for using it on admin endpoints are present but the endpoints are
-not yet shipped. When you add them, **always** require this header.
+`API_INTERNAL_TOKEN` is required in production by `validate_runtime`.
+`/readyz` and every `/internal/*` route now require the
+`X-Internal-Token` header; `/healthz` stays intentionally public for
+liveness and ACME plumbing, and `/d/{token}` keeps its own bearer-token
+model.
+
+### yt-dlp egress guard
+
+- `YtDlpRunner` passes `allowed_extractors=["Youtube", "YoutubeTab", "Instagram"]`
+  so generic extractors cannot pivot to arbitrary hosts.
+- A `match_filter` allowlist accepts only supported provider/CDN suffixes
+  (`youtube.com`, `youtu.be`, `googlevideo.com`, `ytimg.com`,
+  `ggpht.com`, `instagram.com`, `cdninstagram.com`, `fbcdn.net`).
+- `HTTPS_PROXY_URL` remains the optional Phase-3-strength control for
+  outbound ACL at the network layer; when set on NL-2, it applies to both
+  `extract_info` and `download`.
 
 ---
 
@@ -361,6 +374,7 @@ universe.
 | Mistake | Symptom | Fix |
 |---|---|---|
 | Forgot to set `API_INTERNAL_TOKEN` in production | startup fails | Generate one (`openssl rand -hex 32`), set in env, redeploy |
+| Called `/readyz` without `X-Internal-Token` | 401 Unauthorized | Use `/healthz` for public liveness or send the internal token from private monitors / container healthchecks |
 | Exposed Postgres on public IP "for psql access" | external scanners notice in hours | Tunnel via SSH; never expose 5432 publicly |
 | Mounted `letsencrypt` as RW into nginx | risk of accidental cert overwrite | We mount `:ro` into nginx; certbot is the only writer |
 | Built worker as root | container can write outside the volume | Build with `USER app`; verify with `docker exec` |

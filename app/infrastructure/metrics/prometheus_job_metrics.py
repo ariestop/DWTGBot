@@ -20,6 +20,7 @@ from app.domain.observability import (
     FileSizeClass,
     HandlerOutcome,
     LatencyBucket,
+    ReplayIgnoreReason,
     TempLinkServeResult,
 )
 from app.domain.reason_class import ReasonClass
@@ -105,6 +106,18 @@ class PrometheusJobMetrics:
             "at startup so PromQL can compute B4 saturation.",
             registry=registry,
         )
+        self._replay_ignored = Counter(
+            "job_replay_ignored_total",
+            "Worker-side replays ignored because the job was already "
+            "terminal or concurrently processing.",
+            labelnames=("reason",),
+            registry=registry,
+        )
+        self._storage_orphan_dirs_removed = Counter(
+            "storage_orphan_dirs_removed_total",
+            "Job directories removed by the cleanup worker after they became orphaned on disk.",
+            registry=registry,
+        )
 
         # ----- API-side -----------------------------------------------
         self._temp_link_serves = Counter(
@@ -145,6 +158,12 @@ class PrometheusJobMetrics:
 
     def set_worker_concurrency(self, *, concurrency: int) -> None:
         self._worker_concurrency.set(concurrency)
+
+    def inc_replay_ignored(self, *, reason: ReplayIgnoreReason) -> None:
+        self._replay_ignored.labels(reason=reason.value).inc()
+
+    def inc_storage_orphan_dirs_removed(self, *, count: int) -> None:
+        self._storage_orphan_dirs_removed.inc(count)
 
     def inc_temp_link_serve(self, *, result: TempLinkServeResult) -> None:
         self._temp_link_serves.labels(result=result.value).inc()

@@ -68,7 +68,7 @@ is a deliberate guardrail — see §9.
 
 | File | Trigger | Concurrency | Permissions | Purpose |
 |---|---|---|---|---|
-| `.github/workflows/ci.yml` | `push`, `pull_request` to `main`/`develop` | `ci-${{ github.ref }}`, `cancel-in-progress: true` | `contents: read` | Lint, type-check, unit tests, shellcheck |
+| `.github/workflows/ci.yml` | `push`, `pull_request` to `main`/`develop` | `ci-${{ github.ref }}`, `cancel-in-progress: true` | `contents: read` | Lint, type-check, unit + integration tests, scanners, shellcheck |
 | `.github/workflows/build-images.yml` | `push` to `main`, tags `v*.*.*`, `workflow_dispatch` | (none — concurrent OK) | `contents: read`, `packages: write` | Build & push 4 images to GHCR |
 | `.github/workflows/deploy.yml` | `workflow_dispatch` (target + ref) | `deploy-${{ inputs.target }}`, `cancel-in-progress: false` | `contents: read` | SSH into NL-1 then NL-2, run `deploy_update.sh` |
 
@@ -79,9 +79,9 @@ is a deliberate guardrail — see §9.
 
 ---
 
-## §3 — `ci.yml` (lint / test)
+## §3 — `ci.yml` (lint / test / scanners)
 
-Four parallel jobs, all on `ubuntu-latest`. Each has a `timeout-minutes` to fail fast.
+Eight parallel jobs, all on `ubuntu-latest`. Each has a `timeout-minutes` to fail fast.
 
 ### 3.1 `lint` — ruff (format + lint)
 
@@ -125,11 +125,31 @@ Four parallel jobs, all on `ubuntu-latest`. Each has a `timeout-minutes` to fail
 ```
 
 - Installs `ffmpeg` system binary (yt-dlp probes it during option construction).
-- Excludes `@pytest.mark.integration` (those need real network / Postgres).
+- Excludes `@pytest.mark.integration` (those run in the dedicated integration job).
+- Coverage gate is enforced via `pyproject.toml` `addopts`:
+  `--cov=app --cov-report=term --cov-report=xml --cov-fail-under=70`.
 - Fake env values are deliberately invalid in production (so tests can never accidentally hit prod resources).
 - **Local equivalent:** `pytest -m 'not integration'` or `make test`.
 
-### 3.4 `shell-lint` — shellcheck
+### 3.4 `integration-tests` — Postgres + Redis
+
+```yaml
+services:
+  postgres: postgres:16-alpine
+  redis: redis:7-alpine
+
+- name: alembic upgrade head
+  run: alembic upgrade head
+
+- name: pytest -m integration
+  run: pytest -m integration --no-cov
+```
+
+- Runs the opt-in integration suites against ephemeral Postgres + Redis on every PR.
+- `alembic upgrade head` is a migration smoke step, independent from the integration test code itself.
+- `--no-cov` avoids applying the unit-suite coverage gate to the narrow integration slice.
+
+### 3.5 `shell-lint` — shellcheck
 
 ```yaml
 - uses: ludeeus/action-shellcheck@2.0.0
@@ -141,23 +161,28 @@ Four parallel jobs, all on `ubuntu-latest`. Each has a `timeout-minutes` to fail
 - Only `deploy/scripts/*.sh` is scanned (production-critical bash).
 - Treats `warning` and above as failures.
 
-### 3.5 What CI does NOT do
+### 3.6 `trivy` / `gitleaks` — security scanners
+
+- `trivy` scans the repository filesystem for HIGH / CRITICAL vulnerabilities before merge.
+- `gitleaks` scans the checked-out repository for committed secrets.
+- Both are PR gates, so security regressions fail before image build / deploy.
+
+### 3.7 What CI does NOT do
 
 | Not in CI | Why | Where instead |
 |---|---|---|
 | Build images | costs minutes on every PR; not all PRs change runtime | `build-images.yml` on `main` |
-| Run integration tests | need Postgres + Redis + network | local `make test-integration`; future stage |
 | Deploy | safety: every deploy is manual | `deploy.yml` (manual dispatch) |
-| DB migration smoke | needs ephemeral Postgres | future job (see §16 of `29-`) |
-| Image vulnerability scan | future hardening | open issue |
+| Live Telegram / public-edge smoke | needs deployed infra and a human eyeball | post-deploy checks in `20-deployment.md` |
 
-### 3.6 Local parity
+### 3.8 Local parity
 
 You can reproduce all of CI locally:
 
 ```bash
-# All four CI jobs:
+# Core CI jobs:
 ruff format --check . && ruff check . && mypy app && pytest -m "not integration"
+pytest -m "integration" --no-cov
 shellcheck deploy/scripts/*.sh
 ```
 
@@ -476,7 +501,7 @@ Live edits drift; the next deploy reverts them silently.
 ### 9.4 Gates and approvals
 
 - **Required reviewers** on `nl1` / `nl2` environments (§5.4).
-- **Branch protection** on `main`: required CI checks (`lint`, `typecheck`, `tests`, `shell-lint`).
+- **Branch protection** on `main`: required CI checks (`lint`, `typecheck`, `tests`, `integration-tests`, `shell-lint`, `trivy`, `gitleaks`).
 - **CODEOWNERS** for `deploy/`, `migrations/`, `.github/workflows/` directing review to ops.
 - **Required signed commits** (recommended).
 

@@ -39,6 +39,7 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
             await start()
     ctx["composition"] = composition
     ctx["use_case"] = composition.use_case
+    ctx["jobs_repo"] = composition.jobs_repo
     # Surfaced into ctx so ``process_download_job`` can inc/dec the
     # worker_active_jobs gauge without having to reach into the
     # composition object on every task.

@@ -31,6 +31,7 @@ from app.domain.observability import (
     FileSizeClass,
     HandlerOutcome,
     LatencyBucket,
+    ReplayIgnoreReason,
     TempLinkServeResult,
 )
 from app.domain.reason_class import ReasonClass
@@ -84,6 +85,8 @@ def test_noop_job_metrics_is_callable_on_every_method() -> None:
     sink.inc_worker_active()
     sink.dec_worker_active()
     sink.set_worker_concurrency(concurrency=4)
+    sink.inc_replay_ignored(reason=ReplayIgnoreReason.DONE)
+    sink.inc_storage_orphan_dirs_removed(count=2)
     sink.inc_temp_link_serve(result=TempLinkServeResult.OK)
 
 
@@ -186,6 +189,28 @@ def test_prometheus_job_metrics_worker_gauges() -> None:
     text = _registry_text(registry)
     assert "worker_concurrency 4.0" in text
     assert "worker_active_jobs 1.0" in text
+
+
+def test_prometheus_job_metrics_replay_ignored_counter() -> None:
+    registry = CollectorRegistry()
+    sink = PrometheusJobMetrics(registry=registry)
+
+    sink.inc_replay_ignored(reason=ReplayIgnoreReason.DONE)
+    sink.inc_replay_ignored(reason=ReplayIgnoreReason.PROCESSING)
+
+    text = _registry_text(registry)
+    assert _counter_value(text, "job_replay_ignored_total", reason="done") == 1.0
+    assert _counter_value(text, "job_replay_ignored_total", reason="processing") == 1.0
+
+
+def test_prometheus_job_metrics_storage_orphan_dirs_removed_counter() -> None:
+    registry = CollectorRegistry()
+    sink = PrometheusJobMetrics(registry=registry)
+
+    sink.inc_storage_orphan_dirs_removed(count=3)
+
+    text = _registry_text(registry)
+    assert _counter_value(text, "storage_orphan_dirs_removed_total") == 3.0
 
 
 def test_prometheus_job_metrics_temp_link_serve_label_set() -> None:

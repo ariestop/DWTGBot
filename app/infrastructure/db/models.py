@@ -76,6 +76,12 @@ class DownloadJobModel(Base, TimestampMixin):
     public_url: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
     retries_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     extra: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -85,6 +91,7 @@ class DownloadJobModel(Base, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint("retries_count >= 0", name="retries_non_negative"),
+        CheckConstraint("status_version >= 0", name="status_version_non_negative"),
         Index("ix_download_jobs_status_created_at", "status", "created_at"),
         # Audit fix A14: orphan-reaper filters on (status, updated_at).
         # Without this index Postgres does a bitmap-OR + Seq Scan filter

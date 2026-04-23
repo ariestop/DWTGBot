@@ -32,6 +32,13 @@ def build_engine(settings: Settings) -> AsyncEngine:
         max_overflow=settings.DB_MAX_OVERFLOW,
         pool_timeout=settings.DB_POOL_TIMEOUT_S,
         pool_recycle=settings.DB_POOL_RECYCLE_S,
+        connect_args={
+            "command_timeout": settings.DB_STATEMENT_TIMEOUT_S,
+            "timeout": settings.DB_CONNECT_TIMEOUT_S,
+            "server_settings": {
+                "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
+            },
+        },
     )
 
 

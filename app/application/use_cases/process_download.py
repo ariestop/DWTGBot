@@ -14,12 +14,19 @@ from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.providers import Provider, ProviderRegistry
 from app.config import Settings
 from app.domain.entities.download_job import DownloadJob
-from app.domain.entities.media_info import DownloadOption
-from app.domain.enums import JobStatus, ProgressStage
-from app.domain.observability import file_size_class
+from app.domain.entities.media_info import DownloadOption, MediaInfo
+from app.domain.enums import JobStatus, MediaKind, ProgressStage
+from app.domain.observability import ReplayIgnoreReason, file_size_class
 from app.domain.reason_class import ReasonClass, classify_exception
 from app.domain.repositories.jobs_repo import JobsRepository
-from app.exceptions import AppError, FileTooLargeError, JobCancelledError, StorageError
+from app.exceptions import (
+    AppError,
+    FileTooLargeError,
+    JobCancelledError,
+    JobConcurrentUpdateError,
+    SizeUnknownError,
+    StorageError,
+)
 from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.storage.local_storage import LocalStorage
 from app.infrastructure.telegram.sender import TelegramSender
@@ -99,7 +106,13 @@ class ProcessDownloadUseCase:
         # for ``job_duration_seconds`` (ADR-0007 §2.1, A4/A5 SLO).
         started_monotonic = time.monotonic()
 
-        await self._transition_to(job, JobStatus.PROCESSING, ReasonClass.OK)
+        if self._guard_replay(job):
+            return
+
+        transitioned = await self._transition_to(job, JobStatus.PROCESSING, ReasonClass.OK)
+        if transitioned is None:
+            return
+        job = transitioned
 
         try:
             # S10 (audit fix): backpressure on a near-full disk. We
@@ -143,7 +156,13 @@ class ProcessDownloadUseCase:
                     user_message="Выбранный вариант больше недоступен. Пришлите ссылку заново.",
                 )
 
-            self._reject_if_estimate_exceeds_cap(selected)
+            estimate_bytes = await self._resolve_pre_download_size(
+                provider=provider,
+                url=job.source_url,
+                info=info,
+                option=selected,
+            )
+            self._reject_if_estimate_exceeds_cap(selected, estimate_bytes=estimate_bytes)
 
             target = self._storage.job_dir(job.id or 0)
 
@@ -193,7 +212,7 @@ class ProcessDownloadUseCase:
                 telegram_file_id=outcome.primary_telegram_file_id,
                 public_url=outcome.public_url,
             )
-            await self._jobs.update(job)
+            job = await self._persist_done(job)
 
             # Terminal success: reporter.finish clears the placeholder
             # via the progress_updater. Reporter swallows Redis errors
@@ -264,12 +283,63 @@ class ProcessDownloadUseCase:
             _logger.exception("job_failed_unexpected", error=str(exc), reason_class=reason.value)
             raise
 
-    def _reject_if_estimate_exceeds_cap(self, option: DownloadOption) -> None:
+    def _guard_replay(self, job: DownloadJob) -> bool:
+        if job.status is JobStatus.PENDING:
+            return False
+        reason_map = {
+            JobStatus.DONE: ReplayIgnoreReason.DONE,
+            JobStatus.FAILED: ReplayIgnoreReason.FAILED,
+            JobStatus.PROCESSING: ReplayIgnoreReason.PROCESSING,
+        }
+        reason = reason_map.get(job.status)
+        if reason is None:  # pragma: no cover  defensive
+            return False
+        self._metrics.inc_replay_ignored(reason=reason)
+        _logger.warning(
+            "job_replay_ignored",
+            job_id=job.id,
+            current_status=job.status.value,
+            reason=reason.value,
+        )
+        return True
+
+    async def _resolve_pre_download_size(
+        self,
+        *,
+        provider: Provider,
+        url: str,
+        info: MediaInfo,
+        option: DownloadOption,
+    ) -> int | None:
+        estimate = option.estimated_size_bytes
+        if estimate is not None:
+            return estimate
+        size_bytes = await provider.probe_size(url, info=info, option=option)
+        if size_bytes is not None:
+            _logger.info("job_size_probed", option=option.key, size_bytes=size_bytes)
+            return size_bytes
+        if option.kind is MediaKind.VIDEO:
+            _logger.warning("job_size_unknown", option=option.key, url=url)
+            raise SizeUnknownError(
+                f"Unable to determine size for option {option.key}",
+                user_message=(
+                    "Не удалось заранее определить размер файла. "
+                    "Попробуйте другую ссылку или качество поменьше."
+                ),
+            )
+        return None
+
+    def _reject_if_estimate_exceeds_cap(
+        self,
+        option: DownloadOption,
+        *,
+        estimate_bytes: int | None = None,
+    ) -> None:
         """Fail fast (P10) when the provider's own estimate already exceeds
         ``MAX_FILE_SIZE_MB``. The post-download check in ``LocalStorage`` and
         ``DeliveryService`` is still authoritative; this just avoids burning
         bandwidth/disk on a job we are guaranteed to refuse."""
-        estimate = option.estimated_size_bytes
+        estimate = option.estimated_size_bytes if estimate_bytes is None else estimate_bytes
         cap = self._settings.max_file_size_bytes
         if estimate is not None and estimate > cap:
             _logger.warning(
@@ -298,7 +368,7 @@ class ProcessDownloadUseCase:
 
     async def _transition_to(
         self, job: DownloadJob, target: JobStatus, reason: ReasonClass
-    ) -> None:
+    ) -> DownloadJob | None:
         """Mutate-persist-emit. Centralised so every status change goes
         through one place that owns metric + log emission. The DB
         update has to happen before the metric so a Prometheus scrape
@@ -315,7 +385,16 @@ class ProcessDownloadUseCase:
             job.mark_processing()
         else:  # pragma: no cover  defensive
             raise ValueError(f"_transition_to does not handle {target}")
-        await self._jobs.update(job)
+        try:
+            job = await self._jobs.update(job)
+        except JobConcurrentUpdateError:
+            latest = await self._jobs.get(job.id or 0)
+            if latest is None:
+                _logger.warning("job_update_conflict_job_missing", job_id=job.id)
+                return None
+            if self._guard_replay(latest):
+                return None
+            raise
         self._metrics.inc_status_change(to=target, reason_class=reason)
         _logger.info(
             "job_status_changed",
@@ -323,6 +402,7 @@ class ProcessDownloadUseCase:
             to=target.value,
             reason_class=reason.value,
         )
+        return job
 
     async def mark_terminally_failed(self, job_id: int, exc: BaseException) -> None:
         """Public entrypoint for the arq task wrapper.
@@ -367,24 +447,34 @@ class ProcessDownloadUseCase:
         previous = job.status
         job.mark_failed(error_repr)
         try:
-            await self._jobs.update(job)
-        finally:
-            self._metrics.inc_status_change(to=JobStatus.FAILED, reason_class=reason)
-            _logger.info(
-                "job_status_changed",
-                from_=previous.value,
-                to=JobStatus.FAILED.value,
-                reason_class=reason.value,
-            )
-            if job.id is not None:
-                try:
-                    await self._reporter.fail(job_id=job.id, reason=user_text)
-                except Exception:  # pragma: no cover  defensive
-                    _logger.exception("progress_fail_failed", job_id=job.id)
+            job = await self._jobs.update(job)
+        except JobConcurrentUpdateError:
+            latest = await self._jobs.get(job.id or 0)
+            if latest is not None and latest.status in (JobStatus.DONE, JobStatus.FAILED):
+                _logger.warning(
+                    "job_fail_conflict_ignored",
+                    job_id=job.id,
+                    attempted_status=job.status.value,
+                    current_status=latest.status.value,
+                )
+                return
+            raise
+        self._metrics.inc_status_change(to=JobStatus.FAILED, reason_class=reason)
+        _logger.info(
+            "job_status_changed",
+            from_=previous.value,
+            to=JobStatus.FAILED.value,
+            reason_class=reason.value,
+        )
+        if job.id is not None:
             try:
-                await self._sender.send_text(job.chat_id, f"⚠️ {user_text}")
-            except Exception:  # pragma: no cover  best-effort
-                _logger.exception("notify_user_about_failure_failed")
+                await self._reporter.fail(job_id=job.id, reason=user_text)
+            except Exception:  # pragma: no cover  defensive
+                _logger.exception("progress_fail_failed", job_id=job.id)
+        try:
+            await self._sender.send_text(job.chat_id, f"⚠️ {user_text}")
+        except Exception:  # pragma: no cover  best-effort
+            _logger.exception("notify_user_about_failure_failed")
 
     async def _check_cancel(self, job_id: int | None) -> None:
         """Raise :class:`JobCancelledError` if the user cancelled this job.
@@ -408,25 +498,61 @@ class ProcessDownloadUseCase:
         previous = job.status
         job.mark_failed("cancelled by user")
         try:
-            await self._jobs.update(job)
-        finally:
-            # USER_ERROR is the right SLO bucket — cancellation is the
-            # user's choice, not a service regression. Matches how
-            # ``TooManyJobsError`` is classified in reason_class.py.
-            self._metrics.inc_status_change(
-                to=JobStatus.FAILED, reason_class=ReasonClass.USER_ERROR
-            )
-            _logger.info(
-                "job_status_changed",
-                from_=previous.value,
-                to=JobStatus.FAILED.value,
-                reason_class=ReasonClass.USER_ERROR.value,
-            )
+            job = await self._jobs.update(job)
+        except JobConcurrentUpdateError:
+            latest = await self._jobs.get(job.id or 0)
+            if latest is not None and latest.status in (JobStatus.DONE, JobStatus.FAILED):
+                _logger.warning(
+                    "job_cancel_conflict_ignored",
+                    job_id=job.id,
+                    current_status=latest.status.value,
+                )
+                return
+            raise
+        # USER_ERROR is the right SLO bucket — cancellation is the
+        # user's choice, not a service regression. Matches how
+        # ``TooManyJobsError`` is classified in reason_class.py.
+        self._metrics.inc_status_change(to=JobStatus.FAILED, reason_class=ReasonClass.USER_ERROR)
+        _logger.info(
+            "job_status_changed",
+            from_=previous.value,
+            to=JobStatus.FAILED.value,
+            reason_class=ReasonClass.USER_ERROR.value,
+        )
         if self._cancellation is not None and job.id is not None:
             try:
                 await self._cancellation.clear(job_id=job.id)
             except Exception:  # pragma: no cover  defensive
                 _logger.exception("cancel_flag_clear_failed", job_id=job.id)
+
+    async def _persist_done(self, job: DownloadJob) -> DownloadJob:
+        try:
+            return await self._jobs.update(job)
+        except JobConcurrentUpdateError:
+            latest = await self._jobs.get(job.id or 0)
+            if latest is None:
+                raise
+            _logger.warning(
+                "job_done_conflict_detected",
+                job_id=job.id,
+                current_status=latest.status.value,
+                current_status_version=latest.status_version,
+            )
+            if latest.status is JobStatus.DONE:
+                return latest
+            if latest.status is JobStatus.FAILED:
+                latest.title = job.title
+                latest.media_id = job.media_id
+                latest.selected_format = job.selected_format
+                latest.mark_done(
+                    file_path=job.file_path,
+                    file_size=job.file_size,
+                    mime_type=job.mime_type,
+                    telegram_file_id=job.telegram_file_id,
+                    public_url=job.public_url,
+                )
+                return await self._jobs.update(latest)
+            raise
 
     async def _emit_progress(
         self,

@@ -35,6 +35,7 @@ class DownloadJob:
     public_url: str | None = None
     error_message: str | None = None
     retries_count: int = 0
+    status_version: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

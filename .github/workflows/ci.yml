@@ -58,7 +58,7 @@ jobs:
         run: mypy app
 
   tests:
-    name: Pytest
+    name: Pytest + coverage gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -79,7 +79,7 @@ jobs:
           pip install -r requirements/base.txt
           pip install -r requirements/dev.txt
 
-      - name: pytest (with coverage)
+      - name: pytest
         env:
           BOT_TOKEN: "0000000000:test-token"
           APP_ENV: development
@@ -88,13 +88,7 @@ jobs:
           PUBLIC_BASE_URL: http://localhost:8080
           STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
           STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
-        # S8 (audit fix): coverage is collected but NOT gated on a
-        # threshold yet — current coverage is around 30 % and a hard
-        # gate would block PRs while we backfill tests. The XML report
-        # is uploaded so dashboards / Codecov can track the trend; flip
-        # to ``--cov-fail-under=N`` once we land the per-area test
-        # backlog (S8 follow-up).
-        run: pytest -m "not integration" --cov=app --cov-report=term --cov-report=xml
+        run: pytest -m "not integration"
 
       - name: Upload coverage report
         if: always()
@@ -102,6 +96,65 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      BOT_TOKEN: "0000000000:test-token"
+      APP_ENV: development
+      LOG_LEVEL: WARNING
+      LOG_JSON: "false"
+      PUBLIC_BASE_URL: http://localhost:8080
+      STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
+      STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
+      DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
+      DWTGBOT_TEST_POSTGRES_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
+      DWTGBOT_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements/base.txt
+            requirements/dev.txt
+
+      - name: Install deps
+        run: |
+          pip install -r requirements/base.txt
+          pip install -r requirements/dev.txt
+
+      - name: alembic upgrade head
+        run: alembic upgrade head
+
+      - name: pytest -m integration
+        run: pytest -m integration --no-cov
 
   shell-lint:
     name: Shellcheck
@@ -137,6 +190,34 @@ jobs:
         run: pip install 'uv==0.11.7'
       - name: Verify lockfiles are up to date
         run: make lock-check
+
+  trivy:
+    name: Trivy fs scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy fs scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks detect
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docs-link-check:
     name: Docs link check

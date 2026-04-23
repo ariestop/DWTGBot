@@ -411,7 +411,9 @@ Live metrics (jobs / queue / workers, ADR-0007):
 | `bot_message_handled_total` | Counter | `outcome`, `latency_bucket` | bot | A1 |
 | `jobs_created_total` | Counter | `platform` | bot | A2 base |
 | `jobs_status_changed_total` | Counter | `to` ∈ values of `JobStatus`, `reason_class` | worker | A2 / A3 |
+| `job_replay_ignored_total` | Counter | `reason` ∈ {`done`, `failed`, `processing`} | worker | A18 diagnostics |
 | `job_duration_seconds` | Histogram | `file_size_class` | worker | A4 / A5 |
+| `storage_orphan_dirs_removed_total` | Counter | – | cleanup | A20 diagnostics |
 | `temp_link_serves_total` | Counter | `result` ∈ {`ok`, `not_found`, `expired`, `gone`, `forbidden`} | api | A6 |
 | `arq_queue_depth` | Gauge | – | bot (sampler) | B3 |
 | `worker_active_jobs` | Gauge | – | worker | B4 |

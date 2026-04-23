@@ -39,6 +39,7 @@ from app.exceptions import (
 )
 from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.logging_config import get_logger
+from app.utils.url import is_allowed_host
 
 _logger = get_logger(__name__)
 
@@ -60,6 +61,8 @@ _THROTTLE_MARKERS = (
 # formats because ``-movflags +faststart`` only applies to ISO BMFF
 # containers and Telegram's mobile players expect MP4.
 _FASTSTART_EXTS = frozenset({".mp4", ".mov", ".m4v"})
+_ALLOWED_EXTRACTORS = ("Youtube", "YoutubeTab", "Instagram")
+_URL_MATCH_KEYS = ("webpage_url", "url", "original_url")
 
 # Mobile Telegram (iOS/Android) decodes through hardware codecs that
 # require a very narrow subset of formats. Anything else plays on
@@ -282,6 +285,7 @@ class YtDlpRunner:
             "socket_timeout": 30,
             "retries": 1,
         }
+        self._apply_source_guards(opts)
         self._apply_proxy(opts)
         try:
             result = await asyncio.to_thread(self._extract_sync, url, opts)
@@ -338,6 +342,7 @@ class YtDlpRunner:
             "fragment_retries": 2,
             "noplaylist": False,
         }
+        self._apply_source_guards(opts)
         if on_progress is not None:
             opts["progress_hooks"] = [_make_progress_hook(on_progress)]
         # yt-dlp treats ``ffmpeg_location`` as an absolute path to the binary
@@ -420,6 +425,41 @@ class YtDlpRunner:
                     )
         return files
 
+    async def probe_size(
+        self,
+        url: str,
+        *,
+        format_spec: str,
+        extra_opts: dict[str, Any] | None = None,
+    ) -> int | None:
+        """Best-effort size probe without downloading bytes."""
+        host = _host_of(url)
+        await self._trip_if_open(host)
+        opts: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "simulate": True,
+            "format": format_spec,
+            "socket_timeout": 30,
+            "retries": 1,
+            "noplaylist": False,
+        }
+        self._apply_source_guards(opts)
+        if extra_opts:
+            opts.update(extra_opts)
+        self._apply_proxy(opts)
+        try:
+            result = await asyncio.to_thread(self._extract_sync, url, opts)
+        except YtDlpDownloadError as exc:
+            await self._report_if_throttle(host, exc)
+            raise self._classify(exc) from exc
+        except Exception as exc:
+            _logger.exception("ytdlp_probe_unexpected", url=url)
+            raise DownloadError(f"yt-dlp size probe failed: {exc}") from exc
+        await self._note_success(host)
+        return _extract_known_size(result)
+
     async def _trip_if_open(self, host: str) -> None:
         if self._breaker is None or not host:
             return
@@ -454,6 +494,11 @@ class YtDlpRunner:
         proxy_url = (self._settings.HTTPS_PROXY_URL or "").strip()
         if proxy_url:
             opts["proxy"] = proxy_url
+
+    def _apply_source_guards(self, opts: dict[str, Any]) -> None:
+        """A17: constrain yt-dlp to supported extractors and hosts."""
+        opts.setdefault("allowed_extractors", list(_ALLOWED_EXTRACTORS))
+        opts.setdefault("match_filter", _match_allowed_host)
 
     @staticmethod
     def _extract_sync(url: str, opts: dict[str, Any]) -> dict[str, Any]:
@@ -563,4 +608,52 @@ def _extract_percent(d: dict[str, Any]) -> float | None:
     if isinstance(downloaded, int | float) and isinstance(total, int | float) and total > 0:
         return max(0.0, min(100.0, (downloaded / total) * 100.0))
 
+    return None
+
+
+def _match_allowed_host(info_dict: dict[str, Any]) -> str | None:
+    """Reject entries whose resolved URL escapes our provider/CDN allowlist."""
+    for key in _URL_MATCH_KEYS:
+        raw = info_dict.get(key)
+        if not isinstance(raw, str) or not raw:
+            continue
+        if is_allowed_host(raw):
+            return None
+        return f"Disallowed host for URL {raw!r}"
+    return None
+
+
+def _extract_known_size(payload: dict[str, Any]) -> int | None:
+    """Best-effort filesize extraction from a yt-dlp info dict."""
+    entry = payload["entries"][0] if payload.get("entries") else payload
+    requested_downloads = entry.get("requested_downloads")
+    if isinstance(requested_downloads, list) and requested_downloads:
+        total = _sum_known_sizes(requested_downloads)
+        if total is not None:
+            return total
+    requested_formats = entry.get("requested_formats")
+    if isinstance(requested_formats, list) and requested_formats:
+        total = _sum_known_sizes(requested_formats)
+        if total is not None:
+            return total
+    return _single_known_size(entry)
+
+
+def _sum_known_sizes(items: list[dict[str, Any]]) -> int | None:
+    total = 0
+    saw_any = False
+    for item in items:
+        size = _single_known_size(item)
+        if size is None:
+            return None
+        total += size
+        saw_any = True
+    return total if saw_any else None
+
+
+def _single_known_size(item: dict[str, Any]) -> int | None:
+    for key in ("filesize", "filesize_approx"):
+        raw = item.get(key)
+        if isinstance(raw, int | float) and raw > 0:
+            return int(raw)
     return None

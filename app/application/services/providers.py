@@ -43,6 +43,20 @@ class Provider(Protocol):
         """
         ...
 
+    async def probe_size(
+        self,
+        url: str,
+        *,
+        info: MediaInfo,
+        option: DownloadOption,
+    ) -> int | None:
+        """Best-effort pre-download size probe for ``option``.
+
+        Returns the expected bytes if the provider can determine them
+        cheaply before downloading, otherwise ``None``.
+        """
+        ...
+
     async def download(
         self,
         url: str,

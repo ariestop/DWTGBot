@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.entities.download_job import DownloadJob
 from app.domain.enums import JobStatus
 from app.domain.repositories.jobs_repo import JobsRepository
+from app.exceptions import JobConcurrentUpdateError
 from app.infrastructure.db.models import DownloadJobModel
 
 
@@ -59,31 +61,43 @@ class SqlAlchemyJobsRepository(JobsRepository):
         if job.id is None:
             raise ValueError("Cannot update job without id")
         async with self._sm.begin() as session:
-            row = await session.get(DownloadJobModel, job.id)
+            stmt = (
+                update(DownloadJobModel)
+                .where(
+                    DownloadJobModel.id == job.id,
+                    DownloadJobModel.status_version == job.status_version,
+                )
+                .values(
+                    status=job.status,
+                    media_id=job.media_id,
+                    title=job.title,
+                    selected_option_key=job.selected_option_key,
+                    selected_format=job.selected_format,
+                    file_path=job.file_path,
+                    file_size=job.file_size,
+                    mime_type=job.mime_type,
+                    telegram_file_id=job.telegram_file_id,
+                    public_url=job.public_url,
+                    error_message=job.error_message,
+                    retries_count=job.retries_count,
+                    status_version=DownloadJobModel.status_version + 1,
+                    extra=dict(job.extra),
+                    completed_at=job.completed_at,
+                    updated_at=func.now(),
+                )
+                .returning(*DownloadJobModel.__table__.columns)
+            )
+            result = await session.execute(stmt)
+            row = result.mappings().one_or_none()
             if row is None:
-                raise LookupError(f"Job {job.id} not found")
-            row.status = job.status
-            row.media_id = job.media_id
-            row.title = job.title
-            row.selected_option_key = job.selected_option_key
-            row.selected_format = job.selected_format
-            row.file_path = job.file_path
-            row.file_size = job.file_size
-            row.mime_type = job.mime_type
-            row.telegram_file_id = job.telegram_file_id
-            row.public_url = job.public_url
-            row.error_message = job.error_message
-            row.retries_count = job.retries_count
-            row.extra = dict(job.extra)
-            row.completed_at = job.completed_at
-            await session.flush()
-            # See ``create()`` — ``updated_at`` is server-side (onupdate=now()),
-            # so after flush it's expired in the session and a sync attribute
-            # read would trigger a refresh that asyncpg cannot satisfy
-            # outside a greenlet. Refresh explicitly while still in the
-            # async session scope.
-            await session.refresh(row)
-            return _to_entity(row)
+                existing = await session.get(DownloadJobModel, job.id)
+                if existing is None:
+                    raise LookupError(f"Job {job.id} not found")
+                raise JobConcurrentUpdateError(
+                    f"Job {job.id} was updated concurrently "
+                    f"(expected status_version={job.status_version}, got {existing.status_version})"
+                )
+            return _mapping_to_entity(row)
 
     async def increment_retries(self, job_id: int) -> int:
         async with self._sm.begin() as session:
@@ -155,6 +169,7 @@ class SqlAlchemyJobsRepository(JobsRepository):
                 public_url=job.public_url,
                 error_message=job.error_message,
                 retries_count=job.retries_count,
+                status_version=job.status_version,
                 extra=dict(job.extra),
             )
             session.add(row)
@@ -219,8 +234,37 @@ def _to_entity(row: DownloadJobModel) -> DownloadJob:
         public_url=row.public_url,
         error_message=row.error_message,
         retries_count=row.retries_count,
+        status_version=row.status_version,
         extra=dict(row.extra or {}),
         created_at=row.created_at,
         updated_at=row.updated_at,
         completed_at=row.completed_at,
+    )
+
+
+def _mapping_to_entity(row: Any) -> DownloadJob:
+    mapping: dict[str, Any] = dict(row)
+    return DownloadJob(
+        id=mapping["id"],
+        user_id=mapping["user_id"],
+        chat_id=mapping["chat_id"],
+        source_url=mapping["source_url"],
+        platform=mapping["platform"],
+        media_id=mapping["media_id"],
+        title=mapping["title"],
+        selected_option_key=mapping["selected_option_key"],
+        selected_format=mapping["selected_format"],
+        status=mapping["status"],
+        file_path=mapping["file_path"],
+        file_size=mapping["file_size"],
+        mime_type=mapping["mime_type"],
+        telegram_file_id=mapping["telegram_file_id"],
+        public_url=mapping["public_url"],
+        error_message=mapping["error_message"],
+        retries_count=mapping["retries_count"],
+        status_version=mapping["status_version"],
+        extra=dict(mapping["extra"] or {}),
+        created_at=mapping["created_at"],
+        updated_at=mapping["updated_at"],
+        completed_at=mapping["completed_at"],
     )

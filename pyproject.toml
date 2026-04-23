@@ -74,7 +74,7 @@ plugins = []
 exclude = ["migrations/", "app/tests/"]
 
 [tool.pytest.ini_options]
-addopts = "-ra -q --strict-markers"
+addopts = "-ra -q --strict-markers --cov=app --cov-report=term --cov-report=xml --cov-fail-under=70"
 testpaths = ["app/tests"]
 asyncio_mode = "auto"
 markers = [

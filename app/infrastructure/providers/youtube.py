@@ -139,6 +139,16 @@ class YouTubeProvider(BaseProvider):
         # build_options emits buckets in ascending height order; pick the tallest.
         return max(video_options, key=lambda o: o.height or 0)
 
+    async def probe_size(
+        self,
+        url: str,
+        *,
+        info: MediaInfo,
+        option: DownloadOption,
+    ) -> int | None:
+        del info
+        return await self._ytdlp.probe_size(url, format_spec=_format_spec_for_option(option))
+
     async def download(
         self,
         url: str,
@@ -152,7 +162,7 @@ class YouTubeProvider(BaseProvider):
         if option.kind is MediaKind.AUDIO:
             files = await self._ytdlp.download(
                 url,
-                format_spec="bestaudio/best",
+                format_spec=_format_spec_for_option(option),
                 target_dir=out_dir,
                 postprocessors=[
                     {
@@ -167,7 +177,6 @@ class YouTubeProvider(BaseProvider):
             return self._build_result(files, info_title=out_dir.name, kind=MediaKind.AUDIO)
 
         if option.kind is MediaKind.VIDEO and option.height is not None:
-            h = option.height
             # Prefer H.264 (avc1) + AAC because Telegram's mobile clients
             # decode through hardware codecs that only handle that pair
             # reliably. VP9/AV1 (common on YouTube 1080p60) would merge
@@ -178,16 +187,9 @@ class YouTubeProvider(BaseProvider):
             # only fall back when YouTube truly has no H.264 at that
             # height (rare: H.264 tops out at 1080p30 for newer videos,
             # so 1080p might land on vp9 and require transcoding).
-            fmt = (
-                f"bestvideo[height<={h}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]"
-                f"/bestvideo[height<={h}][vcodec^=avc1]+bestaudio[ext=m4a]"
-                f"/bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]"
-                f"/bestvideo[height<={h}]+bestaudio"
-                f"/best[height<={h}]"
-            )
             files = await self._ytdlp.download(
                 url,
-                format_spec=fmt,
+                format_spec=_format_spec_for_option(option),
                 target_dir=out_dir,
                 merge_output_format="mp4",
                 on_progress=on_progress,
@@ -316,3 +318,18 @@ def _estimate_audio_size(bitrate_kbps: int, duration_sec: float | None) -> int |
     if not duration_sec:
         return None
     return int(bitrate_kbps * 1000 / 8 * duration_sec)
+
+
+def _format_spec_for_option(option: DownloadOption) -> str:
+    if option.kind is MediaKind.AUDIO:
+        return "bestaudio/best"
+    if option.kind is MediaKind.VIDEO and option.height is not None:
+        h = option.height
+        return (
+            f"bestvideo[height<={h}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]"
+            f"/bestvideo[height<={h}][vcodec^=avc1]+bestaudio[ext=m4a]"
+            f"/bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]"
+            f"/bestvideo[height<={h}]+bestaudio"
+            f"/best[height<={h}]"
+        )
+    raise DownloadError(f"Unsupported YouTube option for format probe: {option.key}")

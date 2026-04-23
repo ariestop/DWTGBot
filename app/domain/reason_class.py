@@ -23,6 +23,7 @@ from app.exceptions import (
     FfmpegError,
     InvalidUrlError,
     JobCancelledError,
+    JobConcurrentUpdateError,
     MediaNotFoundError,
     MediaPrivateError,
     ProviderError,
@@ -87,7 +88,10 @@ _NETWORK_ERROR_TYPES: tuple[type[BaseException], ...] = (
 
 # Storage and "file too large" failures are operational bugs (cleanup
 # was too aggressive, capacity caps misaligned) — never the user's fault.
-_INTERNAL_ERROR_TYPES: tuple[type[BaseException], ...] = (StorageError,)
+_INTERNAL_ERROR_TYPES: tuple[type[BaseException], ...] = (
+    StorageError,
+    JobConcurrentUpdateError,
+)
 
 
 def classify_exception(exc: BaseException) -> ReasonClass:

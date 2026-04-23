@@ -129,7 +129,7 @@ All overridable from the compose / build CLI. **Do not** change
 ### `nginx`
 - Upstream `nginx:1.27-alpine`.
 - Templates: `media.conf.template` is rendered at start via nginx's
-  `envsubst` mechanism (`SERVER_NAME`).
+  `envsubst` mechanism (`SERVER_NAME`, `API_PORT`).
 - Mounts: nginx conf RO, snippets RO, storage RO, letsencrypt RO.
 - **Edge protections** (declared in `nginx.conf`, applied in
   `media.conf.template`):

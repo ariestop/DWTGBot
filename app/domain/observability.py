@@ -111,3 +111,11 @@ class TempLinkServeResult(str, Enum):
     GONE = "gone"  # 410 — file vanished (cleanup race)
     FORBIDDEN = "forbidden"  # 403 — ensure_within rejected the path
     ERROR = "error"  # 5xx — bug
+
+
+class ReplayIgnoreReason(str, Enum):
+    """Why a worker replay was ignored instead of re-processing the job."""
+
+    DONE = "done"
+    FAILED = "failed"
+    PROCESSING = "processing"

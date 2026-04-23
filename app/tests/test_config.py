@@ -80,6 +80,19 @@ def test_production_rejects_internal_test_token(monkeypatch: pytest.MonkeyPatch)
     assert any("INTERNAL_TEST_TOKEN" in e for e in errors)
 
 
+def test_orphan_age_must_exceed_job_timeout_margin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
+    monkeypatch.setenv("API_INTERNAL_TOKEN", "x")
+    monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "1800")
+    monkeypatch.setenv("ORPHAN_JOB_AGE_SECONDS", "2000")
+    get_settings.cache_clear()
+
+    errors = get_settings().validate_runtime(require_storage=False, require_tools=False)
+
+    assert any("ORPHAN_JOB_AGE_SECONDS" in e for e in errors)
+
+
 def test_max_concurrent_jobs_default() -> None:
     s = get_settings()
     assert s.MAX_CONCURRENT_JOBS_PER_USER == 2

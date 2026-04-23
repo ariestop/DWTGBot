@@ -22,6 +22,7 @@ from app.domain.observability import (
     FileSizeClass,
     HandlerOutcome,
     LatencyBucket,
+    ReplayIgnoreReason,
     TempLinkServeResult,
 )
 from app.domain.reason_class import ReasonClass
@@ -83,6 +84,12 @@ class JobMetrics(Protocol):
         """``worker_concurrency`` Gauge — set once at startup, used as
         the denominator in the B4 saturation query (§35 §4.3)."""
 
+    def inc_replay_ignored(self, *, reason: ReplayIgnoreReason) -> None:
+        """``job_replay_ignored_total{reason}`` (A18)."""
+
+    def inc_storage_orphan_dirs_removed(self, *, count: int) -> None:
+        """``storage_orphan_dirs_removed_total`` (A20)."""
+
     # ----- API-side ----------------------------------------------------
 
     def inc_temp_link_serve(self, *, result: TempLinkServeResult) -> None:
@@ -126,6 +133,12 @@ class NoopJobMetrics:
         return
 
     def set_worker_concurrency(self, *, concurrency: int) -> None:
+        return
+
+    def inc_replay_ignored(self, *, reason: ReplayIgnoreReason) -> None:
+        return
+
+    def inc_storage_orphan_dirs_removed(self, *, count: int) -> None:
         return
 
     def inc_temp_link_serve(self, *, result: TempLinkServeResult) -> None:
