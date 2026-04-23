@@ -296,7 +296,7 @@ run_stack_deploy() {
 
 on_autodeploy_error() {
   local line="$1"
-  local code=$?
+  local code="${2:-1}"
   trap - ERR
   set +e
   log_error "Автодеплой ${TARGET} завершился с ошибкой на строке ${line} (exit code ${code})"
@@ -328,7 +328,7 @@ log_context() {
 }
 
 main() {
-  trap 'on_autodeploy_error ${LINENO}' ERR
+  trap 'on_autodeploy_error ${LINENO} $?' ERR
 
   require_command curl
   require_command jq
