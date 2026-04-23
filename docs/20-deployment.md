@@ -603,7 +603,8 @@ $NL2 logs --tail=50 worker | jq -c 'select(.event | test("worker_started|worker_
 curl -fsS https://media.example.com/healthz   | jq
 
 # Internal API still reachable (from inside the network)
-docker exec dwtgbot_api curl -fsS http://localhost:8080/readyz | jq
+docker exec dwtgbot_api curl -fsS -H "X-Internal-Token: ${API_TOK}" \
+  http://localhost:8080/readyz | jq
 
 # TLS cert sanity
 echo | openssl s_client -connect media.example.com:443 -servername media.example.com 2>/dev/null \
@@ -639,10 +640,11 @@ echo | openssl s_client -connect media.example.com:443 -servername media.example
 | `MAX_FILE_SIZE_MB` | n/a | e.g. `2048` | provider sanity gate |
 | `PUBLIC_BASE_URL` | `https://media.example.com` | **same** | used to build temp link URLs |
 | `SERVER_NAME` | n/a | `media.example.com` | nginx server_name |
+| `API_PORT` | `8080` | `8080` | container-internal API listen port; NL-2 nginx upstream is rendered from this env var |
 | `TEMP_LINK_TTL_SECONDS` | `86400` | `86400` | |
 | `TEMP_LINK_MAX_DOWNLOADS` | `5` | `5` | |
 | `TEMP_LINK_TOKEN_BYTES` | `32` | `32` | |
-| `API_INTERNAL_TOKEN` | random | **same value** | mTLS-equivalent on internal API |
+| `API_INTERNAL_TOKEN` | random | **same value** | `X-Internal-Token` header for `/readyz` and `/internal/*` |
 | `WORKER_CONCURRENCY` | n/a | `2` | raise carefully (CPU + bandwidth) |
 | `JOB_TIMEOUT_SECONDS` | n/a | `1800` | arq hard ceiling |
 | `JOB_MAX_RETRIES` | n/a | `2` | retry cap |
@@ -845,6 +847,8 @@ docker exec dwtgbot_bot curl -fsS "https://api.telegram.org/bot${TOK}/getWebhook
 
 # Internal API (NL-1)
 docker exec dwtgbot_api curl -fsS http://localhost:8080/healthz | jq
+docker exec dwtgbot_api curl -fsS -H "X-Internal-Token: $(grep ^API_INTERNAL_TOKEN deploy/nl1/.env | cut -d= -f2)" \
+  http://localhost:8080/readyz | jq
 
 # Worker is alive and consuming
 $NL2 logs --tail=200 worker | jq -c 'select(.event | test("worker_started|worker_job_started"))' | head
@@ -1149,7 +1153,8 @@ $NL2 logs --tail=200 nginx
 
 # ── Health ────────────────────────────────────────────────
 curl -fsS https://media.example.com/healthz | jq
-docker exec dwtgbot_api      curl -fsS http://localhost:8080/readyz | jq
+docker exec dwtgbot_api      curl -fsS -H "X-Internal-Token: $(grep ^API_INTERNAL_TOKEN deploy/nl2/.env | cut -d= -f2)" \
+  http://localhost:8080/readyz | jq
 docker exec dwtgbot_postgres pg_isready -U dwtgbot -d dwtgbot
 docker exec dwtgbot_redis    redis-cli -a "$RPW" ping
 docker exec dwtgbot_redis    redis-cli -a "$RPW" ZCARD arq:queue

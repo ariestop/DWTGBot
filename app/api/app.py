@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from app.api.internal.health import router as health_router
 from app.api.internal.test_enqueue import router as test_enqueue_router
+from app.api.middleware.api_token import require_api_token
 from app.api.public.downloads import router as downloads_router
 from app.composition import build_api
 from app.config import Settings
@@ -43,6 +44,7 @@ def create_app(settings: Settings) -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.middleware("http")(require_api_token)
     app.include_router(health_router, tags=["health"])
     app.include_router(downloads_router, tags=["downloads"])
     # Always mount; the handler returns 404 unless INTERNAL_TEST_TOKEN is set.

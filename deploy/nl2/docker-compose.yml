@@ -53,8 +53,10 @@ services:
     healthcheck:
       # Audit fix A2: /readyz (not /healthz) so worker's
       # depends_on.condition=service_healthy reflects actual downstream
-      # reachability, not just process liveness.
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/readyz >/dev/null"]
+      # reachability, not just process liveness. A16 makes /readyz
+      # token-protected, so the loopback probe must send the shared
+      # internal API token from the container env.
+      test: ["CMD-SHELL", "curl -fsS -H \"X-Internal-Token: $$API_INTERNAL_TOKEN\" http://127.0.0.1:${API_PORT:-8080}/readyz >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -98,6 +100,7 @@ services:
         condition: service_healthy
     environment:
       SERVER_NAME: ${SERVER_NAME}
+      API_PORT: ${API_PORT:-8080}
     ports:
       - "80:80"
       - "443:443"

@@ -92,6 +92,13 @@ class FileTooLargeError(DownloadError):
     is_retryable = False  # the file size is fixed; a retry cannot shrink it.
 
 
+class SizeUnknownError(DownloadError):
+    """Raised when we cannot determine a video's size before download."""
+
+    user_message = "Не удалось заранее определить размер файла. Попробуйте другую ссылку."
+    is_retryable = False
+
+
 class FfmpegError(DownloadError):
     """ffmpeg failures are usually about the source file, not transient
     state — re-encoding the same input would fail the same way."""
@@ -105,6 +112,13 @@ class FfmpegError(DownloadError):
 
 class StorageError(AppError):
     user_message = "Ошибка хранилища."
+
+
+class JobConcurrentUpdateError(AppError):
+    """Optimistic-lock conflict while persisting a job row."""
+
+    user_message = "Задача обновлялась параллельно. Попробуйте ещё раз."
+    is_retryable = True
 
 
 class TempLinkExpiredError(AppError):

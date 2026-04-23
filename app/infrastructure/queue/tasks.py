@@ -9,6 +9,7 @@ from app.application.use_cases.process_download import (
     ProcessDownloadInput,
     ProcessDownloadUseCase,
 )
+from app.domain.repositories.jobs_repo import JobsRepository
 from app.logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -33,10 +34,21 @@ async def process_download_job(ctx: dict[str, Any], job_id: int, correlation_id:
     """
     use_case: ProcessDownloadUseCase = ctx["use_case"]
     metrics: JobMetrics = ctx.get("job_metrics") or NoopJobMetrics()
+    jobs_repo: JobsRepository | None = ctx.get("jobs_repo")
     metrics.inc_worker_active()
     try:
         await use_case.execute(ProcessDownloadInput(job_id=job_id, correlation_id=correlation_id))
     except Exception as exc:
+        if jobs_repo is not None:
+            try:
+                retries_count = await jobs_repo.increment_retries(job_id)
+                _logger.info(
+                    "job_retry_count_incremented",
+                    job_id=job_id,
+                    retries_count=retries_count,
+                )
+            except Exception:  # pragma: no cover - best-effort
+                _logger.exception("job_retry_count_increment_failed", job_id=job_id)
         # arq populates ``job_try`` (1-indexed) and (optionally)
         # ``max_tries`` per call. We default to 1/1 when the keys are
         # absent so a misconfigured pool fails closed (mark FAILED on

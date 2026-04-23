@@ -154,8 +154,10 @@ services:
       # Audit fix A2: /readyz checks downstream deps (Postgres, Redis,
       # storage). /healthz (liveness) used to report "healthy" even when
       # Postgres was unreachable, causing dependent containers to start
-      # with false-green depends_on.condition=service_healthy.
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${API_PORT:-8080}/readyz >/dev/null"]
+      # with false-green depends_on.condition=service_healthy. A16 adds
+      # X-Internal-Token on /readyz, so the healthcheck must present it
+      # from the container env.
+      test: ["CMD-SHELL", "curl -fsS -H \"X-Internal-Token: $$API_INTERNAL_TOKEN\" http://127.0.0.1:${API_PORT:-8080}/readyz >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 3

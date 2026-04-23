@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = Field(10, ge=0, le=200)
     DB_POOL_TIMEOUT_S: float = Field(30.0, ge=0.5, le=300.0)
     DB_POOL_RECYCLE_S: int = Field(1800, ge=60)
+    DB_STATEMENT_TIMEOUT_S: int = Field(30, ge=1, le=300)
+    DB_CONNECT_TIMEOUT_S: int = Field(10, ge=1, le=120)
+    DB_IDLE_IN_TX_TIMEOUT_MS: int = Field(60_000, ge=1000, le=3_600_000)
 
     # --- Redis ---
     REDIS_HOST: str = "redis"
@@ -424,6 +427,15 @@ class Settings(BaseSettings):
             errors.append(
                 "INTERNAL_TEST_TOKEN must be empty in production "
                 "(it gates a dev-only test-enqueue endpoint)"
+            )
+
+        min_orphan_age = self.JOB_TIMEOUT_SECONDS * 1.5
+        if min_orphan_age > self.ORPHAN_JOB_AGE_SECONDS:
+            errors.append(
+                "ORPHAN_JOB_AGE_SECONDS "
+                f"({self.ORPHAN_JOB_AGE_SECONDS}) must be >= "
+                f"JOB_TIMEOUT_SECONDS * 1.5 ({min_orphan_age:.0f}) "
+                "to avoid reaping live jobs."
             )
 
         errors.extend(self._validate_rate_limit_runtime())

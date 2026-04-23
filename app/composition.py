@@ -115,6 +115,7 @@ class BotComposition:
 @dataclass(slots=True)
 class WorkerComposition:
     core: CoreInfra
+    jobs_repo: SqlAlchemyJobsRepository
     use_case: ProcessDownloadUseCase
     sender: TelegramSender
     storage: LocalStorage
@@ -150,13 +151,12 @@ class CleanupComposition:
     """Minimal infra bundle for the cleanup worker (L13 audit fix).
 
     Historically ``cleanup_worker`` reused ``build_api`` to get
-    ``temp_links_repo`` + ``storage``. That pulled the /metrics HTTP
-    server into the cleanup process, risking port collisions when
-    api + cleanup co-located on a single node and inflating the
-    surface area of a process whose only job is a background loop.
+    ``temp_links_repo`` + ``storage`` plus dev-only API shims. The
+    cleanup worker now owns only the pieces it actually touches, plus
+    its own optional metrics sink/server for background-loop telemetry.
 
-    This bundle carries *only* what a cleanup cycle touches — no
-    /metrics server, no arq pool, no dev-only enqueue shim.
+    This bundle carries only what a cleanup cycle touches — no arq
+    pool, no dev-only enqueue shim.
     """
 
     core: CoreInfra
@@ -164,8 +164,14 @@ class CleanupComposition:
     storage: LocalStorage
     media_cache_repo: SqlAlchemyMediaCacheRepository
     jobs_repo: SqlAlchemyJobsRepository
+    job_metrics: JobMetrics
+    metrics_server: object | None = None
 
     async def aclose(self) -> None:
+        if self.metrics_server is not None:
+            stop = getattr(self.metrics_server, "stop", None)
+            if stop is not None:
+                await stop()
         await self.core.redis.aclose()  # type: ignore[attr-defined]
         await self.core.engine.dispose()
 
@@ -465,6 +471,7 @@ def build_worker(settings: Settings) -> WorkerComposition:
     )
     return WorkerComposition(
         core=core,
+        jobs_repo=jobs_repo,
         use_case=use_case,
         sender=sender,
         storage=storage,
@@ -477,9 +484,9 @@ def build_worker(settings: Settings) -> WorkerComposition:
 async def build_cleanup(settings: Settings) -> CleanupComposition:
     """Build the cleanup-worker composition (L13 audit fix).
 
-    Unlike ``build_api`` this does NOT wire a /metrics server or an
-    arq pool — both were incidental and caused port clashes when a
-    host ran api + cleanup side-by-side.
+    Unlike ``build_api`` this does NOT wire an arq pool or any dev-only
+    API helpers. It does get its own metrics sink/server so background
+    cleanup work can surface counters independently.
     """
     core = _build_core(settings)
     storage = LocalStorage(settings)
@@ -487,12 +494,15 @@ async def build_cleanup(settings: Settings) -> CleanupComposition:
     temp_links_repo = SqlAlchemyTempLinksRepository(core.sessionmaker)
     media_cache_repo = SqlAlchemyMediaCacheRepository(core.sessionmaker)
     jobs_repo = SqlAlchemyJobsRepository(core.sessionmaker)
+    _, job_metrics, metrics_server = _build_metrics(settings)
     return CleanupComposition(
         core=core,
         temp_links_repo=temp_links_repo,
         storage=storage,
         media_cache_repo=media_cache_repo,
         jobs_repo=jobs_repo,
+        job_metrics=job_metrics,
+        metrics_server=metrics_server,
     )
 
 

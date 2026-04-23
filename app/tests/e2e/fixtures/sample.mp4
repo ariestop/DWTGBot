@@ -1,0 +1,3 @@
+This fixture is treated as opaque bytes by the hermetic e2e harness.
+The fake Telegram sender never decodes the container, so the file only
+needs to exist on disk under a stable `.mp4` name.

@@ -87,8 +87,9 @@ class _FakeJobsRepo:
     async def get(self, job_id: int) -> DownloadJob | None:
         return self._job if self._job.id == job_id else None
 
-    async def update(self, job: DownloadJob) -> None:
+    async def update(self, job: DownloadJob) -> DownloadJob:
         self.updates.append(job)
+        return job
 
 
 class _FakeProvider:
@@ -99,6 +100,7 @@ class _FakeProvider:
         self._option = option
         self._result = result
         self.received_on_progress: Callable[[float], None] | None = None
+        self.probed_sizes: list[int | None] = [50 * 1024 * 1024]
 
     async def get_info(self, url: str) -> MediaInfo:
         del url
@@ -111,6 +113,16 @@ class _FakeProvider:
     def default_option(self, info: MediaInfo) -> DownloadOption:
         del info
         return self._option
+
+    async def probe_size(
+        self,
+        url: str,
+        *,
+        info: MediaInfo,
+        option: DownloadOption,
+    ) -> int | None:
+        del url, info, option
+        return self.probed_sizes.pop(0) if self.probed_sizes else None
 
     async def download(
         self,

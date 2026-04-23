@@ -16,21 +16,22 @@ seconds. Anything that needs real external systems is opt-in via the
 
 ```mermaid
 flowchart TB
-    e2e[E2E — manual + smoke after deploy]
-    int[Integration — opt-in 'integration' marker]
-    unit[Unit tests — default in CI]
+    e2e[Live E2E — manual smoke after deploy]
+    int[Integration — real Postgres/Redis, CI + opt-in local]
+    unit[Unit tests — includes hermetic e2e fixtures]
     unit:::wide --- int --- e2e
 ```
 
 | Layer | Volume | Touches real infra | Runs in CI |
 |---|---|---|---|
 | Unit | the majority | no | yes (`pytest -m "not integration"`) |
-| Integration | a few critical paths | yes (DB / Redis / yt-dlp / Telegram) | optional, manual |
-| End-to-end | smoke checks post-deploy | yes (live) | manual / blackbox in production |
+| Integration | a few critical paths | yes (DB / Redis) | yes (`pytest -m "integration" --no-cov`) |
+| End-to-end | live smoke checks post-deploy | yes (live Telegram / public edge) | manual / blackbox in production |
 
 We don't ship a stricter ratio. The rules are: cover business logic with
-units; reserve integration for dependency-tested boundaries; keep E2E
-manual.
+units; reserve integration for dependency-tested boundaries; keep live
+E2E manual. A small hermetic e2e fixture suite under `app/tests/e2e/`
+is still part of the unit layer because it uses only fakes.
 
 ---
 
@@ -39,6 +40,8 @@ manual.
 ```
 app/tests/
 ├── conftest.py                      # shared fixtures
+├── e2e/test_full_download_flow.py   # hermetic end-to-end with fakes
+├── integration/                     # opt-in real infra suites
 ├── test_callback_codec.py
 ├── test_config.py
 ├── test_enqueue_use_case.py
@@ -211,12 +214,21 @@ We deliberately don't have:
 
 ## 7. Coverage
 
-We don't enforce a coverage threshold in CI. Reasons:
-- Coverage is easy to game and easy to misinterpret.
-- The pyramid + the dependency rules already prevent the worst gaps.
+Coverage is enforced in the default pytest invocation:
 
-Use `pytest --cov=app --cov-report=term-missing` locally when you want a
-gut check. Pay attention to:
+```bash
+pytest -m "not integration"
+```
+
+`pyproject.toml` wires `--cov=app --cov-report=term --cov-report=xml
+--cov-fail-under=70` through `addopts`, so every unit-suite run uses the
+same bar as CI. Integration-only runs must opt out explicitly:
+
+```bash
+pytest -m "integration" --no-cov
+```
+
+The threshold is a regression guard, not a design target. Pay attention to:
 - **Use cases** — should be heavily covered.
 - **Providers** — `build_options` logic in particular.
 - **`utils/`** — pure, easy to cover, no excuse for low coverage.
@@ -237,10 +249,13 @@ Source: `.github/workflows/ci.yml`.
 |---|---|---|---|
 | `lint` | `ruff format --check`, `ruff check` | format + lint | 10 min |
 | `typecheck` | `mypy app` | type checks | 10 min |
-| `tests` | `pytest -m "not integration"` (with `ffmpeg` installed) | unit | 15 min |
+| `tests` | `pytest -m "not integration"` (with `ffmpeg`, coverage gate 70%) | unit + hermetic e2e | 15 min |
+| `integration-tests` | `alembic upgrade head`, `pytest -m "integration" --no-cov` | real Postgres + Redis | 10 min |
 | `shell-lint` | `shellcheck` on `deploy/scripts/` | shell hygiene | 5 min |
+| `trivy` | Trivy filesystem scan | vulnerable deps / files | 10 min |
+| `gitleaks` | Gitleaks detect | committed secrets | 10 min |
 
-All four must pass to merge. We use GitHub Actions's `concurrency`
+These jobs must pass to merge. We use GitHub Actions's `concurrency`
 group to cancel superseded runs on the same ref.
 
 ---
@@ -254,13 +269,14 @@ source .venv/bin/activate
 pip install -r requirements/base.txt -r requirements/dev.txt
 
 # fast loop
-pytest -m "not integration" -x
+pytest -m "not integration" --no-cov -x
 
 # before pushing
 ruff format .
 ruff check .
 mypy app
 pytest -m "not integration"
+pytest -m "integration" --no-cov
 ```
 
 Pre-commit hooks (`.pre-commit-config.yaml`) cover ruff + mypy + a few

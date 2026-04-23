@@ -28,6 +28,19 @@ _INSTAGRAM_HOSTS = {
     "m.instagram.com",
 }
 
+_YTDLP_ALLOWED_HOST_SUFFIXES = frozenset(
+    {
+        "youtube.com",
+        "youtu.be",
+        "googlevideo.com",
+        "ytimg.com",
+        "ggpht.com",
+        "instagram.com",
+        "cdninstagram.com",
+        "fbcdn.net",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class DetectedUrl:
@@ -87,6 +100,29 @@ def normalize_domain(url: str) -> str | None:
     # Strip a single leading "www." for unknown hosts; do NOT attempt full
     # PSL parsing — the limiter is best-effort for unknown providers.
     return host[4:] if host.startswith("www.") else host
+
+
+def is_allowed_host(url: str) -> bool:
+    """Return ``True`` iff ``url`` resolves to a supported provider/CDN host.
+
+    Used by yt-dlp SSRF guards: once the extractor starts following redirects,
+    the host can legitimately shift from the user-facing domain to a provider
+    CDN (for example ``*.googlevideo.com`` or ``*.cdninstagram.com``). We
+    therefore allow a curated suffix list rather than the narrower intake-side
+    platform detector.
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host:
+        return False
+    return any(
+        host == suffix or host.endswith("." + suffix) for suffix in _YTDLP_ALLOWED_HOST_SUFFIXES
+    )
 
 
 def detect(url_or_text: str) -> DetectedUrl:
