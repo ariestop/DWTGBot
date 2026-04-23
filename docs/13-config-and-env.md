@@ -338,6 +338,11 @@ flowchart LR
   private IP, not the docker service name).
 - The interactive installer (`deploy/scripts/install.sh`) writes these
   env files for you — see [`20-deployment.md`](20-deployment.md).
+- Host-side autodeploy uses a **separate** file,
+  `/etc/dwtgbot/autodeploy.env`, created by
+  `deploy/scripts/install_autodeploy.sh`. It is deploy-orchestration
+  config, not application runtime config, so it does **not** belong in
+  `app/config.py` or in the compose `env_file:`.
 
 ---
 

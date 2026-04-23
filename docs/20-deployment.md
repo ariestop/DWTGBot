@@ -812,6 +812,44 @@ Idempotent and safe to re-run.
 
 > Equivalent: installer option **16) Deploy update**.
 
+### 8.7 Host-side autodeploy service
+
+Если нужен автодеплой по опросу GitHub прямо с серверов, установите
+systemd timer на **каждый** хост:
+
+```bash
+# On NL-1
+sudo bash deploy/scripts/install_autodeploy.sh nl1
+
+# On NL-2
+sudo bash deploy/scripts/install_autodeploy.sh nl2
+```
+
+Что делает установщик:
+
+1. Copies `deploy/systemd/dwtgbot-autodeploy.{service,timer}` into `/etc/systemd/system/`.
+2. Creates `/etc/dwtgbot/autodeploy.env` from `deploy/systemd/autodeploy.env.example` if it does not exist.
+3. Reloads systemd and optionally enables `dwtgbot-autodeploy.timer`.
+
+Что нужно сделать перед первым запуском:
+
+```bash
+sudo editor /etc/dwtgbot/autodeploy.env
+sudo systemctl enable --now dwtgbot-autodeploy.timer
+sudo systemctl start dwtgbot-autodeploy.service
+journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
+```
+
+Правила работы:
+
+- NL-1 и NL-2 запускают **свои собственные** timer и service.
+- Оба хоста смотрят на один и тот же SHA головы ветки в GitHub.
+- NL-1 деплоит только после зелёных `ci.yml` и `build-images.yml`.
+- NL-2 ждёт тот же зелёный SHA **и** успешный GitHub deployment status
+  от NL-1 (`nl1-autodeploy`), так что миграции всё ещё выигрывают гонку.
+- Сам rollout по-прежнему выполняется через `deploy_update.sh`, то есть
+  базовый механизм раскатки на хосте не меняется.
+
 ---
 
 ## §9 — Health verification (after every deploy)

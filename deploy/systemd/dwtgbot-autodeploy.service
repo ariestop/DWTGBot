@@ -1,0 +1,13 @@
+[Unit]
+Description=DWTGBot автодеплой на хосте
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+ConditionPathExists=/etc/dwtgbot/autodeploy.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/dwtgbot/autodeploy.env
+ExecStart=/bin/bash -lc 'exec "${REPO_PATH}/deploy/scripts/auto_deploy.sh"'
+StandardOutput=journal
+StandardError=journal

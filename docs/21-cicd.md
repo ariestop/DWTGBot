@@ -39,6 +39,10 @@ flowchart LR
 
   DEP -- SSH --> NL1[NL-1: deploy_update.sh nl1]
   DEP -- SSH (after NL-1) --> NL2[NL-2: deploy_update.sh nl2]
+  T1[NL-1 timer] --> AD1[NL-1: auto_deploy.sh]
+  T2[NL-2 timer] --> AD2[NL-2: auto_deploy.sh]
+  AD1 --> NL1
+  AD2 --> NL2
 
   NL1 -- docker compose pull --> GHCR
   NL2 -- docker compose pull --> GHCR
@@ -50,17 +54,18 @@ flowchart LR
   NL2 --> NG[nginx]
 ```
 
-Three independent workflows, each with one responsibility:
+Три GitHub workflow плюс дополнительный host-side автодеплой:
 
 | Stage | Workflow | Trigger | Output |
 |---|---|---|---|
 | Verify | `ci.yml` | every push + PR | green / red status checks |
 | Publish | `build-images.yml` | push to `main` + `v*.*.*` tag + manual | tagged images in GHCR |
-| Roll out | `deploy.yml` | manual (`workflow_dispatch`) | running new images on NL-1, then NL-2 |
+| Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | running new images on NL-1, then NL-2 |
+| Roll out (automatic) | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
 
-There is **no auto-deploy**. Every deploy is initiated by a human
-selecting a target (`nl1` / `nl2` / `both`) and a git ref. This
-is a deliberate guardrail — see §9.
+Ручной `deploy.yml` остаётся штатным операторским путём. Автодеплой -
+это **дополнительный host-side механизм**, который можно установить на
+NL-1 и NL-2, если нужен rollout по таймеру без ручного `workflow_dispatch`.
 
 ---
 
@@ -71,6 +76,7 @@ is a deliberate guardrail — see §9.
 | `.github/workflows/ci.yml` | `push`, `pull_request` to `main`/`develop` | `ci-${{ github.ref }}`, `cancel-in-progress: true` | `contents: read` | Lint, type-check, unit + integration tests, scanners, shellcheck |
 | `.github/workflows/build-images.yml` | `push` to `main`, tags `v*.*.*`, `workflow_dispatch` | (none — concurrent OK) | `contents: read`, `packages: write` | Build & push 4 images to GHCR |
 | `.github/workflows/deploy.yml` | `workflow_dispatch` (target + ref) | `deploy-${{ inputs.target }}`, `cancel-in-progress: false` | `contents: read` | SSH into NL-1 then NL-2, run `deploy_update.sh` |
+| `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | systemd timer on each host | `flock` lock per target (`nl1` / `nl2`) | GitHub token on host (`Actions: read`, `Contents: read`, `Deployments: read/write`) | Wait for green `ci.yml` + `build-images.yml`, then run host-side deploy |
 
 **Concurrency contract:**
 - CI cancels stale runs on the same branch (PR rebase friendly).
@@ -354,7 +360,7 @@ concurrency:
 
 ## §6 — `deploy_update.sh` contract (what actually runs on the host)
 
-`deploy.yml` only ferries the trigger and invokes one command per host. The actual work lives in `deploy/scripts/deploy_update.sh <stack>`. It is the **single canonical operator action** for a release — used identically by CI and by humans (manual fallback, §13).
+`deploy.yml` only ferries the trigger and invokes one command per host. The actual work lives in `deploy/scripts/deploy_update.sh <stack>`. It is the **single canonical operator action** for a release — used identically by CI, by humans, and by the host-side `auto_deploy.sh`.
 
 ### 6.1 Steps performed
 
@@ -384,6 +390,12 @@ flowchart LR
 | 7 | `bash deploy/scripts/healthcheck.sh` | yes | exit 1 if any probe fails |
 
 Total time on a small change: 30–90 s on NL-1, 60–180 s on NL-2.
+
+`auto_deploy.sh` sets `AUTODEPLOY_SKIP_GIT_PULL=1` before calling
+`deploy_update.sh`: the auto-deployer itself already did `git fetch`
+and pinned the checkout to the exact target SHA, so the extra
+best-effort `git pull` is intentionally skipped to avoid noisy warnings
+on detached HEAD.
 
 ### 6.2 What it never does
 
@@ -434,7 +446,25 @@ All secrets live in **GitHub → Settings → Secrets and variables**. Use **Env
 | `SENTRY_AUTH_TOKEN` | release marker upload |
 | `OFFSITE_BACKUP_*` | scripted restore drills |
 
-### 7.4 Rotation procedure
+### 7.4 Host-side autodeploy token
+
+При использовании `deploy/systemd/dwtgbot-autodeploy.timer` каждому
+хосту нужен `/etc/dwtgbot/autodeploy.env` с **локальным** GitHub token:
+
+| Variable | Scope | Why |
+|---|---|---|
+| `GITHUB_TOKEN` | host-local only | query `ci.yml` / `build-images.yml` runs and create/read deployment statuses |
+
+Права, которые нужны этому token:
+
+- `Actions: read`
+- `Contents: read`
+- `Deployments: read/write`
+
+Этот token нельзя класть в `deploy/nl1/.env`, `deploy/nl2/.env` или CI
+secrets: его использует напрямую host-side systemd service.
+
+### 7.5 Rotation procedure
 
 1. Generate the new value (`openssl rand …` or `ssh-keygen -t ed25519 -f new_key`).
 2. Update the secret in **GitHub → Environment** (NL-1 or NL-2 scope).
@@ -445,7 +475,7 @@ All secrets live in **GitHub → Settings → Secrets and variables**. Use **Env
 
 For host-local secrets (`BOT_TOKEN`, `POSTGRES_PASSWORD`, etc.) see `20-deployment.md` §7.3 — pipeline isn't involved.
 
-### 7.5 Logging discipline
+### 7.6 Logging discipline
 
 | Rule | Why |
 |---|---|

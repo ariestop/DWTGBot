@@ -127,6 +127,12 @@ opt_deploy_update() {
   bash "${SCRIPT_DIR}/deploy_update.sh" "${target}"
 }
 
+opt_install_autodeploy() {
+  local target
+  prompt_value target "Стек для автодеплоя (nl1/nl2)" "nl1"
+  sudo bash "${SCRIPT_DIR}/install_autodeploy.sh" "${target}"
+}
+
 # Auto-pick whichever stack has an .env on this host. If both exist, ask.
 auto_compose() {
   local has1=0 has2=0
@@ -161,7 +167,8 @@ MENU_ITEMS=(
   "14" "Restore database (NL-1)"
   "15" "Cleanup old files (NL-2)"
   "16" "Deploy update"
-  "17" "Exit"
+  "17" "Установить сервис автодеплоя"
+  "18" "Выход"
 )
 
 run_action() {
@@ -182,7 +189,8 @@ run_action() {
     14) opt_restore ;;
     15) opt_cleanup ;;
     16) opt_deploy_update ;;
-    17) exit 0 ;;
+    17) opt_install_autodeploy ;;
+    18) exit 0 ;;
     *)  log_warn "Unknown choice: $1" ;;
   esac
 }

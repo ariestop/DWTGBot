@@ -1376,6 +1376,10 @@ done
 # Last 100 lines from the deploy script (CI log) — quoted for context
 git log --oneline -5
 git status
+
+# Если включён host-side автодеплой:
+systemctl status dwtgbot-autodeploy.timer --no-pager
+journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
 ```
 
 ### 16.4 Step-by-step fix
@@ -1398,6 +1402,12 @@ git status
    - `deploy_update.sh` again.
 6. **Pull error** → manual `docker pull <image>` to surface the
    error; fix network / credentials; redeploy.
+7. **Сбой host-side автодеплоя** → проверьте
+   `/etc/dwtgbot/autodeploy.env`, затем вручную запустите один цикл:
+   ```bash
+   systemctl start dwtgbot-autodeploy.service
+   journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
+   ```
 
 > **Rule**: never edit live containers to "patch" a bad deploy.
 > Roll back image tags in `.env` and redeploy.
@@ -2023,6 +2033,13 @@ bash deploy/scripts/restore.sh /var/backups/dwtgbot/<file>.sql.gz
 ```bash
 ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
 ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl2
+
+# Host-side автодеплой
+systemctl status dwtgbot-autodeploy.timer --no-pager
+systemctl start dwtgbot-autodeploy.service
+journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
+systemctl disable --now dwtgbot-autodeploy.timer   # temporary stop
+systemctl enable --now dwtgbot-autodeploy.timer    # resume
 
 # Inspect actually-deployed image
 for c in dwtgbot_bot dwtgbot_api dwtgbot_worker dwtgbot_nginx; do

@@ -32,6 +32,10 @@ run_compose() {
 }
 
 git_pull_if_possible() {
+  if [[ "${AUTODEPLOY_SKIP_GIT_PULL:-0}" == "1" ]]; then
+    log_info "AUTODEPLOY_SKIP_GIT_PULL=1, пропускаю git pull"
+    return
+  fi
   if [[ -d "${PROJECT_ROOT}/.git" ]]; then
     log_step "git pull"
     git -C "${PROJECT_ROOT}" pull --ff-only || log_warn "git pull failed (continuing)"
