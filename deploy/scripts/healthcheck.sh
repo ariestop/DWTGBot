@@ -51,10 +51,16 @@ _nl2_curl_healthz() {
 }
 
 _nl2_curl_readyz() {
+  # Audit fix A30: ``/readyz`` is guarded by X-Internal-Token (A16).
+  # Exec via ``sh -c`` inside the api container and read the token from
+  # that container's env — keeps the secret out of the host process
+  # list and of the operator's shell history.
   local port="${1:-8080}"
   local _
   for _ in {1..45}; do
-    if docker exec dwtgbot_api curl -fsS "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then
+    if docker exec dwtgbot_api sh -c \
+        "curl -fsS -H \"X-Internal-Token: \$API_INTERNAL_TOKEN\" http://127.0.0.1:${port}/readyz" \
+        >/dev/null 2>&1; then
       return 0
     fi
     sleep 1

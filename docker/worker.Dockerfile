@@ -43,7 +43,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" APP_HOME=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg tini ca-certificates curl \
+        ffmpeg tini ca-certificates curl procps \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid ${APP_GID} ${APP_USER} \
     && useradd  --system --uid ${APP_UID} --gid ${APP_GID} \

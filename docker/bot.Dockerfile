@@ -47,7 +47,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_HOME=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        tini ca-certificates curl \
+        tini ca-certificates curl procps \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid ${APP_GID} ${APP_USER} \
     && useradd  --system --uid ${APP_UID} --gid ${APP_GID} \
