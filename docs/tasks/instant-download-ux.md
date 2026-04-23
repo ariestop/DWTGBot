@@ -1,9 +1,11 @@
 # TASK: Мгновенное скачивание + live-прогресс + описание поста
 
-Status: **READY FOR IMPLEMENTATION** (architectural blockers closed)
+Status: **RELEASED** — все 6 PR'ов замёржены в `main` и выкачены в прод.
 Owner: TBD
 ADR: [`docs/adr/0010-instant-download-ux.md`](../adr/0010-instant-download-ux.md) — **must read first**
 Related code anchors cited below as `startLine:endLine:filepath`.
+
+Post-release carve-out: YouTube per-platform opt-out — `INSTANT_DOWNLOAD_ENABLED=true` включает instant-путь для Instagram/TikTok, но для YT сохраняется legacy picker (пользователь сам выбирает разрешение), см. `c626019`. Глобальный kill-switch `INSTANT_DOWNLOAD_ENABLED=false` всё ещё возвращает всех провайдеров на picker.
 
 Architectural review has flagged this task as safe to split into 6
 independent PRs. The plan below is the result of that review; anything
@@ -453,18 +455,18 @@ post_text_callbacks_total{result}               counter
 Последовательность важна — каждый PR независимо мёржится, но последующие
 опираются на предыдущие. Не смешивать.
 
-1. **PR 1 — foundation (domain + application ports).**
+1. **PR 1 — foundation (domain + application ports).** ✅ merged as `d697f66`.
    `ProgressStage` enum, `MediaInfo.description`, `ProgressReporter`
    Protocol, `NoopProgressReporter`. Wiring `NoopProgressReporter` в
    обе композиции, чтобы сборка не падала. Никаких видимых изменений
    UX. **Безопасно мёржить в любое время.**
 
-2. **PR 2 — providers.**
+2. **PR 2 — providers.** ✅ merged as `3af187f`.
    `BaseProvider.default_option()` abstract, реализации в YT/IG,
    заполнение `MediaInfo.description` в обоих. Тесты провайдеров.
    **Не меняет UX, не требует деплоя.**
 
-3. **PR 3 — Redis reporter + worker hooks.**
+3. **PR 3 — Redis reporter + worker hooks.** ✅ merged as `74068b1`.
    `RedisProgressReporter`, `progress_meta:*` / `progress:*` ключи,
    `progress_hooks` в yt-dlp runner'е, публикация прогресса на
    границах фаз в `ProcessDownloadUseCase`. Wiring в
@@ -472,21 +474,21 @@ post_text_callbacks_total{result}               counter
    Redis, никто не смотрит. **Безопасно мёржить; можно проверить
    `redis-cli KEYS progress:*` на NL-1.**
 
-4. **PR 4 — bot progress updater.**
+4. **PR 4 — bot progress updater.** ✅ merged as `5914b2b`.
    `app/bot/services/progress_updater.py`, lifecycle через
    `BotComposition`, `progress_meta:*` recovery на старте,
    debounce / rate-limit / watchdog. Пока не триггерится, потому что
    `handle_link` ещё не создаёт `progress_meta:*`. **Требует
    `/readyz`-изменения.**
 
-5. **PR 5 — auto-enqueue + flag.**
+5. **PR 5 — auto-enqueue + flag.** ✅ merged as `2ba18a4`.
    `AutoEnqueueDownloadUseCase`, изменения в `handle_link` за флагом
    `INSTANT_DOWNLOAD_ENABLED`, новая cancel-кнопка и её callback.
    Добавление `BRAND_FOOTER` в `_caption`. Убрать `id задачи: N`
    из картины. **Это видимый для пользователя релиз — требует
    canary + rollback-готовности.**
 
-6. **PR 6 — post text button.**
+6. **PR 6 — post text button.** ✅ merged as `4433cdb`.
    `post_text|<job_id>` callback + handler, рендеринг кнопки в
    `DeliveryService.deliver`, chunking, HTML-escape, alert на TTL
    expiry. **Последний штрих, можно мёржить после стабилизации PR 5.**
