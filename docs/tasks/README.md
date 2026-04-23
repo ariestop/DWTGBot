@@ -32,7 +32,7 @@
 
 **Файл:** [`audit-fixes-2026-04.md`](audit-fixes-2026-04.md)
 **Источник:** аудит от 2026-04-20 (Staff Architect + Sr. Backend + DevOps + SRE + Security + QA).
-**Статус:** A16–A29 реализованы локально; следующий шаг — merge + release после зелёных CI/deploy gate.
+**Статус:** A16–A29 замёржены в `main` и развёрнуты на NL-1/NL-2. Post-rollout hotfix: **A30 healthchecks** (worker/cleanup `pgrep`-free probes + `/readyz` token в `healthcheck.sh`) — сливается отдельным PR без rebuild'а требований.
 **Бизнес-цель:** закрыть TOP-10 критических проблем, без которых публичный запуск небезопасен.
 
 | Sprint | Скоуп | Оценка |

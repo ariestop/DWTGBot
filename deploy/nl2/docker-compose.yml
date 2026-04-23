@@ -74,11 +74,22 @@ services:
     volumes:
       - storage:/var/lib/dwtgbot/storage
       - storage_tmp:/var/lib/dwtgbot/tmp
+    # Audit fix A30: use a Python-only liveness probe via /proc so the
+    # healthcheck does not depend on ``pgrep`` being present in the
+    # image (``procps`` is installed in docker/worker.Dockerfile, but
+    # keeping the probe self-contained lets the same compose file work
+    # against older image tags too — crucial for emergency rollbacks).
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'arq|app.main_worker' >/dev/null"]
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import sys;from pathlib import Path;
+          alive=lambda n:any(n in p.read_text(encoding='utf-8',errors='ignore').replace('\x00',' ') for p in Path('/proc').glob('[0-9]*/cmdline'));
+          sys.exit(0 if alive('app.main_worker') or alive('arq ') else 1)"
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
+      start_period: 20s
 
   cleanup:
     image: ${IMAGE_WORKER:?IMAGE_WORKER must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-worker:sha-abc1234)}
@@ -90,6 +101,21 @@ services:
       - storage:/var/lib/dwtgbot/storage
       - storage_tmp:/var/lib/dwtgbot/tmp
     command: ["python", "-m", "app.workers.cleanup_worker"]
+    # Audit fix A30: cleanup reuses the worker image so it inherits the
+    # worker's baked HEALTHCHECK (``pgrep -f 'app.main_worker|arq '``),
+    # which never matches the cleanup process name and flaps the
+    # container ``unhealthy``. Give it an explicit probe that looks for
+    # the actual cleanup entrypoint via /proc, matching the worker probe.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import sys;from pathlib import Path;
+          sys.exit(0 if any('app.workers.cleanup_worker' in p.read_text(encoding='utf-8',errors='ignore').replace('\x00',' ') for p in Path('/proc').glob('[0-9]*/cmdline')) else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   nginx:
     image: nginx:1.27-alpine
