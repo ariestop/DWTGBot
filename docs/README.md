@@ -97,6 +97,7 @@ page; everything technical lives here.
 | Add tests | `18`, `27` |
 | Tweak CI | `21` |
 | Roll out a deploy | `20`, `21` |
+| Install / verify host-side autodeploy | `20`, `21`, `24`, `25` |
 | Handle a "delete my data" / GDPR request | `34`, `17` |
 | Define / change an SLO target | `35`, `adr/` |
 | Tune the bot's rate limits | `36`, `13` |

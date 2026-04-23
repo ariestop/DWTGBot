@@ -83,6 +83,11 @@ NL-1 и NL-2, если нужен rollout по таймеру без ручно�
 - Builds may overlap (different shas → different tags).
 - Deploys are **never cancelled** mid-flight (`cancel-in-progress: false`) — ordering matters more than queue length. A second `deploy.yml` run for the same target queues until the first finishes.
 
+For the canonical install / run / verify order of host-side autodeploy,
+see [`20-deployment.md`](20-deployment.md). This document explains the
+pipeline roles and credentials; `20-deployment.md` is the operational
+playbook agents should follow on hosts.
+
 ---
 
 ## §3 — `ci.yml` (lint / test / scanners)

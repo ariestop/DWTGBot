@@ -850,6 +850,54 @@ journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
 - Сам rollout по-прежнему выполняется через `deploy_update.sh`, то есть
   базовый механизм раскатки на хосте не меняется.
 
+#### 8.7.1 Canonical order for agents and operators
+
+Если задача звучит как "установи автодеплой", "запусти автодеплой
+сейчас" или "проверь host-side автодеплой", используйте **ровно** этот
+порядок:
+
+| Step | Action | Why |
+|---|---|---|
+| 1 | Меняйте `deploy/scripts/auto_deploy.sh`, `deploy/systemd/*`, docs и workflow-файлы **в репозитории**, затем пушьте commit. | Репозиторий — source of truth; live-хост не должен становиться канонической копией. |
+| 2 | Дождитесь зелёных `ci.yml` и `build-images.yml` для **точного** SHA, который хотите раскатить. | `auto_deploy.sh` сам ждёт оба workflow и не должен опережать CI/CD. |
+| 3 | Для первой установки на каждом хосте выполните `sudo bash deploy/scripts/install_autodeploy.sh nl1` / `nl2`, заполните `/etc/dwtgbot/autodeploy.env` и включите timer. | Установщик копирует unit-файлы, создаёт host-local config и подготавливает systemd. |
+| 4 | Если rollout нужен **сейчас**, запускайте `sudo systemctl start dwtgbot-autodeploy.service` сначала на **NL-1** и читайте `journalctl` до явного успеха на целевом SHA. | NL-1 владеет миграциями и публикует gate `nl1-autodeploy`. |
+| 5 | Только после успеха NL-1 запускайте тот же service на **NL-2** (или дождитесь его timer). | NL-2 должен видеть тот же зелёный SHA и успешный deployment status от NL-1. |
+| 6 | На обоих хостах проверяйте checkout, `last_successful_sha` и steady state systemd. | Это подтверждает не только запуск unit, но и факт раскатки нужного SHA. |
+
+#### 8.7.2 Verification snippet
+
+```bash
+set -a
+source /etc/dwtgbot/autodeploy.env
+set +a
+
+git -C "${REPO_PATH}" rev-parse HEAD
+cat "${AUTODEPLOY_STATE_DIR}/${DEPLOY_TARGET}.last_successful_sha"
+systemctl is-active dwtgbot-autodeploy.timer
+systemctl is-active dwtgbot-autodeploy.service
+journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
+```
+
+Expected steady state between runs:
+
+- `dwtgbot-autodeploy.timer` = `active`
+- `dwtgbot-autodeploy.service` = usually `inactive` because it is a
+  `oneshot` unit
+- `git rev-parse HEAD` matches
+  `${AUTODEPLOY_STATE_DIR}/${DEPLOY_TARGET}.last_successful_sha`
+
+#### 8.7.3 Do not improvise
+
+- Do **not** edit `/etc/systemd/system/dwtgbot-autodeploy.*` manually if
+  reinstalling from `deploy/systemd/` is possible.
+- Do **not** force NL-2 first when you need a deterministic immediate
+  rollout.
+- Do **not** treat `/etc/dwtgbot/autodeploy.env` as repo config; it is
+  host-local orchestration state.
+- Do **not** treat "timer enabled" as proof of rollout; always verify
+  the exact SHA on host and in `AUTODEPLOY_STATE_DIR`.
+
 ---
 
 ## §9 — Health verification (after every deploy)

@@ -911,6 +911,30 @@ Before merging a deploy script change:
    (e.g. delete the file the script created); confirm the second
    run heals the system.
 
+### 12.5 Host-side autodeploy canonical path
+
+When the task is "install autodeploy", "run autodeploy now", or
+"verify autodeploy on the servers", use this order and do not invent a
+different flow:
+
+| Step | Agent action | Why / verify |
+|---|---|---|
+| 1 | Read `20-deployment.md` and `21-cicd.md` before touching hosts. | `20-` is the operational playbook; `21-` explains the workflow gates and token scope. |
+| 2 | Make repo changes first; push the target SHA; do not treat a live-host edit as source of truth. | The only host-local exception is `/etc/dwtgbot/autodeploy.env`. |
+| 3 | Wait for `ci.yml` and `build-images.yml` to succeed for the exact SHA. | `deploy/scripts/auto_deploy.sh` gates on both. |
+| 4 | For first-time setup, run `sudo bash deploy/scripts/install_autodeploy.sh nl1` / `nl2`, fill `/etc/dwtgbot/autodeploy.env`, and `systemctl enable --now dwtgbot-autodeploy.timer`. | Installation is one-time per host, not per deploy. |
+| 5 | For an immediate rollout, start `dwtgbot-autodeploy.service` on NL-1, wait for success, then do the same on NL-2. | NL-2 is intentionally gated on `nl1-autodeploy` success for the same SHA. |
+| 6 | Verify `git -C "$REPO_PATH" rev-parse HEAD`, `${AUTODEPLOY_STATE_DIR}/${DEPLOY_TARGET}.last_successful_sha`, timer=`active`, and service usually=`inactive`. | That is the real steady state after a successful oneshot run. |
+
+Never:
+- start from NL-2 first when you need a deterministic immediate rollout;
+- edit `/etc/systemd/system/dwtgbot-autodeploy.*` by hand if the repo
+  assets can simply be reinstalled;
+- store or commit `GITHUB_TOKEN` anywhere except
+  `/etc/dwtgbot/autodeploy.env`;
+- conclude "deploy succeeded" from timer state alone; always verify the
+  exact SHA.
+
 ---
 
 ## 13. Documentation obligations
