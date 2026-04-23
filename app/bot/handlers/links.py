@@ -13,7 +13,6 @@ from app.application.use_cases.auto_enqueue_download import AutoEnqueueInput
 from app.bot.callbacks.codec import CancelJobCallback
 from app.bot.container import BotContainer, get_container
 from app.bot.keyboards.download_options import build_options_keyboard
-from app.domain.enums import Platform
 from app.domain.rate_limit import LimitDecision
 from app.exceptions import AppError, InvalidUrlError, TooManyJobsError, UnsupportedPlatformError
 from app.logging_config import get_logger
@@ -125,21 +124,11 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             return
 
-        # YouTube opts out of the instant flow because the resolution
-        # picker is the whole point of the UX there — a YT link can
-        # legitimately mean "360p because I'm on cellular" just as
-        # often as "1080p because I'm on wifi", and the instant path
-        # always picks ``max(video_heights)`` which burns the user's
-        # quota on MB they did not want. Instagram / TikTok / etc.
-        # have exactly one shape per post, so instant stays the
-        # default there. This is the narrowest possible per-platform
-        # override of the ``INSTANT_DOWNLOAD_ENABLED`` flag — both
-        # branches below are unchanged.
-        picker_platforms = {Platform.YOUTUBE}
-        use_instant = (
-            container.settings.INSTANT_DOWNLOAD_ENABLED
-            and result.analyzed.info.platform not in picker_platforms
-        )
+        # ADR-0010 / task spec: the master flag is the only switch here.
+        # When instant-download is enabled, *every* supported provider
+        # goes through auto-enqueue; when disabled we preserve the
+        # legacy picker path for rollback.
+        use_instant = container.settings.INSTANT_DOWNLOAD_ENABLED
         if use_instant:
             await _handle_instant_download(
                 message=message,

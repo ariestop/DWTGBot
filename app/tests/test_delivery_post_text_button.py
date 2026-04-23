@@ -179,6 +179,13 @@ def _extract_button_data(markup: InlineKeyboardMarkup | None) -> str | None:
     return first_row[0].callback_data
 
 
+def _extract_button_label(markup: InlineKeyboardMarkup | None) -> str | None:
+    if markup is None:
+        return None
+    first_row = markup.inline_keyboard[0]
+    return first_row[0].text
+
+
 class TestPostTextButton:
     @pytest.mark.asyncio
     async def test_single_file_attaches_button_when_key_exists(self, tmp_path: Path) -> None:
@@ -200,6 +207,9 @@ class TestPostTextButton:
         call = sender.calls[0]
         assert call.kind == "video"
         assert _extract_button_data(call.reply_markup) == _expected_callback_data(42)
+        assert _extract_button_label(call.reply_markup) == "Получить текст поста 👇"
+        assert call.caption is not None
+        assert "Нажмите, чтобы получить текст поста" not in call.caption
 
     @pytest.mark.asyncio
     async def test_single_file_no_button_when_key_missing(self, tmp_path: Path) -> None:
@@ -281,3 +291,6 @@ class TestPostTextButton:
         assert len(sender.calls) == 1
         assert sender.calls[0].kind == "text"
         assert _extract_button_data(sender.calls[0].reply_markup) == _expected_callback_data(42)
+        assert _extract_button_label(sender.calls[0].reply_markup) == "Получить текст поста 👇"
+        assert sender.calls[0].text is not None
+        assert "Нажмите, чтобы получить текст поста" not in sender.calls[0].text

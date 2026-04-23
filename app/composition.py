@@ -436,17 +436,19 @@ def build_worker(settings: Settings) -> WorkerComposition:
         # set once. Used as the denominator in the B4 saturation query.
         job_metrics.set_worker_concurrency(concurrency=settings.WORKER_CONCURRENCY)
 
-    # ADR-0010 §2.2: side-channel progress writer. Active in every
-    # worker process -- the consumer (bot progress_updater) is the
-    # one gated by ``INSTANT_DOWNLOAD_ENABLED`` (PR 5). Writing to
-    # Redis while no one reads is cheap (TTL 10 min, PROGRESS_TTL_SEC)
-    # and keeps the deploy order flexible (can flip the feature
-    # without restarting workers).
-    progress_reporter: ProgressReporter = RedisProgressReporter(
-        redis=core.redis,
-        redis_url=settings.redis_url,
-        settings=settings,
-    )
+    # ADR-0010 rollback contract: when instant-download is disabled the
+    # worker must stop writing progress side-channel events entirely.
+    # The bot falls back to the legacy picker UX, so emitting
+    # ``progress:*`` updates would only create orphaned Redis keys.
+    progress_reporter: ProgressReporter
+    if settings.INSTANT_DOWNLOAD_ENABLED:
+        progress_reporter = RedisProgressReporter(
+            redis=core.redis,
+            redis_url=settings.redis_url,
+            settings=settings,
+        )
+    else:
+        progress_reporter = NoopProgressReporter()
     cancellation: JobCancellationStore = RedisJobCancellationStore(
         redis=core.redis,
         settings=settings,
