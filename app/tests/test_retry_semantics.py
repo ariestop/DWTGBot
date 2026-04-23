@@ -53,7 +53,10 @@ from app.infrastructure.queue.tasks import process_download_job
         # Transient: upstream/network/timeout — retry can succeed.
         (ProviderError, True),
         (DownloadError, True),
-        (DownloadTimeoutError, True),
+        # yt-dlp timeouts are terminal: retrying while the timed-out
+        # background thread is still unwinding just keeps the user's
+        # slot occupied longer.
+        (DownloadTimeoutError, False),
         # Permanent: input/content/codec — retry will fail the same way.
         (MediaNotFoundError, False),
         (MediaPrivateError, False),

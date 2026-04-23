@@ -76,7 +76,7 @@ This split is the entire point of the hierarchy.
 | `MediaNotFoundError` | `False` | "Медиа не найдено или удалено." | yt-dlp 404 / removed |
 | `MediaPrivateError` | `False` | "Контент приватный или требует авторизации." | yt-dlp "private" |
 | `DownloadError` | **`True`** | "Не удалось скачать файл. Попробуйте ещё раз." | yt-dlp generic |
-| `DownloadTimeoutError` | **`True`** | "Скачивание заняло слишком много времени." | per-attempt timeout |
+| `DownloadTimeoutError` | `False` | "Скачивание заняло слишком много времени." | per-attempt yt-dlp timeout |
 | `FileTooLargeError` | `False` | "Файл слишком большой даже для временной ссылки." | `_deliver_via_link` cap |
 | `FfmpegError` | `False` | "Не удалось обработать медиа." | direct ffmpeg failures |
 | `StorageError` | `False` | "Ошибка хранилища." | `LocalStorage`, `ensure_within` |

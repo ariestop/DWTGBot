@@ -82,9 +82,15 @@ class DownloadError(AppError):
 
 
 class DownloadTimeoutError(DownloadError):
-    """Inherits ``is_retryable=True`` — timeouts are by definition transient."""
+    """Per-attempt yt-dlp timeout.
+
+    We treat it as terminal: the underlying ``asyncio.to_thread`` worker
+    cannot be force-cancelled, so retrying immediately tends to keep a slot
+    occupied while the previous hung download is still winding down.
+    """
 
     user_message = "Скачивание заняло слишком много времени."
+    is_retryable = False
 
 
 class FileTooLargeError(DownloadError):

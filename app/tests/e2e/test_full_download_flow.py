@@ -481,12 +481,7 @@ async def test_download_timeout_is_reported_via_terminal_failure_notification(
         analyzed=analyzed,
     )
 
-    with pytest.raises(DownloadTimeoutError) as excinfo:
-        await worker.execute(
-            ProcessDownloadInput(job_id=payload.job_id, correlation_id=payload.correlation_id)
-        )
-
-    await worker.mark_terminally_failed(payload.job_id, excinfo.value)
+    await worker.execute(ProcessDownloadInput(job_id=payload.job_id, correlation_id=payload.correlation_id))
 
     assert sender.videos == []
     assert len(sender.texts) == 1
