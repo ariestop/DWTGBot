@@ -48,6 +48,21 @@
 
 ---
 
+## Pre-Phase-3 — операционный чек-лист (до старта следующего sprint'а)
+
+Закрываем операционный долг, накопившийся после Phase 1/2, чтобы Phase 3 стартовала с зелёным CI и honest deploy-путём. Без ADR — это не новые фичи, а чистка инфраструктуры.
+
+| # | Задача | Статус | Владелец |
+|---|---|---|---|
+| PRE-1 | Починить `ci.yml` (workflow не стартовал: `runner.*` использовался в `jobs.integration-tests.env`, GitHub отклонял файл на валидации; actionlint флажит два expression-error'а). Вынести `STORAGE_PATH`/`STORAGE_TMP_PATH` на step-level. | ✅ done (текущая сессия) | repo |
+| PRE-2 | Прогнать full sanity: `ruff`/`mypy`/`pytest` + coverage gate локально на `main`. | ✅ done: 432 passed, coverage 80.6 % (gate 70 %) | repo |
+| PRE-3 | Сконфигурировать GitHub environment secrets для `deploy.yml`: `NL1_HOST`, `NL1_SSH_USER`, `NL1_SSH_PORT`, `NL1_SSH_KEY`, `NL1_REPO_PATH` (env `nl1`) и аналогичный блок для `nl2`. Без них `deploy.yml` падает с `Error: missing server host`. Контракт и порядок ротации — в [`docs/21-cicd.md`](../21-cicd.md) §7.2–7.4. До выполнения — ручной deploy через `deploy/scripts/deploy_update.sh` как в [`docs/21-cicd.md`](../21-cicd.md) §13. | ⏳ pending | operator |
+| PRE-4 | Убедиться, что на NL-2 не остались `deploy/nl2/docker-compose.override.yml*` (в т.ч. `.bak`) после A30 rollout: `ssh NL-2 'ls deploy/nl2/docker-compose.override.yml* 2>/dev/null'` — должна быть пустая выдача. Если `.bak` остался — `git clean -n deploy/nl2/` для предпросмотра, затем `-f` для удаления. | ⏳ pending | operator |
+
+**Gate на Phase 3 (дополнение):** PRE-3 закрыт (иначе каждый Phase-3 PR придётся деплоить руками) и PRE-4 проверен (иначе следующий `deploy_update.sh nl2` будет стартовать со старым healthcheck override).
+
+---
+
 ## Phase 3 — Mid-term (1–2 месяца, не в этой сессии)
 
 Перечисляется здесь только для roadmap-контекста. Каждый пункт требует отдельного ADR перед стартом.

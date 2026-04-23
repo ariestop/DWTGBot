@@ -124,14 +124,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+    # NOTE: the ``runner`` context is NOT available at ``jobs.*.env``,
+    # only inside ``steps`` (see GitHub's context-availability table).
+    # We used to expand ${{ runner.temp }} here and that made the whole
+    # workflow fail validation with "workflow file issue", never
+    # creating any check-runs (see audit note in docs/24-runbooks.md).
+    # STORAGE_PATH / STORAGE_TMP_PATH are moved to step-level env below.
     env:
       BOT_TOKEN: "0000000000:test-token"
       APP_ENV: development
       LOG_LEVEL: WARNING
       LOG_JSON: "false"
       PUBLIC_BASE_URL: http://localhost:8080
-      STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
-      STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
       DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
       DWTGBOT_TEST_POSTGRES_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
       DWTGBOT_TEST_REDIS_URL: redis://127.0.0.1:6379/15
@@ -151,9 +155,15 @@ jobs:
           pip install -r requirements/dev.txt
 
       - name: alembic upgrade head
+        env:
+          STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
+          STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
         run: alembic upgrade head
 
       - name: pytest -m integration
+        env:
+          STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
+          STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
         run: pytest -m integration --no-cov
 
   shell-lint:
