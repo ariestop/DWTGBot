@@ -481,7 +481,9 @@ async def test_download_timeout_is_reported_via_terminal_failure_notification(
         analyzed=analyzed,
     )
 
-    await worker.execute(ProcessDownloadInput(job_id=payload.job_id, correlation_id=payload.correlation_id))
+    await worker.execute(
+        ProcessDownloadInput(job_id=payload.job_id, correlation_id=payload.correlation_id)
+    )
 
     assert sender.videos == []
     assert len(sender.texts) == 1
