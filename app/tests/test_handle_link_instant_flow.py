@@ -1,10 +1,14 @@
 """`handle_link` instant-download flag routing.
 
-Regression guard for the roadmap contract:
+Regression guard for the deployed contract:
 
-* `INSTANT_DOWNLOAD_ENABLED=true` routes supported providers, including
-  YouTube, through the instant auto-enqueue path.
-* `INSTANT_DOWNLOAD_ENABLED=false` restores the legacy picker flow.
+* `INSTANT_DOWNLOAD_ENABLED=true` routes non-YouTube providers
+  (Instagram, TikTok, ...) through the instant auto-enqueue path.
+* YouTube always goes through the legacy resolution picker — the flag
+  is a master switch, but YouTube is a deliberate per-platform opt-out
+  so the user can still pick the target resolution.
+* `INSTANT_DOWNLOAD_ENABLED=false` restores the legacy picker flow for
+  every provider.
 """
 
 from __future__ import annotations
@@ -82,9 +86,15 @@ async def _allow_rate_limit(**_: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_youtube_uses_instant_flow_when_flag_enabled(
+async def test_youtube_stays_on_picker_even_when_flag_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # YouTube is a per-platform opt-out: the resolution picker is the
+    # whole point of the UX there, so even with
+    # ``INSTANT_DOWNLOAD_ENABLED=true`` a YT link must land on the
+    # legacy picker flow (build_options_keyboard). Flipping this back
+    # to the instant path would silently auto-pick the top resolution
+    # and burn the user's quota.
     analyzed = _make_analyzed(Platform.YOUTUBE)
     container = SimpleNamespace(
         settings=SimpleNamespace(INSTANT_DOWNLOAD_ENABLED=True, rate_limit_windows=()),
@@ -94,6 +104,45 @@ async def test_youtube_uses_instant_flow_when_flag_enabled(
         notice_throttle=object(),
     )
     message = _FakeMessage(text="https://youtu.be/abc123")
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=1),
+        effective_chat=SimpleNamespace(id=2),
+    )
+    context = SimpleNamespace(bot=_FakeBot(), bot_data={})
+
+    async def _fail_instant(**_kwargs: Any) -> None:
+        raise AssertionError("YouTube must not take the instant flow")
+
+    monkeypatch.setattr(links_mod, "get_container", lambda _bd: container)
+    monkeypatch.setattr(links_mod, "evaluate_rate_limit", _allow_rate_limit)
+    monkeypatch.setattr(links_mod, "_handle_instant_download", _fail_instant)
+    monkeypatch.setattr(links_mod, "build_options_keyboard", lambda *_a, **_kw: "KEYBOARD")
+
+    await links_mod.handle_link(update, context)  # type: ignore[arg-type]
+
+    assert len(message.replies) == 1
+    reply = message.replies[0]
+    assert "Выберите вариант:" in reply.text
+    assert reply.parse_mode == "HTML"
+    assert reply.reply_markup == "KEYBOARD"
+
+
+@pytest.mark.asyncio
+async def test_instagram_uses_instant_flow_when_flag_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Instagram has exactly one shape per post, so instant stays the
+    # default there when the master flag is on.
+    analyzed = _make_analyzed(Platform.INSTAGRAM)
+    container = SimpleNamespace(
+        settings=SimpleNamespace(INSTANT_DOWNLOAD_ENABLED=True, rate_limit_windows=()),
+        analyze_link=_FakeAnalyzeLink(SimpleNamespace(analyzed=analyzed, request_id="rq")),
+        rate_limit_gate=object(),
+        metrics=object(),
+        notice_throttle=object(),
+    )
+    message = _FakeMessage(text="https://www.instagram.com/reel/abc123/")
     update = SimpleNamespace(
         effective_message=message,
         effective_user=SimpleNamespace(id=1),
@@ -111,7 +160,7 @@ async def test_youtube_uses_instant_flow_when_flag_enabled(
     monkeypatch.setattr(links_mod, "_handle_instant_download", _record_instant)
 
     def _fail_keyboard(*_args: Any, **_kwargs: Any) -> object:
-        raise AssertionError("legacy picker must not be used when instant flow is enabled")
+        raise AssertionError("legacy picker must not be used for Instagram when flag is enabled")
 
     monkeypatch.setattr(links_mod, "build_options_keyboard", _fail_keyboard)
 
