@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Deploy to NL-1 over SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           host: ${{ secrets.NL1_HOST }}
           username: ${{ secrets.NL1_SSH_USER }}
@@ -42,13 +44,14 @@ jobs:
           # be set (``${VAR:?...}``) and will refuse to start otherwise.
           # Using ``sha-<short>`` of the deployed ref guarantees the
           # registry has the artefact (built by build-images.yml).
-          envs: GITHUB_SHA,GITHUB_REPOSITORY
+          envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
           script: |
             set -Eeuo pipefail
             cd "${{ secrets.NL1_REPO_PATH }}"
-            git fetch --all --tags
+            GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
             git checkout "${{ inputs.ref }}"
-            git pull --ff-only origin "${{ inputs.ref }}" || true
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
             REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
@@ -78,19 +81,22 @@ jobs:
     steps:
       - name: Deploy to NL-2 over SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           host: ${{ secrets.NL2_HOST }}
           username: ${{ secrets.NL2_SSH_USER }}
           key: ${{ secrets.NL2_SSH_KEY }}
           port: ${{ secrets.NL2_SSH_PORT || 22 }}
           script_stop: true
-          envs: GITHUB_SHA,GITHUB_REPOSITORY
+          envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
           script: |
             set -Eeuo pipefail
             cd "${{ secrets.NL2_REPO_PATH }}"
-            git fetch --all --tags
+            GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
             git checkout "${{ inputs.ref }}"
-            git pull --ff-only origin "${{ inputs.ref }}" || true
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
             REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"

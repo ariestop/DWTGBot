@@ -1360,6 +1360,7 @@ $NL1 logs --since=5m bot | grep -c bot_send_failed                   # 0 or low
 | `.env` change forgotten on one host | service starts with old config |
 | Image tag pinned to a bad sha | services stable but with the wrong code |
 | Network blip during pull | `error pulling image` |
+| Host cannot `git fetch` the private repo checkout | CI log or `journalctl` shows `fatal: could not read Username for 'https://github.com'` |
 
 ### 16.3 Quick diagnosis
 
@@ -1408,6 +1409,11 @@ journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
    systemctl start dwtgbot-autodeploy.service
    journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
    ```
+8. **`git fetch` asks for GitHub credentials on the host** → for
+   `deploy.yml`, confirm the workflow still forwards `GITHUB_TOKEN`
+   into the remote SSH script; for host-side autodeploy, confirm
+   `/etc/dwtgbot/autodeploy.env` has a valid token with
+   `Contents: read`, then re-run the cycle.
 
 > **Rule**: never edit live containers to "patch" a bad deploy.
 > Roll back image tags in `.env` and redeploy.

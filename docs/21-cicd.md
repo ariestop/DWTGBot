@@ -318,23 +318,30 @@ Each job runs the same SSH script via `appleboy/ssh-action@v1.0.3`:
 
 ```yaml
 - uses: appleboy/ssh-action@v1.0.3
+  env:
+    GITHUB_TOKEN: ${{ github.token }}
   with:
     host: ${{ secrets.NL1_HOST }}
     username: ${{ secrets.NL1_SSH_USER }}
     key: ${{ secrets.NL1_SSH_KEY }}
     port: ${{ secrets.NL1_SSH_PORT || 22 }}
     script_stop: true                      # abort on first non-zero exit
+    envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
     script: |
       set -Eeuo pipefail
       cd "${{ secrets.NL1_REPO_PATH }}"
-      git fetch --all --tags
+      GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
+      git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
       git checkout "${{ inputs.ref }}"
-      git pull --ff-only origin "${{ inputs.ref }}" || true
+      git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
       ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
 ```
 
 - `script_stop: true` + `set -Eeuo pipefail` → first failure aborts the whole script (no half-deploys).
 - `git pull --ff-only … || true` → tolerates a detached-HEAD-on-tag checkout (no upstream to pull).
+- The runner forwards its ephemeral `GITHUB_TOKEN` over SSH and uses a
+  temporary `http.extraheader` for `git fetch` / `git pull`, so private
+  host checkouts do not need a separate credential helper.
 - `ASSUME_YES=1` → confirms destructive steps in helpers; required for non-interactive runs.
 
 ### 5.4 GitHub Environment protection (recommended)
@@ -458,7 +465,7 @@ All secrets live in **GitHub → Settings → Secrets and variables**. Use **Env
 
 | Variable | Scope | Why |
 |---|---|---|
-| `GITHUB_TOKEN` | host-local only | query `ci.yml` / `build-images.yml` runs and create/read deployment statuses |
+| `GITHUB_TOKEN` | host-local only | query `ci.yml` / `build-images.yml`, create/read deployment statuses, and authenticate `git fetch` against a private GitHub `origin` |
 
 Права, которые нужны этому token:
 
@@ -671,6 +678,7 @@ A failed build means the new tag does **not** exist in GHCR. Any deploy referenc
 | `host key verification failed` | first-time host key change | accept the new host key on a manual SSH from the runner OR set `ssh-action` `known_hosts` |
 | `git: not a git repository` | `NL*_REPO_PATH` wrong | fix the secret to point to the actual repo |
 | `git checkout: pathspec '<ref>' did not match` | `ref` typo or branch deleted | re-dispatch with a valid ref |
+| `fatal: could not read Username for 'https://github.com'` | the host checkout points to a private HTTPS `origin`, but the deploy path did not forward a GitHub token into `git fetch` / `git pull` | confirm `deploy.yml` still passes `GITHUB_TOKEN`; for host-side autodeploy ensure `/etc/dwtgbot/autodeploy.env` has a valid token with `Contents: read` |
 | `docker: command not found` | Docker not installed (host bootstrap incomplete) | run `20-deployment.md` §4 |
 | `unauthorized: authentication required` on `docker compose pull` | host's docker isn't logged into GHCR | `docker login ghcr.io -u <user> -p <PAT>` (PAT with `read:packages`) |
 | Job times out after 20–25 min | hung healthcheck OR migration | SSH in, read `docker compose logs migrate` and `... ps`; see §11.4 |

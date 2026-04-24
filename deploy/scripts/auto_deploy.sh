@@ -84,6 +84,28 @@ github_repo_api() {
   github_api "${method}" "/repos/${GITHUB_OWNER}/${GITHUB_REPO}${path}" "${payload}"
 }
 
+git_origin_url() {
+  git -C "${REPO_PATH}" remote get-url origin 2>/dev/null || true
+}
+
+git_github_auth_header() {
+  local token_b64=""
+  token_b64="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
+  printf 'AUTHORIZATION: basic %s' "${token_b64}"
+}
+
+git_repo() {
+  local args=(-C "${REPO_PATH}")
+  local remote_url=""
+
+  remote_url="$(git_origin_url)"
+  if [[ "${remote_url}" == https://github.com/* ]]; then
+    args+=(-c "http.https://github.com/.extraheader=$(git_github_auth_header)")
+  fi
+
+  git "${args[@]}" "$@"
+}
+
 branch_head_sha() {
   github_repo_api GET "/commits/${GITHUB_BRANCH}" | jq -r '.sha'
 }
@@ -210,8 +232,8 @@ mark_last_successful_sha() {
 
 checkout_candidate_sha() {
   log_step "Подготовка репозитория к деплою"
-  git -C "${REPO_PATH}" fetch --all --tags
-  git -C "${REPO_PATH}" checkout --detach "${CANDIDATE_SHA}"
+  git_repo fetch --all --tags
+  git_repo checkout --detach "${CANDIDATE_SHA}"
   log_ok "Репозиторий переключён на ${CANDIDATE_SHA}"
 }
 
@@ -359,6 +381,7 @@ main() {
   require_command git
   require_command docker
   require_command flock
+  require_command base64
 
   validate_inputs
   setup_paths
