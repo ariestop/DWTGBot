@@ -180,8 +180,32 @@ last_successful_sha() {
   fi
 }
 
+current_repo_sha() {
+  git -C "${REPO_PATH}" rev-parse HEAD 2>/dev/null || true
+}
+
+candidate_already_deployed() {
+  local recorded_sha=""
+  local current_sha=""
+
+  recorded_sha="$(last_successful_sha)"
+  [[ -n "${recorded_sha}" ]] || return 1
+  [[ "${recorded_sha}" == "${CANDIDATE_SHA}" ]] || return 1
+
+  current_sha="$(current_repo_sha)"
+  if [[ "${current_sha}" == "${CANDIDATE_SHA}" ]]; then
+    return 0
+  fi
+
+  log_warn "Файл состояния говорит, что ${CANDIDATE_SHA} уже развернут на ${TARGET}, но checkout сейчас на '${current_sha:-unknown}'. Повторяю deploy для выравнивания."
+  return 1
+}
+
 mark_last_successful_sha() {
-  printf '%s\n' "${CANDIDATE_SHA}" >"${LAST_SUCCESS_FILE}"
+  local tmp_file=""
+  tmp_file="$(mktemp "${LAST_SUCCESS_FILE}.XXXXXX")"
+  printf '%s\n' "${CANDIDATE_SHA}" >"${tmp_file}"
+  mv "${tmp_file}" "${LAST_SUCCESS_FILE}"
 }
 
 checkout_candidate_sha() {
@@ -345,7 +369,7 @@ main() {
   [[ -n "${CANDIDATE_SHA}" && "${CANDIDATE_SHA}" != "null" ]] || die "Не удалось определить SHA головы ветки"
   log_info "Последний commit в GitHub: ${CANDIDATE_SHA}"
 
-  if [[ "$(last_successful_sha)" == "${CANDIDATE_SHA}" ]]; then
+  if candidate_already_deployed; then
     log_info "SHA ${CANDIDATE_SHA} уже успешно развернут на ${TARGET}, изменений нет"
     exit 0
   fi
