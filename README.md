@@ -144,11 +144,11 @@ make worker
 реакцию на инциденты. Краткая версия:
 
 1. **Подготовьте две VM** (NL-1 control plane, NL-2 media plane). **Только
-   Ubuntu 24.04 LTS** — installer привязывает Docker apt repo к `noble`.
+   Ubuntu 24.04 LTS** — TUI installer привязывает Docker apt repo к `noble`.
    Настройте приватную сеть между серверами (рекомендуется WireGuard), чтобы
    NL-2 мог обращаться к NL-1 на `:5432` и `:6379`.
 2. **Склонируйте репозиторий** в `/opt/dwtgbot` на обоих серверах.
-3. **Запустите installer** на каждом сервере:
+3. **Запустите TUI installer** на каждом сервере:
    ```bash
    cd /opt/dwtgbot
    sudo bash deploy/scripts/install.sh
@@ -229,7 +229,7 @@ ref. Workflow выполнит `deploy/scripts/deploy_update.sh` по SSH на �
 
 | Скрипт | Назначение |
 |---|---|
-| `install.sh` | Интерактивное whiptail-меню (установка Docker, настройка env, firewall, start/stop/logs, backup/restore, deploy, certbot, cleanup, healthcheck) |
+| `install.sh` | TUI-меню на whiptail (установка Docker, настройка env, firewall, start/stop/logs, backup/restore, deploy, certbot, cleanup, healthcheck) |
 | `deploy_update.sh nl1\|nl2` | `git pull` → config check → опциональный pre-backup → pull → `up -d` → migrate (NL-1) → healthcheck |
 | `backup.sh` | `pg_dump` (в контейнере или через host exec), gzip, retention prune |
 | `restore.sh` | Интерактивный выбор dump, drop/recreate DB, загрузка dump, restart зависимых сервисов |
@@ -318,7 +318,7 @@ deploy/
   nginx/                      Nginx config + snippets + media.conf.template
   certbot/init-letsencrypt.sh
   scripts/                    Operational bash scripts
-  templates/env.template      Generic env template used by installer
+  templates/env.template      Generic env template used by TUI installer
 docker/
   bot.Dockerfile  api.Dockerfile  worker.Dockerfile  backup.Dockerfile
 docs/
@@ -370,7 +370,7 @@ migrations/
 | 9 | Deployment | Docker Compose |
 | 10 | CI/CD | GitHub Actions |
 | 11 | OS target | Ubuntu 24.04 LTS |
-| 12 | Interactive installer | bash (`deploy/scripts/install.sh`) |
+| 12 | TUI installer | bash (`deploy/scripts/install.sh`) |
 | 13 | Logging | JSON structured logs (`structlog`) |
 | 14 | Lint / format / types | `ruff check` + `ruff format` (black-compatible) + `mypy` |
 | 15 | Tests | `pytest` |

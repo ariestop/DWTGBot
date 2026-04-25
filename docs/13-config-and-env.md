@@ -336,7 +336,7 @@ flowchart LR
 - Each stack has its **own** `.env` because NL-1 and NL-2 need different
   values for `POSTGRES_HOST`, `REDIS_HOST` (NL-2 connects to NL-1's
   private IP, not the docker service name).
-- The interactive installer (`deploy/scripts/install.sh`) writes these
+- The TUI installer (`deploy/scripts/install.sh`) writes these
   env files for you — see [`20-deployment.md`](20-deployment.md).
 - Host-side autodeploy uses a **separate** file,
   `/etc/dwtgbot/autodeploy.env`, created by

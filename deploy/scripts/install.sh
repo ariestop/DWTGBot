@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =====================================================================
-# DWTGBot interactive installer / operator menu.
+# DWTGBot TUI installer / operator menu.
 #
 # Run as a regular user (it will sudo when needed). Idempotent and safe
-# to re-run. Uses whiptail when available; falls back to numbered menu.
+# to re-run. Uses whiptail for TUI when available; falls back to numbered menu.
 #
 #   bash deploy/scripts/install.sh
 # =====================================================================
@@ -49,7 +49,7 @@ https://download.docker.com/linux/ubuntu noble stable" \
 
 require_ubuntu_2404() {
   if [[ "${OS_ID}" != "ubuntu" || "${OS_VER}" != "24.04" ]]; then
-    log_warn "This installer targets Ubuntu 24.04 LTS. Detected: ${OS_ID} ${OS_VER}"
+    log_warn "This TUI installer targets Ubuntu 24.04 LTS. Detected: ${OS_ID} ${OS_VER}"
     confirm "Continue anyway? (unsupported)" "N" || die "Aborted on unsupported OS"
   fi
 }
@@ -202,13 +202,13 @@ draw_whiptail() {
     args+=("${MENU_ITEMS[i]}" "${MENU_ITEMS[i+1]}")
     i=$((i + 2))
   done
-  whiptail --title "DWTGBot installer" \
+  whiptail --title "DWTGBot TUI installer" \
            --menu "Pick an action:" 22 70 15 \
            "${args[@]}" 3>&1 1>&2 2>&3
 }
 
 draw_plain() {
-  printf '\n%sDWTGBot installer%s\n' "${C_BOLD}" "${C_RESET}"
+  printf '\n%sDWTGBot TUI installer%s\n' "${C_BOLD}" "${C_RESET}"
   local i=0
   while [[ $i -lt ${#MENU_ITEMS[@]} ]]; do
     printf '  %2s) %s\n' "${MENU_ITEMS[i]}" "${MENU_ITEMS[i+1]}"

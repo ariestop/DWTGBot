@@ -1984,7 +1984,7 @@ operator safety.
 
 | File / area | Change |
 |---|---|
-| `deploy/scripts/install.sh` | Interactive installer |
+| `deploy/scripts/install.sh` | TUI installer |
 | `deploy/scripts/deploy_update.sh` | Pull + reload |
 | `deploy/scripts/restore.sh` | Backup restore |
 | `deploy/scripts/firewall_setup.sh` | UFW rules |

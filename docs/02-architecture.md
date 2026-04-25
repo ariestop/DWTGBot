@@ -323,7 +323,7 @@ This section consolidates the *why*. Full reasoning lives in the ADRs.
 | Structured JSON logging | Correlation IDs across services; jq-driven runbooks | [ADR-0005 §3.9](adr/0005-locked-architectural-assumptions.md) |
 | Docker + Compose | Reproducible, idempotent, low-ceremony | [ADR-0005 §3.10](adr/0005-locked-architectural-assumptions.md) |
 | GitHub Actions CI/CD | Co-located with code, free tier, single auth surface | [ADR-0005 §3.11](adr/0005-locked-architectural-assumptions.md) |
-| Bash interactive installer | Bash present everywhere; right size for the operator flow | [ADR-0005 §3.12](adr/0005-locked-architectural-assumptions.md) |
+| Bash TUI installer | Bash present everywhere; right size for the operator flow | [ADR-0005 §3.12](adr/0005-locked-architectural-assumptions.md) |
 | `ruff format` (no `black`) | Single tool; faster on this codebase | [ADR-0003](adr/0003-ruff-format-no-black.md) |
 | Composition root | Single wiring location, easy to fake | (foundational principle; see `app/composition.py`) |
 | Worker holds its own `telegram.Bot` | Bypass bot event loop for large uploads | (implied; see `09`, `10`) |

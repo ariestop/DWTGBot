@@ -69,7 +69,7 @@ explicitly supersedes the corresponding row of §3.
 | 9 | **Structured JSON logging** (`structlog`, correlation IDs propagated via `contextvars`) | This ADR; [`14-logging-observability.md`](../14-logging-observability.md) |
 | 10 | **Docker-first deployment** (Docker + Docker Compose v2; no bare-metal, no host-installed Python services) | This ADR; [`19-docker-architecture.md`](../19-docker-architecture.md), [`20-deployment.md`](../20-deployment.md) |
 | 11 | **GitHub Actions for CI/CD** (lint + typecheck + test + image build + manual SSH-based deploy) | This ADR; [`21-cicd.md`](../21-cicd.md) |
-| 12 | **Bash interactive installer** as the operator-facing entry point (`deploy/scripts/install.sh` with menu) | This ADR; [`20-deployment.md`](../20-deployment.md) |
+| 12 | **Bash TUI installer** as the operator-facing entry point (`deploy/scripts/install.sh` with menu) | This ADR; [`20-deployment.md`](../20-deployment.md) |
 
 These are **operationally coherent as a set.** Changing any one of them
 likely cascades through several others — see §3.13 (interlocks) below.
@@ -329,10 +329,10 @@ Actions. Deploys are triggered manually from the same workflow set
   hosts).
 - Replacing GHA (with GitLab CI, Buildkite, etc.) requires an ADR.
 
-### 3.12 Bash interactive installer
+### 3.12 Bash TUI installer
 
 **Scope of lock:** the operator-facing setup and day-2 operations entry
-point is `deploy/scripts/install.sh` — a bash script with an interactive
+point is `deploy/scripts/install.sh` — a bash script with a TUI
 menu (and idempotent non-interactive mode for CI). Not Ansible, not
 Terraform, not a custom Python CLI.
 

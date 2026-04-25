@@ -175,7 +175,7 @@ Three things to internalise from this diagram:
   location — direct disk access is never exposed.
 
 ### Operations
-- Interactive `bash deploy/scripts/install.sh` menu for setup + day-2 ops.
+- TUI `bash deploy/scripts/install.sh` menu for setup + day-2 ops.
 - Idempotent in-place updates via `deploy_update.sh`.
 - Automated Postgres backups + interactive restore.
 - Periodic cleanup of expired links and orphan files.

@@ -339,7 +339,7 @@ deploy/
 │   └── init-letsencrypt.sh
 ├── scripts/
 │   ├── helpers.sh              # Sourced by all other scripts
-│   ├── install.sh              # Interactive installer/operator menu
+│   ├── install.sh              # TUI installer/operator menu
 │   ├── healthcheck.sh
 │   ├── backup.sh
 │   ├── restore.sh

@@ -28,7 +28,7 @@ through Telegram (small files) or temporary HTTPS links (large files).
 9. **Logging**: `structlog`, JSON in production. Correlation context (`request_id`, `job_id`, `user_id`, `chat_id`) bound via contextvars.
 10. **Docker-first deployment**: Docker Compose v2, two stacks (`deploy/nl1`, `deploy/nl2`). No host-installed Python services.
 11. **CI/CD**: GitHub Actions (CI on every PR, build → GHCR, manual SSH-based deploy).
-12. **Interactive installer**: bash (`deploy/scripts/install.sh`) with menu and idempotent non-interactive mode.
+12. **TUI installer**: bash (`deploy/scripts/install.sh`) with menu and idempotent non-interactive mode.
 
 ### Adjacent ADR-locked decisions (related but separate ADRs)
 
