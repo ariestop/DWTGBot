@@ -882,6 +882,11 @@ the same PR. This is enforced by code review.
 If a doc update is unclear, **err on the side of updating**. A
 slightly redundant note is better than a stale spec.
 
+Правило языка документации: все новые и изменяемые описания документации
+пишите на русском языке. Технические идентификаторы, команды, env vars,
+пути, API routes, event names и названия библиотек оставляйте без
+перевода, чтобы ссылки, команды и поиск по коду оставались стабильными.
+
 ---
 
 ## 16. Anti-patterns specific to Cursor

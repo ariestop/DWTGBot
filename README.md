@@ -1,60 +1,61 @@
-# DWTGBot — Telegram Media Downloader
+# DWTGBot — Telegram-бот для скачивания медиа
 
-Production-ready Telegram bot that downloads media from **YouTube** and **Instagram**,
-delivers small files directly via Telegram and large files through **tokenized
-temporary HTTPS links** served by Nginx.
+Готовый к продакшну Telegram-бот, который скачивает медиа с **YouTube** и
+**Instagram**, отправляет небольшие файлы напрямую через Telegram, а большие
+выдаёт через **токенизированные временные HTTPS-ссылки**, обслуживаемые Nginx.
 
-Built for a **two-server topology**:
+Проект рассчитан на **двухсерверную топологию**:
 
 - **NL-1 (control plane)** — bot, Postgres, Redis, backups
-- **NL-2 (media plane)** — worker (yt-dlp + ffmpeg), Nginx + Certbot, file storage
+- **NL-2 (media plane)** — worker (`yt-dlp` + `ffmpeg`), Nginx + Certbot, файловое хранилище
 
-The two halves talk to each other over a **private network** (e.g. WireGuard).
-Only `:80`/`:443` are exposed to the internet on NL-2.
-
----
-
-## Table of contents
-
-- [Features](#features)
-- [Architecture](#architecture)
-- [Quickstart (single host, dev)](#quickstart-single-host-dev)
-- [Production deploy](#production-deploy) — see also [`docs/20-deployment.md`](docs/20-deployment.md)
-- [Configuration reference](#configuration-reference)
-- [Operations](#operations)
-- [Development](#development)
-- [Testing & CI](#testing--ci)
-- [Project layout](#project-layout)
-- [Troubleshooting](#troubleshooting) — see also [`docs/24-runbooks.md`](docs/24-runbooks.md) (operational runbooks) and [`docs/31-troubleshooting.md`](docs/31-troubleshooting.md) (diagnostics)
-- [License](#license)
+Две части системы общаются по **приватной сети** (например, WireGuard). В
+интернет на NL-2 открыты только `:80`/`:443`.
 
 ---
 
-## Features
+## Содержание
 
-- **Commands**: `/start`, `/help`, `/health`, `/about`.
-- **YouTube**: real available qualities (360p / 480p / 720p / 1080p) + MP3 audio,
-  estimated file sizes, video+audio merging via ffmpeg.
-- **Instagram**: single video/photo, carousel/gallery (download all, video-only, photo-only),
-  optional ZIP packaging.
-- **Telegram 50 MB limit aware** — anything over the configured limit is delivered
-  as a tokenized temp link (TTL + max downloads, served via Nginx `X-Accel-Redirect`).
-- **Async background processing** — `arq` queue on Redis, idempotent jobs, retries
-  with backoff, dead-letter logging, user-friendly status messages.
-- **Production logging** — `structlog` JSON output with `request_id` / `job_id` /
-  `user_id` / `chat_id` correlation.
-- **Health endpoints** — `/healthz` (liveness) and `/readyz` (DB + Redis + storage).
-- **Operational tooling** — interactive `install.sh` menu, idempotent
-  `deploy_update.sh`, automated Postgres backups + restore, expired-link cleanup,
-  ufw firewall presets.
-- **Containerized** — multi-stage Dockerfiles, non-root users, two `docker-compose`
-  stacks, Certbot SSL bootstrap.
-- **CI/CD** — GitHub Actions: ruff + mypy + pytest + shellcheck, GHCR image
-  publishing, manual SSH deploy.
+- [Возможности](#возможности)
+- [Архитектура](#архитектура)
+- [Быстрый старт (один хост, dev)](#быстрый-старт-один-хост-dev)
+- [Продакшн-развертывание](#продакшн-развертывание) — см. также [`docs/20-deployment.md`](docs/20-deployment.md)
+- [Справочник конфигурации](#справочник-конфигурации)
+- [Операции](#операции)
+- [Разработка](#разработка)
+- [Тестирование и CI](#тестирование-и-ci)
+- [Структура проекта](#структура-проекта)
+- [Устранение неполадок](#устранение-неполадок) — см. также [`docs/24-runbooks.md`](docs/24-runbooks.md) (операционные runbook'и) и [`docs/31-troubleshooting.md`](docs/31-troubleshooting.md) (диагностика)
+- [Лицензия](#лицензия)
 
 ---
 
-## Architecture
+## Возможности
+
+- **Команды**: `/start`, `/help`, `/health`, `/about`.
+- **YouTube**: реальные доступные качества (360p / 480p / 720p / 1080p) + MP3-аудио,
+  оценка размера файла, объединение видео+аудио через `ffmpeg`.
+- **Instagram**: одиночное видео/фото, карусель/галерея (скачать всё, только видео,
+  только фото), опциональная упаковка в ZIP.
+- **Учитывается лимит Telegram 50 MB** — всё, что превышает настроенный лимит,
+  отдаётся как токенизированная временная ссылка (TTL + максимум скачиваний,
+  через Nginx `X-Accel-Redirect`).
+- **Асинхронная фоновая обработка** — очередь `arq` в Redis, идемпотентные задачи,
+  retry с backoff, dead-letter logging, понятные пользователю статусы.
+- **Продакшн-логирование** — JSON-вывод `structlog` с корреляцией по `request_id` /
+  `job_id` / `user_id` / `chat_id`.
+- **Health endpoints** — `/healthz` (liveness) и `/readyz` (DB + Redis + storage).
+- **Операционные инструменты** — интерактивное меню `install.sh`, идемпотентный
+  `deploy_update.sh`, автоматические бэкапы и restore Postgres, cleanup истёкших
+  ссылок, шаблоны firewall `ufw`.
+- **Контейнеризация** — multi-stage Dockerfile'ы, non-root пользователи, два
+  стека `docker-compose`, bootstrap SSL через Certbot.
+- **CI/CD** — GitHub Actions: ruff + mypy + pytest + shellcheck, публикация
+  образов в GHCR, ручной SSH deploy.
+
+---
+
+## Архитектура
 
 ```
                           ┌──────────────┐
@@ -95,161 +96,164 @@ Only `:80`/`:443` are exposed to the internet on NL-2.
    └─────────────────────────────────────────────────────┘
 ```
 
-Layers (`app/`):
+Слои (`app/`):
 
-| Layer | Folder | Purpose |
+| Слой | Папка | Назначение |
 |---|---|---|
-| Domain | `domain/` | Pure entities, enums, repository interfaces |
+| Domain | `domain/` | Чистые entities, enums, интерфейсы репозиториев |
 | Application | `application/` | Use cases + service protocols + DTOs |
 | Infrastructure | `infrastructure/` | DB, Redis, queue, providers, downloader, storage, telegram |
-| Bot | `bot/` | python-telegram-bot handlers, callbacks, keyboards, middleware |
-| API | `api/` | FastAPI internal health + public temp-link routes |
-| Workers | `workers/` | Long-running cleanup + backup processes |
+| Bot | `bot/` | handlers, callbacks, keyboards, middleware для `python-telegram-bot` |
+| API | `api/` | FastAPI: внутренние health endpoints + публичные temp-link routes |
+| Workers | `workers/` | Долгоживущие процессы cleanup + backup |
 | Composition | `composition.py` | Dependency wiring (composition root) |
 
 ---
 
-## Quickstart (single host, dev)
+## Быстрый старт (один хост, dev)
 
-Requirements: Python 3.14+, Docker, ffmpeg. Production target OS: **Ubuntu 24.04 LTS**.
+Требования: Python 3.14+, Docker, `ffmpeg`. Целевая ОС для продакшна:
+**Ubuntu 24.04 LTS**.
 
 ```bash
 git clone <repo-url> dwtgbot && cd dwtgbot
-cp .env.example .env                 # fill in BOT_TOKEN at minimum
-make dev-install                     # creates .venv + installs dev deps
-make precommit-install               # optional, recommended
+cp .env.example .env                 # минимум заполните BOT_TOKEN
+make dev-install                     # создаёт .venv + ставит dev-зависимости
+make precommit-install               # опционально, рекомендуется
 
-# Bring up Postgres + Redis only via the NL-1 stack:
+# Поднимите только Postgres + Redis через NL-1 stack:
 cp deploy/nl1/.env.example deploy/nl1/.env
-deploy/scripts/install.sh            # interactive menu (or use Makefile targets)
+deploy/scripts/install.sh            # интерактивное меню (или Makefile targets)
 
-# Run bot/api/worker in three terminals:
+# Запустите bot/api/worker в трёх терминалах:
 make migrate
 make bot
 make api
 make worker
 ```
 
-Send a YouTube/Instagram link to your bot in Telegram. You should see download
-options as inline buttons.
+Отправьте YouTube/Instagram-ссылку своему боту в Telegram. В ответ должны
+появиться варианты скачивания в виде inline-кнопок.
 
 ---
 
-## Production deploy
+## Продакшн-развертывание
 
-The full step-by-step is in [`docs/20-deployment.md`](docs/20-deployment.md)
-(canonical) and [`docs/24-runbooks.md`](docs/24-runbooks.md) for incident
-response. Short version:
+Полная пошаговая инструкция находится в [`docs/20-deployment.md`](docs/20-deployment.md)
+(канонический документ), а [`docs/24-runbooks.md`](docs/24-runbooks.md) описывает
+реакцию на инциденты. Краткая версия:
 
-1. **Provision two VMs** (NL-1 control plane, NL-2 media plane). **Ubuntu 24.04
-   LTS only** — the installer pins the Docker apt repo to `noble`. Set up a
-   private network between them (WireGuard recommended) so NL-2 can reach
-   NL-1 on `:5432` and `:6379`.
-2. **Clone the repo** to `/opt/dwtgbot` on both servers.
-3. **Run the installer** on each:
+1. **Подготовьте две VM** (NL-1 control plane, NL-2 media plane). **Только
+   Ubuntu 24.04 LTS** — installer привязывает Docker apt repo к `noble`.
+   Настройте приватную сеть между серверами (рекомендуется WireGuard), чтобы
+   NL-2 мог обращаться к NL-1 на `:5432` и `:6379`.
+2. **Склонируйте репозиторий** в `/opt/dwtgbot` на обоих серверах.
+3. **Запустите installer** на каждом сервере:
    ```bash
    cd /opt/dwtgbot
    sudo bash deploy/scripts/install.sh
    ```
-   Use the menu to: install Docker → write `deploy/nl1/.env`
-   (or `deploy/nl2/.env`) → configure ufw → bring the stack up.
-4. **NL-2 only**: obtain SSL certificates:
+   Через меню установите Docker → запишите `deploy/nl1/.env`
+   (или `deploy/nl2/.env`) → настройте `ufw` → поднимите stack.
+4. **Только NL-2**: получите SSL-сертификаты:
    ```bash
    sudo bash deploy/scripts/certbot_init.sh
    ```
-5. **Verify** via `bash deploy/scripts/healthcheck.sh nl1` (and `nl2`).
+5. **Проверьте состояние** через `bash deploy/scripts/healthcheck.sh nl1`
+   (и `nl2`).
 
-### Auto-deploy via GitHub Actions
+### Auto-deploy через GitHub Actions
 
-Configure these secrets per environment (`nl1` and `nl2`):
+Настройте эти secrets для каждого environment (`nl1` и `nl2`):
 
-| Secret | Description |
+| Secret | Описание |
 |---|---|
-| `NL1_HOST` / `NL2_HOST` | Public IP / DNS |
-| `NL1_SSH_USER` / `NL2_SSH_USER` | SSH user with `sudo` |
-| `NL1_SSH_KEY` / `NL2_SSH_KEY` | Private key (PEM) |
-| `NL1_SSH_PORT` / `NL2_SSH_PORT` | Optional, default 22 |
-| `NL1_REPO_PATH` / `NL2_REPO_PATH` | Where the repo is cloned (e.g. `/opt/dwtgbot`) |
+| `NL1_HOST` / `NL2_HOST` | Публичный IP / DNS |
+| `NL1_SSH_USER` / `NL2_SSH_USER` | SSH-пользователь с `sudo` |
+| `NL1_SSH_KEY` / `NL2_SSH_KEY` | Приватный ключ (PEM) |
+| `NL1_SSH_PORT` / `NL2_SSH_PORT` | Опционально, по умолчанию 22 |
+| `NL1_REPO_PATH` / `NL2_REPO_PATH` | Где склонирован репозиторий (например, `/opt/dwtgbot`) |
 
-Then trigger **Actions → Deploy → Run workflow** with `target=both` and the desired
-ref. The workflow runs `deploy/scripts/deploy_update.sh` over SSH on each host.
+Затем запустите **Actions → Deploy → Run workflow** с `target=both` и нужным
+ref. Workflow выполнит `deploy/scripts/deploy_update.sh` по SSH на каждом хосте.
 
 ---
 
-## Configuration reference
+## Справочник конфигурации
 
-All settings come from environment variables, validated by `pydantic-settings`
-on startup. Process aborts immediately if anything is invalid or production-only
-constraints are violated.
+Все настройки берутся из переменных окружения и валидируются через
+`pydantic-settings` при старте. Процесс сразу завершается, если значение
+невалидно или нарушены ограничения для production.
 
-| Var | Default | Notes |
+| Переменная | Значение по умолчанию | Примечания |
 |---|---|---|
-| `APP_ROLE` | `all` | `bot` \| `api` \| `worker` \| `all` (dev only) |
-| `APP_ENV` | `development` | `production` enforces HTTPS + internal token |
+| `APP_ROLE` | `all` | `bot` \| `api` \| `worker` \| `all` (только dev) |
+| `APP_ENV` | `development` | `production` требует HTTPS + internal token |
 | `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR / CRITICAL |
-| `LOG_JSON` | `false` | Use `true` in production for structured logs |
-| `BOT_TOKEN` | — | **Required**, from @BotFather |
-| `BOT_ADMIN_IDS` | empty | Comma-separated TG user IDs |
-| `TELEGRAM_MAX_UPLOAD_MB` | `49` | Files larger than this go through temp links |
-| `POSTGRES_*` | — | Overridden by `DATABASE_URL` if set |
+| `LOG_JSON` | `false` | В production используйте `true` для структурированных логов |
+| `BOT_TOKEN` | — | **Обязателен**, выдаётся @BotFather |
+| `BOT_ADMIN_IDS` | empty | TG user IDs через запятую |
+| `TELEGRAM_MAX_UPLOAD_MB` | `49` | Файлы больше этого лимита идут через temp links |
+| `POSTGRES_*` | — | Переопределяется через `DATABASE_URL`, если задан |
 | `DATABASE_URL` | derived | `postgresql+asyncpg://…` |
-| `REDIS_*` | — | Overridden by `REDIS_URL` if set |
-| `STORAGE_PATH` | `/var/lib/dwtgbot/storage` | Final artefacts |
-| `STORAGE_TMP_PATH` | `/var/lib/dwtgbot/tmp` | Scratch workdirs |
-| `MAX_FILE_SIZE_MB` | `2048` | Hard upper bound on a single download |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | **Must be HTTPS in prod** |
-| `TEMP_LINK_TTL_SECONDS` | `86400` | Link lifetime |
-| `TEMP_LINK_MAX_DOWNLOADS` | `5` | Use limit per token |
+| `REDIS_*` | — | Переопределяется через `REDIS_URL`, если задан |
+| `STORAGE_PATH` | `/var/lib/dwtgbot/storage` | Финальные артефакты |
+| `STORAGE_TMP_PATH` | `/var/lib/dwtgbot/tmp` | Рабочие scratch-директории |
+| `MAX_FILE_SIZE_MB` | `2048` | Жёсткий верхний предел одного скачивания |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | **В prod обязан быть HTTPS** |
+| `TEMP_LINK_TTL_SECONDS` | `86400` | Срок жизни ссылки |
+| `TEMP_LINK_MAX_DOWNLOADS` | `5` | Лимит использований на token |
 | `TEMP_LINK_TOKEN_BYTES` | `32` | URL-safe entropy |
-| `API_INTERNAL_TOKEN` | — | **Required in prod** |
-| `WORKER_CONCURRENCY` | `2` | Parallel downloads per worker |
-| `JOB_TIMEOUT_SECONDS` | `1800` | arq job hard timeout |
-| `JOB_MAX_RETRIES` | `2` | arq retry budget |
-| `DOWNLOAD_TIMEOUT_SECONDS` | `900` | yt-dlp hard timeout |
-| `CLEANUP_INTERVAL_SECONDS` | `3600` | Cleanup loop tick |
-| `MEDIA_CACHE_TTL_SECONDS` | `21600` | media_cache row freshness |
-| `BACKUP_DIR` | `/var/backups/dwtgbot` | Where pg_dump writes |
-| `BACKUP_RETENTION_DAYS` | `14` | Older dumps are pruned |
-| `FFMPEG_BIN` / `YTDLP_BIN` | `ffmpeg` / `yt-dlp` | Override for non-standard paths |
+| `API_INTERNAL_TOKEN` | — | **Обязателен в prod** |
+| `WORKER_CONCURRENCY` | `2` | Параллельные скачивания на worker |
+| `JOB_TIMEOUT_SECONDS` | `1800` | Жёсткий timeout задачи `arq` |
+| `JOB_MAX_RETRIES` | `2` | Retry budget для `arq` |
+| `DOWNLOAD_TIMEOUT_SECONDS` | `900` | Жёсткий timeout `yt-dlp` |
+| `CLEANUP_INTERVAL_SECONDS` | `3600` | Период cleanup loop |
+| `MEDIA_CACHE_TTL_SECONDS` | `21600` | Свежесть строки `media_cache` |
+| `BACKUP_DIR` | `/var/backups/dwtgbot` | Куда пишет `pg_dump` |
+| `BACKUP_RETENTION_DAYS` | `14` | Старые dumps удаляются |
+| `FFMPEG_BIN` / `YTDLP_BIN` | `ffmpeg` / `yt-dlp` | Override для нестандартных путей |
 
-See [`.env.example`](.env.example), [`deploy/nl1/.env.example`](deploy/nl1/.env.example),
-[`deploy/nl2/.env.example`](deploy/nl2/.env.example) for full templates.
+Полные шаблоны см. в [`.env.example`](.env.example),
+[`deploy/nl1/.env.example`](deploy/nl1/.env.example) и
+[`deploy/nl2/.env.example`](deploy/nl2/.env.example).
 
 ---
 
-## Operations
+## Операции
 
-All ops live under `deploy/scripts/`. They share `helpers.sh` (strict mode,
-colored logs in `/var/log/dwtgbot.log`, ERR-trap, interactive confirms,
-`compose_nl1`/`compose_nl2` wrappers).
+Все операционные скрипты лежат в `deploy/scripts/`. Они используют общий
+`helpers.sh` (strict mode, цветные логи в `/var/log/dwtgbot.log`, `ERR`-trap,
+интерактивные подтверждения, wrappers `compose_nl1`/`compose_nl2`).
 
-| Script | Purpose |
+| Скрипт | Назначение |
 |---|---|
-| `install.sh` | Interactive whiptail menu (Docker install, env setup, firewall, start/stop/logs, backup/restore, deploy, certbot, cleanup, healthcheck) |
-| `deploy_update.sh nl1\|nl2` | git pull → config check → optional pre-backup → pull → up -d → migrate (NL-1) → healthcheck |
-| `backup.sh` | `pg_dump` (in-container or via host exec), gzip, retention prune |
-| `restore.sh` | Interactive picker, drops/recreates DB, reloads dump, restarts dependents |
-| `firewall_setup.sh nl1\|nl2` | `ufw` rules; NL-1 requires `PRIVATE_NET` for Postgres/Redis |
-| `cleanup.sh` | Removes old `STORAGE_TMP_PATH/*`, runs one-shot cleanup_worker pass |
-| `certbot_init.sh` | Bootstraps Let's Encrypt cert on NL-2 |
-| `healthcheck.sh nl1\|nl2` | Per-service status + HTTP probes |
+| `install.sh` | Интерактивное whiptail-меню (установка Docker, настройка env, firewall, start/stop/logs, backup/restore, deploy, certbot, cleanup, healthcheck) |
+| `deploy_update.sh nl1\|nl2` | `git pull` → config check → опциональный pre-backup → pull → `up -d` → migrate (NL-1) → healthcheck |
+| `backup.sh` | `pg_dump` (в контейнере или через host exec), gzip, retention prune |
+| `restore.sh` | Интерактивный выбор dump, drop/recreate DB, загрузка dump, restart зависимых сервисов |
+| `firewall_setup.sh nl1\|nl2` | Правила `ufw`; NL-1 требует `PRIVATE_NET` для Postgres/Redis |
+| `cleanup.sh` | Удаляет старые `STORAGE_TMP_PATH/*`, запускает one-shot pass `cleanup_worker` |
+| `certbot_init.sh` | Bootstrap Let's Encrypt certificate на NL-2 |
+| `healthcheck.sh nl1\|nl2` | Статусы сервисов + HTTP probes |
 
-Set `ASSUME_YES=1` to bypass interactive prompts in automation.
+Задайте `ASSUME_YES=1`, чтобы отключить интерактивные prompts в automation.
 
-### Metrics & SLOs
+### Метрики и SLO
 
-When `METRICS_ENABLED=true`, each of the three processes (bot, worker,
-API) exposes its own in-process Prometheus exporter on
-`http://${METRICS_BIND_HOST}:${METRICS_PORT}/metrics`. Bind to a
-private interface only — `validate_runtime` blocks `0.0.0.0` in
-production. See [`docs/35-metrics-and-slo.md`](docs/35-metrics-and-slo.md)
-for the SLO catalogue and the live metric inventory; the architectural
-shape of the three-process exporter is in
+Когда `METRICS_ENABLED=true`, каждый из трёх процессов (bot, worker, API)
+поднимает свой in-process Prometheus exporter на
+`http://${METRICS_BIND_HOST}:${METRICS_PORT}/metrics`. Биндинг должен быть
+только на приватный interface — `validate_runtime` блокирует `0.0.0.0` в
+production. Каталог SLO и живой inventory метрик описаны в
+[`docs/35-metrics-and-slo.md`](docs/35-metrics-and-slo.md); архитектурная форма
+трёхпроцессного exporter'а зафиксирована в
 [`docs/adr/0007-job-queue-worker-metrics.md`](docs/adr/0007-job-queue-worker-metrics.md).
 
 ---
 
-## Development
+## Разработка
 
 ```bash
 make dev-install      # .venv + dev deps
@@ -260,11 +264,11 @@ make test             # pytest
 make precommit-install
 ```
 
-> Formatter is **`ruff format`** (a byte-compatible reimplementation of `black`,
-> ~30× faster). We do not use `black` directly to avoid two formatters in the
-> same repo.
+> Formatter — **`ruff format`** (байт-совместимая реализация `black`, примерно
+> в 30 раз быстрее). `black` напрямую не используется, чтобы не держать два
+> formatter'а в одном репозитории.
 
-Run individual processes locally (Postgres + Redis from the NL-1 compose stack):
+Локальный запуск отдельных процессов (Postgres + Redis берутся из NL-1 compose stack):
 
 ```bash
 make migrate
@@ -275,26 +279,26 @@ make worker    # python -m app.main_worker
 
 ---
 
-## Testing & CI
+## Тестирование и CI
 
-- Unit tests live in `app/tests/`. They use fakes for repos/queues; no real
-  network/DB/Redis is touched.
-- Integration tests should be marked with `@pytest.mark.integration`. They
-  are excluded by default (`pytest -m "not integration"`).
-- `.github/workflows/ci.yml` runs ruff format + check, mypy, pytest, and
-  shellcheck on every PR.
-- `.github/workflows/build-images.yml` builds and pushes `bot`/`api`/`worker`/`backup`
-  images to GHCR on `main` and tags.
-- `.github/workflows/deploy.yml` is manual; SSHes to NL-1/NL-2 and runs
-  `deploy_update.sh`.
+- Unit tests находятся в `app/tests/`. Они используют fakes для repos/queues;
+  реальная сеть/DB/Redis не затрагиваются.
+- Integration tests должны быть помечены `@pytest.mark.integration`. По
+  умолчанию они исключены (`pytest -m "not integration"`).
+- `.github/workflows/ci.yml` запускает ruff format + check, mypy, pytest и
+  shellcheck на каждом PR.
+- `.github/workflows/build-images.yml` собирает и публикует образы
+  `bot`/`api`/`worker`/`backup` в GHCR на `main` и tags.
+- `.github/workflows/deploy.yml` запускается вручную; подключается по SSH к
+  NL-1/NL-2 и выполняет `deploy_update.sh`.
 
 ---
 
-## Project layout
+## Структура проекта
 
 ```
 app/
-  bot/                   python-telegram-bot handlers, keyboards, callbacks
+  bot/                   handlers, keyboards, callbacks для python-telegram-bot
   api/                   FastAPI: internal health + public /d/{token}
   application/           Use cases, service protocols, DTOs
   domain/                Pure entities, enums, repository interfaces
@@ -327,39 +331,40 @@ migrations/
 
 ---
 
-## Troubleshooting
+## Устранение неполадок
 
-Operational runbooks for the 20 most common incidents are in
-[`docs/24-runbooks.md`](docs/24-runbooks.md); deep-dive diagnostics
-(log analysis, error classification, symptom→cause tables) live in
-[`docs/31-troubleshooting.md`](docs/31-troubleshooting.md).
-A few quick pointers:
+Операционные runbook'и для 20 самых частых инцидентов находятся в
+[`docs/24-runbooks.md`](docs/24-runbooks.md); подробная диагностика
+(анализ логов, классификация ошибок, таблицы symptom→cause) — в
+[`docs/31-troubleshooting.md`](docs/31-troubleshooting.md). Несколько быстрых
+подсказок:
 
-- **"Sorry, I can't process this link"** → check worker logs:
-  `compose_nl2 logs -f worker`. Usually yt-dlp metadata fetch failed
-  (private/region-locked content).
-- **Files never delivered, jobs stuck `pending`** → Redis connectivity from NL-2.
-  Verify `REDIS_HOST`/`REDIS_URL` and the private network.
-- **Temp link returns 404** → either the file was already cleaned up, the link
-  expired, or `STORAGE_PATH` does not match between worker and Nginx volumes.
-- **Certbot fails on first run** → ensure DNS A-record points to NL-2 and `:80`
-  is open in ufw and at the cloud provider level.
+- **"Sorry, I can't process this link"** → проверьте worker logs:
+  `compose_nl2 logs -f worker`. Обычно не удалось получить metadata через
+  `yt-dlp` (private/region-locked content).
+- **Файлы не доставляются, jobs stuck `pending`** → проверьте Redis connectivity
+  с NL-2. Убедитесь, что `REDIS_HOST`/`REDIS_URL` и приватная сеть настроены
+  правильно.
+- **Temp link возвращает 404** → файл уже был очищен, ссылка истекла или
+  `STORAGE_PATH` не совпадает между worker и Nginx volumes.
+- **Certbot падает при первом запуске** → убедитесь, что DNS A-record указывает
+  на NL-2, а `:80` открыт в `ufw` и на уровне cloud provider.
 
 ---
 
-## Architectural decisions (locked)
+## Архитектурные решения (зафиксированные)
 
-The following choices are intentional and fixed. Don't change them in PRs
-without an explicit RFC discussion.
+Следующие решения приняты намеренно и зафиксированы. Не меняйте их в PR без
+явного RFC-обсуждения.
 
-| # | Area | Decision |
+| # | Область | Решение |
 |---|---|---|
-| 1 | Language | Python 3.14+ |
-| 2 | Bot framework | python-telegram-bot |
-| 3 | Queue | Redis (arq) |
-| 4 | Database | PostgreSQL + SQLAlchemy 2.x + Alembic |
-| 5 | Download engine | yt-dlp |
-| 6 | Media processing | ffmpeg |
+| 1 | Язык | Python 3.14+ |
+| 2 | Bot framework | `python-telegram-bot` |
+| 3 | Очередь | Redis (`arq`) |
+| 4 | База данных | PostgreSQL + SQLAlchemy 2.x + Alembic |
+| 5 | Download engine | `yt-dlp` |
+| 6 | Media processing | `ffmpeg` |
 | 7 | Delivery | small files → Telegram; big files → temporary HTTPS link |
 | 8 | Infrastructure | NL-1: bot + redis + postgres; NL-2: worker + nginx + certbot + cleanup |
 | 9 | Deployment | Docker Compose |
@@ -370,6 +375,6 @@ without an explicit RFC discussion.
 | 14 | Lint / format / types | `ruff check` + `ruff format` (black-compatible) + `mypy` |
 | 15 | Tests | `pytest` |
 
-## License
+## Лицензия
 
-MIT — see [`LICENSE`](LICENSE).
+MIT — см. [`LICENSE`](LICENSE).

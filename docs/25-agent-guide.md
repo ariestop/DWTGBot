@@ -985,6 +985,13 @@ Update the root `README.md` only when:
 - Changing the locked-decisions table.
 - Changing how to set up locally (rare).
 
+### 13.4 Язык документации
+
+Все новые и изменяемые описания документации агенты ведут на русском
+языке. Технические идентификаторы, имена команд, переменные окружения,
+пути, API routes, event names и названия библиотек остаются в исходном
+виде, чтобы не ломать ссылки, команды и поиск по коду.
+
 ---
 
 ## 14. Testing obligations
