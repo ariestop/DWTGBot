@@ -145,12 +145,21 @@ class TelegramSender:
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
+        disable_web_page_preview: bool = False,
     ) -> None:
+        # ``disable_web_page_preview`` exists primarily for the temp-link
+        # delivery path. Without it Telegram's preview crawler fetches
+        # ``/d/<token>`` before the user clicks, which consumes one (or
+        # more, with Range probes) slots from the atomic
+        # ``downloads_count`` counter and can leave the user staring at
+        # a "Link expired or exhausted" 410 on their first manual click
+        # — see ``docs/10-temp-links-and-delivery.md`` §rationale.
         await self._bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview,
         )
 
     async def send_video(

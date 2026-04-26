@@ -164,7 +164,9 @@ class _FakeTelegramSender:
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
+        disable_web_page_preview: bool = False,
     ) -> None:
+        del disable_web_page_preview
         self.texts.append(_SentText(chat_id=chat_id, text=text, reply_markup=reply_markup))
 
     async def send_audio(

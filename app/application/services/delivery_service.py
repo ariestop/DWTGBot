@@ -191,7 +191,19 @@ class DeliveryService:
         footer = self._settings.BRAND_FOOTER
         if footer:
             message = f"{message}\n\n{footer}"
-        await self._sender.send_text(chat_id, message, reply_markup=reply_markup)
+        # Disable the link preview: otherwise Telegram's server-side
+        # crawler hits ``/d/<token>`` to render the OG card and burns
+        # one (sometimes more) slots from ``temp_links.downloads_count``
+        # before the user has a chance to click. The visible failure
+        # mode is a 410 ``"Link expired or exhausted"`` on what the
+        # user perceives as their first click. ``docs/10-temp-links-
+        # and-delivery.md`` §rationale documents this exact pitfall.
+        await self._sender.send_text(
+            chat_id,
+            message,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
         _logger.info("delivered_via_temp_link", job_id=job_id, size=size, file=file.name)
         return DeliveryOutcome(
             method=DeliveryMethod.TEMP_LINK,

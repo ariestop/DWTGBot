@@ -91,8 +91,9 @@ class _SenderVideo:
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
+        disable_web_page_preview: bool = False,
     ) -> None:
-        del chat_id
+        del chat_id, disable_web_page_preview
         self.calls.append(
             _Call(kind="text", file=None, text=text, caption=None, reply_markup=reply_markup)
         )

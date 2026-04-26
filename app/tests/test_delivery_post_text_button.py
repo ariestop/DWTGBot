@@ -38,6 +38,7 @@ class _SendCall:
     text: str | None
     caption: str | None
     reply_markup: InlineKeyboardMarkup | None
+    disable_web_page_preview: bool | None = None
 
 
 class _FakeSender:
@@ -70,6 +71,7 @@ class _FakeSender:
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
+        disable_web_page_preview: bool = False,
     ) -> None:
         self.calls.append(
             _SendCall(
@@ -79,6 +81,7 @@ class _FakeSender:
                 text=text,
                 caption=None,
                 reply_markup=reply_markup,
+                disable_web_page_preview=disable_web_page_preview,
             )
         )
 
@@ -294,3 +297,8 @@ class TestPostTextButton:
         assert _extract_button_label(sender.calls[0].reply_markup) == "Получить текст поста 👇"
         assert sender.calls[0].text is not None
         assert "Нажмите, чтобы получить текст поста" not in sender.calls[0].text
+        # Telegram's preview crawler must not be allowed to hit
+        # ``/d/<token>`` and pre-consume slots from the atomic
+        # ``downloads_count`` counter — otherwise the user's first
+        # manual click returns 410 "Link expired or exhausted".
+        assert sender.calls[0].disable_web_page_preview is True

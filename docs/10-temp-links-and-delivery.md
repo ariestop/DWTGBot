@@ -311,6 +311,7 @@ runs in a self-hosted Bot API server, raise this in `Settings` to up to
 | Cleanup container disabled | Disk fills up | Re-enable; alert on disk > 80% |
 | `PUBLIC_BASE_URL` does not match cert SAN | TLS error in browser | Re-issue cert with the right `--domains` |
 | Bot sends link before `mark_done` persisted | If worker crashes between, message exists but DB lacks `public_url` | Order: persist first, then send |
+| Temp-link message sent **with** Telegram link preview enabled | First user click returns 410 "Link expired or exhausted" because the Telegram preview crawler hit `/d/<token>` and consumed slot(s) from `downloads_count` | Send the temp-link message with `disable_web_page_preview=True` (see `DeliveryService._deliver_via_link`) |
 
 ---
 

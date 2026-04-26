@@ -12,6 +12,30 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — Temp-link 410 "Link expired or exhausted" on the first click
+
+When the worker delivered a large file via a temp link, the message was
+sent with Telegram's default **link preview enabled**. Telegram's
+server-side preview crawler then fetched ``/d/<token>`` to render the
+OG card, atomically incrementing ``temp_links.downloads_count`` (and on
+some payloads making more than one Range probe). With
+``TEMP_LINK_MAX_DOWNLOADS`` set low — or simply unlucky — the link was
+already deactivated by the time the user tapped it, surfacing as
+``{"detail": "Link expired or exhausted"}`` (HTTP 410) on what looked
+like the very first click.
+
+- ``DeliveryService._deliver_via_link`` now passes
+  ``disable_web_page_preview=True`` when sending the temp-link
+  message, so the crawler never reaches the protected endpoint and the
+  user gets every slot of ``TEMP_LINK_MAX_DOWNLOADS``.
+- ``TelegramSender.send_text`` grew a kwarg-only
+  ``disable_web_page_preview`` parameter (default ``False``) — every
+  other call site (failure notice, gallery caption) is unchanged.
+- Regression covered by
+  ``test_temp_link_delivery_attaches_button`` in
+  ``app/tests/test_delivery_post_text_button.py``.
+- Pitfall captured in ``docs/10-temp-links-and-delivery.md`` §11.
+
 ### Fixed — Bot silent after ``/start`` (webhook vs polling)
 
 If a bot token previously had a **webhook** URL set, Telegram stops
