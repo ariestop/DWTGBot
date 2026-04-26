@@ -36,12 +36,27 @@ git_pull_if_possible() {
     log_info "AUTODEPLOY_SKIP_GIT_PULL=1, пропускаю git pull"
     return
   fi
-  if [[ -d "${PROJECT_ROOT}/.git" ]]; then
-    log_step "git pull"
-    git -C "${PROJECT_ROOT}" pull --ff-only || log_warn "git pull failed (continuing)"
-  else
+  if [[ ! -d "${PROJECT_ROOT}/.git" ]]; then
     log_info "No .git directory — skipping pull"
+    return
   fi
+
+  # Skip pull cleanly when the working copy is in detached HEAD state.
+  # auto_deploy.sh deliberately puts the repo there (via
+  # ``git checkout --detach <sha>``) to pin the checkout to the same sha
+  # as the docker images. Calling ``git pull`` in that state errors out
+  # with "You are not currently on a branch" — that's not a failure
+  # operators need to see; it's the expected steady state for a
+  # production host running under autodeploy.
+  local current_branch
+  current_branch="$(git -C "${PROJECT_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+  if [[ "${current_branch}" == "HEAD" ]]; then
+    log_info "Repo is in detached HEAD (autodeploy-pinned); skipping git pull"
+    return
+  fi
+
+  log_step "git pull"
+  git -C "${PROJECT_ROOT}" pull --ff-only || log_warn "git pull failed (continuing)"
 }
 
 validate_config() {

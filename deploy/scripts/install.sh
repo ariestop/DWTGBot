@@ -188,6 +188,49 @@ opt_install_autodeploy() {
   sudo bash "${SCRIPT_DIR}/install_autodeploy.sh" "${target}"
 }
 
+# opt_autodeploy_now — best-effort "update this host to latest main".
+#
+# Why this exists separate from ``opt_deploy_update``:
+#   - ``opt_deploy_update`` (== plain ``deploy_update.sh``) is a rolling
+#     restart that uses the IMAGE_TAG (or IMAGE_API/IMAGE_WORKER)
+#     **already in the host's .env**. If the .env is stale, it'll happily
+#     redeploy old code without complaining. Operators repeatedly hit this
+#     ("I clicked Deploy update but the bot still has the old bug"): the
+#     menu doesn't fetch the latest sha; it just rolls.
+#   - ``opt_autodeploy_now`` triggers ``dwtgbot-autodeploy.service``,
+#     which queries GitHub for the head of ``main``, waits for green
+#     CI + ``build-images``, exports the right ``IMAGE_API`` /
+#     ``IMAGE_WORKER`` for that sha, checks out the matching tree, and
+#     finally calls ``deploy_update.sh``. That's the path that actually
+#     advances the host to ``origin/main``.
+#
+# Falls back to a clear error if the systemd unit isn't installed yet —
+# the operator should install it via ``[17] Install autodeploy service``
+# first. We don't auto-install because that requires root and a token.
+opt_autodeploy_now() {
+  log_step "Trigger autodeploy now (advance host to origin/main)"
+  if ! has_command systemctl; then
+    die "systemctl not available — autodeploy is systemd-based"
+  fi
+  if ! systemctl list-unit-files dwtgbot-autodeploy.service >/dev/null 2>&1 \
+        || ! systemctl cat dwtgbot-autodeploy.service >/dev/null 2>&1; then
+    log_error "dwtgbot-autodeploy.service is not installed on this host"
+    log_info  "Install it first: menu option [17] Install autodeploy service"
+    return 1
+  fi
+
+  log_info "Starting dwtgbot-autodeploy.service synchronously..."
+  # ``systemctl start --wait`` blocks until the unit finishes, so the
+  # operator sees the deploy finish (or fail) before the menu redraws.
+  if sudo systemctl start --wait dwtgbot-autodeploy.service; then
+    log_ok "Autodeploy unit completed"
+  else
+    log_error "Autodeploy unit failed (see journalctl)"
+  fi
+  log_info "Recent log:"
+  sudo journalctl -u dwtgbot-autodeploy.service -n 80 --no-pager || true
+}
+
 # _default_stack — какой стек предложить по умолчанию для опций,
 # которые требуют выбора между nl1/nl2. На реальных хостах
 # присутствует только один ``.env`` (NL-1 ИЛИ NL-2), и проще
@@ -236,8 +279,9 @@ MENU_ITEMS=(
   "13" "Backup database (NL-1)"
   "14" "Restore database (NL-1)"
   "15" "Cleanup old files (NL-2)"
-  "16" "Deploy update"
-  "17" "Install autodeploy service"
+  "16" "Update to latest main (autodeploy now)"
+  "17" "Rolling restart with current .env"
+  "18" "Install autodeploy service"
   "0"  "Exit"
 )
 
@@ -258,8 +302,9 @@ run_action() {
     13) opt_backup ;;
     14) opt_restore ;;
     15) opt_cleanup ;;
-    16) opt_deploy_update ;;
-    17) opt_install_autodeploy ;;
+    16) opt_autodeploy_now ;;
+    17) opt_deploy_update ;;
+    18) opt_install_autodeploy ;;
     0)  exit 0 ;;
     *)  log_warn "Unknown choice: $1" ;;
   esac
