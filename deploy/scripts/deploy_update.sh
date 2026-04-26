@@ -70,6 +70,30 @@ apply() {
   run_compose up -d --remove-orphans
 }
 
+# On NL-2 the api container gets a new IP every time ``compose up -d``
+# recreates it (image rolled, env changed, ...). The nginx config now
+# uses a variable in ``proxy_pass`` + Docker's embedded DNS so it
+# re-resolves on its own within ``valid=10s`` — but we still bounce
+# nginx defensively here. Reasons:
+#   1) Belt-and-suspenders: if a future change reintroduces an
+#      ``upstream`` block by accident the deploy still self-heals.
+#   2) Mounted nginx config files (``conf.d/*.template``,
+#      ``snippets/*``) only get re-evaluated by nginx-entrypoint on
+#      container start. ``compose up -d`` does NOT recreate nginx
+#      when only its bind-mounts changed, so config edits would
+#      otherwise sit dormant until the next manual restart. This
+#      makes nginx-config changes auto-deployable.
+# Cheap (sub-second on a healthy container) and idempotent.
+restart_nginx_if_present() {
+  if [[ "${TARGET}" != "nl2" ]]; then
+    return
+  fi
+  if run_compose ps --services 2>/dev/null | grep -qx nginx; then
+    log_step "Restarting nginx to refresh upstream resolution"
+    run_compose restart nginx
+  fi
+}
+
 run_migrations() {
   if [[ "${TARGET}" == "nl1" ]]; then
     log_step "Running migrations"
@@ -101,6 +125,7 @@ main() {
   pull_images
   apply
   run_migrations
+  restart_nginx_if_present
   verify
   log_ok "Deploy ${TARGET} finished"
 }

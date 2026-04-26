@@ -166,7 +166,13 @@ Snippet from `deploy/nginx/conf.d/media.conf.template`:
 
 ```nginx
 location /d/ {
-    proxy_pass         http://dwtgbot_api;
+    # Docker embedded DNS + variable in proxy_pass forces per-request
+    # re-resolution of the ``api`` hostname so a recreated api container
+    # is picked up within ``valid=10s`` (canonical comment lives in
+    # ``deploy/nginx/conf.d/media.conf.template``).
+    resolver        127.0.0.11 valid=10s ipv6=off;
+    set $api_upstream http://api:${API_PORT};
+    proxy_pass         $api_upstream;
     proxy_set_header   X-Internal-XAccel "1";
     proxy_buffering    off;
 }

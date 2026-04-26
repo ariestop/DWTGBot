@@ -9,12 +9,27 @@
 #                                   pointing to the internal /_protected/
 #                                   location, where nginx serves the file
 #                                   via sendfile().
-# =====================================================================
-
-upstream dwtgbot_api {
-    server api:${API_PORT};
-    keepalive 16;
-}
+#
+# Note on upstream resolution:
+#   We deliberately do NOT use an ``upstream { server api:8080; }`` block
+#   here. nginx resolves the hostname inside ``upstream`` exactly once,
+#   at config-load time, and caches the IP forever. After
+#   ``docker compose up -d api`` recreates the api container it gets a
+#   new IP in the ``dwtgbot_media`` bridge network, but nginx (which
+#   was not restarted) keeps proxying to the dead old IP and every
+#   ``/d/<token>`` returns 502 ``Connection refused`` until somebody
+#   notices and bounces nginx by hand. We hit this in production on
+#   2026-04-26 immediately after auto-deploy rolled the api image.
+#
+# Fix: rely on Docker's embedded DNS at 127.0.0.11 plus a variable in
+# ``proxy_pass``. Using a variable forces nginx to re-resolve the name
+# per request (cached for ``valid=10s`` by the resolver), so a
+# recreated api container is picked up within ~10 seconds without any
+# nginx reload. Trade-off: we lose upstream-level keepalive. ``/d/`` is
+# low-RPS and downloads are long-lived; an extra TCP handshake per
+# request is invisible. If keepalive ever matters again, switch to a
+# named upstream **and** wire ``deploy_update.sh`` to restart nginx
+# whenever api is recreated — see ``deploy/scripts/deploy_update.sh``.
 
 server {
     listen 80;
@@ -89,7 +104,18 @@ server {
         limit_req  zone=temp_link_per_ip      burst=20 nodelay;
         limit_conn temp_link_conn_per_ip      8;
 
-        proxy_pass         http://dwtgbot_api;
+        # Docker's embedded DNS (always at 127.0.0.11 inside any
+        # user-defined bridge network). ``valid=10s`` bounds the staleness
+        # window after a container recreation; ``ipv6=off`` keeps us off
+        # AAAA lookups that the bridge network does not serve and which
+        # add a 5s timeout to the first request after a restart.
+        resolver        127.0.0.11 valid=10s ipv6=off;
+        resolver_timeout 5s;
+        # Variable in ``proxy_pass`` is what triggers per-request
+        # re-resolution; without the variable nginx caches the IP
+        # exactly like an ``upstream`` block does. See header comment.
+        set $api_upstream http://api:${API_PORT};
+        proxy_pass         $api_upstream;
         proxy_http_version 1.1;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;

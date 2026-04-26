@@ -12,6 +12,32 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — `/d/<token>` 502 Bad Gateway after every auto-deploy
+
+`docker compose up -d api` rolls the api container, which gives it a new
+IP in the `dwtgbot_media` bridge network. nginx (long-lived, **not**
+recreated by the same `up -d`) had cached the old IP via
+`upstream { server api:8080; }` — nginx resolves names inside `upstream`
+exactly once at config-load time and caches forever. Result: every
+`/d/<token>` request post-roll returned **502 Bad Gateway** with
+`connect() failed (111: Connection refused) ... upstream:
+"http://172.18.0.2:8080/..."` until somebody bounced nginx by hand.
+Observed in production right after the temp-link 410 fix above shipped.
+
+- `deploy/nginx/conf.d/media.conf.template`: dropped the named
+  `upstream` block; `/d/` now sets `$api_upstream http://api:${API_PORT}`
+  and uses it in `proxy_pass`. A variable in `proxy_pass` forces
+  per-request re-resolution. Added `resolver 127.0.0.11 valid=10s
+  ipv6=off;` (Docker's embedded DNS) so the new container's IP is
+  picked up within ~10 seconds with no nginx reload.
+- `deploy/scripts/deploy_update.sh`: added a defensive
+  `restart_nginx_if_present` step on NL-2 — belt-and-suspenders for
+  config edits to nginx mounts (which `up -d` would not otherwise
+  apply) and for any future regression that reintroduces an upstream
+  block.
+- ADR-0004 §2 + `docs/10-temp-links-and-delivery.md` §5 updated with
+  the rationale for not using a named upstream.
+
 ### Fixed — Temp-link 410 "Link expired or exhausted" on the first click
 
 When the worker delivered a large file via a temp link, the message was

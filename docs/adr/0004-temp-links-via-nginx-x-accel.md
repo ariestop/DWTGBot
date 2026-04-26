@@ -70,8 +70,19 @@ Key configuration points (in `deploy/nginx/conf.d/media.conf.template`,
 zones declared in `deploy/nginx/nginx.conf`):
 - A `location /_protected/ { internal; alias /var/lib/dwtgbot/storage/; }`
   declared `internal` — only reachable via `X-Accel-Redirect`.
-- A `location /d/ { proxy_pass http://dwtgbot_api; }` for the public
-  endpoint, gated by `limit_req` (10 r/s, burst 20 nodelay) and
+- A `location /d/` proxying to `api:${API_PORT}` via a variable
+  (`set $api_upstream ...; proxy_pass $api_upstream;`) plus
+  `resolver 127.0.0.11 valid=10s ipv6=off;` — Docker's embedded DNS
+  with per-request re-resolution. We deliberately do **not** use a
+  named `upstream { server api:8080; }` block because it caches the
+  hostname-IP mapping at config-load time forever; after
+  `docker compose up -d api` rolls the container, the new container's
+  IP differs from the cached one and every `/d/<token>` request 502s
+  with `connect() failed (Connection refused)` until nginx is bounced
+  by hand. Trade-off: no upstream-level keepalive. `/d/` is low-RPS
+  and downloads are long-lived, so the extra TCP handshake per request
+  is invisible in practice. Public endpoint is gated by
+  `limit_req` (10 r/s, burst 20 nodelay) and
   `limit_conn` (8 concurrent) per `$binary_remote_addr`, returning
   **429** on overflow.
 - `Cache-Control: no-store` (+ `Pragma`/`Expires` fallbacks) on both
