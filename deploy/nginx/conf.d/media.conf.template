@@ -104,6 +104,23 @@ server {
         limit_req  zone=temp_link_per_ip      burst=20 nodelay;
         limit_conn temp_link_conn_per_ip      8;
 
+        # NS_ERROR_NET_CORRUPTED_CONTENT_ENCODING in Firefox (Russian:
+        # «Ошибка искажения содержимого») was reported on 2026-04-26
+        # while curl over the same URL succeeded. The diagnostic
+        # signature: browser sends ``Accept-Encoding: gzip, deflate,
+        # br, zstd``, curl by default doesn't. The corruption error
+        # specifically means the response carried a ``Content-Encoding``
+        # the body did not actually use. We don't want **any** content
+        # negotiation on temp-link payloads — they are arbitrary
+        # binaries (mp4, jpg, audio) coming through ``X-Accel-Redirect``
+        # and re-encoding them is pure waste even when it works.
+        # ``gzip off`` disables on-the-fly compression by nginx;
+        # ``gunzip off`` makes sure we don't try to transparently
+        # decompress an upstream that already advertised gzip; together
+        # they guarantee a 1:1 byte stream from disk to socket.
+        gzip   off;
+        gunzip off;
+
         # Docker's embedded DNS (always at 127.0.0.11 inside any
         # user-defined bridge network). ``valid=10s`` bounds the staleness
         # window after a container recreation; ``ipv6=off`` keeps us off
@@ -148,6 +165,14 @@ server {
         alias /var/lib/dwtgbot/storage/;
         sendfile on;
         tcp_nopush on;
+        # See the rationale block in /d/ above — same reasoning applies
+        # to the static-serve side. ``X-Accel-Redirect`` lands here, so
+        # this is the location that actually emits bytes; we want them
+        # raw. Disabling at both layers is defence-in-depth: a future
+        # global ``gzip on; gzip_types *;`` won't silently break
+        # downloads.
+        gzip   off;
+        gunzip off;
         # Force download semantics for unknown types.
         types { }
         default_type application/octet-stream;
