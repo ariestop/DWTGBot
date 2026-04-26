@@ -22,6 +22,33 @@ draws the numbered menu inline with the existing scrollback. Whiptail
 remains available via `--whiptail` flag or `INSTALL_TUI_MODE=whiptail`
 env var.
 
+### Added — `install.sh` styled status panel + ASCII banner
+
+The plain-mode menu now opens with an ASCII block-art banner and a
+64-column unicode-bordered status panel showing what the operator
+needs at a glance before picking an action:
+
+* **Stack** — auto-detected from which `deploy/{nl1,nl2}/.env` exists
+  (`nl1` / `nl2` / `both` / `none`).
+* **Status pill** — ● RUNNING (green) when all compose services are up,
+  ● DEGRADED (yellow) when partial, ● STOPPED (red) when none, ● n/a
+  (yellow) when docker/compose isn't installed yet.
+* **Compose** — `<up>/<total>` services, computed via
+  `docker compose ps --services [--filter status=running]`.
+* **Branch / HEAD** — `git rev-parse --abbrev-ref HEAD` + short SHA, so
+  the operator sees which version they're about to act on.
+* **Domain** — `SERVER_NAME` from the relevant `.env` (NL-2 host).
+* **Docker** — server version (or `not installed`).
+* **OS** — same `${OS_ID} ${OS_VER}` we already detect.
+
+The menu items themselves are rendered as `[N]` with right-aligned
+key cells so single- and double-digit options line up. UTF-8 padding
+is locale-aware (`LC_ALL=C.UTF-8` is exported at the top of the
+script) so multi-byte glyphs (`●`, `─`, `—`) don't push the right
+border off by one column. The previous flat numbered list is gone;
+operators who prefer the whiptail dialog still get it via
+`--whiptail`.
+
 ### Fixed — Telegram preview crawler still burned `/d/<token>` slots despite `is_disabled=True`
 
 The 2026-04-26 fix (`8bece85`) routed `disable_web_page_preview=True`

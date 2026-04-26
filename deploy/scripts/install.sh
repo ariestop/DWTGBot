@@ -21,6 +21,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 source "${SCRIPT_DIR}/helpers.sh"
 
+# Force a UTF-8 locale so bash's ``${#var}`` counts visible glyphs, not
+# bytes. The styled-plain panel pads cells with ``${#var}`` after
+# stripping ANSI codes; without UTF-8 locale, multi-byte chars (``●``,
+# ``─``, em-dash) push the right border off by 2 columns per glyph.
+# ``C.UTF-8`` ships on Ubuntu 24.04 and macOS; we keep an existing
+# operator override if they've explicitly set ``LC_ALL``.
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+export LANG="${LANG:-C.UTF-8}"
+
 # Mode resolution order: CLI flag > env var > auto. The default
 # ``auto`` always picks ``plain`` so the menu degrades to text on any
 # host regardless of whether ``whiptail`` happens to be installed.
@@ -213,8 +222,8 @@ MENU_ITEMS=(
   "14" "Restore database (NL-1)"
   "15" "Cleanup old files (NL-2)"
   "16" "Deploy update"
-  "17" "Установить сервис автодеплоя"
-  "18" "Выход"
+  "17" "Install autodeploy service"
+  "0"  "Exit"
 )
 
 run_action() {
@@ -236,7 +245,7 @@ run_action() {
     15) opt_cleanup ;;
     16) opt_deploy_update ;;
     17) opt_install_autodeploy ;;
-    18) exit 0 ;;
+    0)  exit 0 ;;
     *)  log_warn "Unknown choice: $1" ;;
   esac
 }
@@ -253,24 +262,211 @@ draw_whiptail() {
            "${args[@]}" 3>&1 1>&2 2>&3
 }
 
-draw_plain() {
-  printf '\n%sDWTGBot TUI installer%s\n' "${C_BOLD}" "${C_RESET}"
+# ---------- styled-plain rendering (banner + status + menu) ----------
+#
+# Layout (64-char inner panel width, fixed) so it fits an 80-col terminal
+# with a small left margin and looks good over SSH from a phone too:
+#
+#     ┌──────── banner (block ASCII) ────────┐
+#     │ DWTGBot — Telegram media bot menu    │
+#     ├──────────────────────────────────────┤
+#     │ Stack:    nl2     Status: ● RUNNING  │
+#     │ Compose:  5/5     Branch: main@16efd │
+#     │ Domain:   s1.dwt  Docker: 28.5.2     │
+#     ├──────────────────────────────────────┤
+#     │ [1] Install Docker                   │
+#     │ ...                                  │
+#     └──────────────────────────────────────┘
+#
+# No whiptail. Operator scrollback is preserved between actions, so
+# previous ``ps``/``logs`` output stays visible above the menu.
+
+PANEL_W=64  # inner content width (between │ and │)
+
+_repeat() {
+  # _repeat <char> <count>  -> prints <char> * <count>.
+  # We avoid ``tr`` here because it operates on bytes and would mangle
+  # multi-byte glyphs like ``─`` (3 bytes in UTF-8) into garbage.
+  local ch="$1" n="$2" out=""
+  while (( n > 0 )); do
+    out+="${ch}"
+    (( n-- ))
+  done
+  printf '%s' "${out}"
+}
+
+_pad() {
+  # _pad "<text>" <width>  — right-pad to <width> *visible* chars,
+  # ignoring ANSI escape sequences. Falls back to printf %-Ns when
+  # the input has no escapes.
+  local s="$1" w="$2"
+  local stripped
+  stripped="$(printf '%s' "${s}" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
+  local visible="${#stripped}"
+  if (( visible >= w )); then
+    printf '%s' "${s}"
+  else
+    printf '%s%*s' "${s}" $((w - visible)) ''
+  fi
+}
+
+draw_banner() {
+  local c="${C_BLUE}" r="${C_RESET}"
+  printf '\n'
+  printf '%s██████╗  ██╗    ██╗████████╗ ██████╗ ██████╗  ██████╗ ████████╗%s\n' "${c}" "${r}"
+  printf '%s██╔══██╗ ██║    ██║╚══██╔══╝██╔════╝ ██╔══██╗██╔═══██╗╚══██╔══╝%s\n' "${c}" "${r}"
+  printf '%s██║  ██║ ██║ █╗ ██║   ██║   ██║  ███╗██████╔╝██║   ██║   ██║   %s\n' "${c}" "${r}"
+  printf '%s██║  ██║ ██║███╗██║   ██║   ██║   ██║██╔══██╗██║   ██║   ██║   %s\n' "${c}" "${r}"
+  printf '%s██████╔╝ ╚███╔███╔╝   ██║   ╚██████╔╝██████╔╝╚██████╔╝   ██║   %s\n' "${c}" "${r}"
+  printf '%s╚═════╝   ╚══╝╚══╝    ╚═╝    ╚═════╝ ╚═════╝  ╚═════╝    ╚═╝   %s\n' "${c}" "${r}"
+}
+
+_panel_top()  { printf '%s┌%s┐%s\n' "${C_BLUE}" "$(_repeat '─' "${PANEL_W}")" "${C_RESET}"; }
+_panel_sep()  { printf '%s├%s┤%s\n' "${C_BLUE}" "$(_repeat '─' "${PANEL_W}")" "${C_RESET}"; }
+_panel_bot()  { printf '%s└%s┘%s\n' "${C_BLUE}" "$(_repeat '─' "${PANEL_W}")" "${C_RESET}"; }
+
+_panel_line() {
+  # _panel_line "<inner content with optional ANSI>"
+  # Pads to PANEL_W minus the surrounding " " margins (2).
+  local inner_w=$((PANEL_W - 2))
+  local content
+  content="$(_pad "$1" "${inner_w}")"
+  printf '%s│%s %s %s│%s\n' "${C_BLUE}" "${C_RESET}" "${content}" "${C_BLUE}" "${C_RESET}"
+}
+
+_panel_kv2() {
+  # _panel_kv2 "K1:" "V1" "K2:" "V2"
+  # Two left-aligned columns. Each column is 31 visible chars wide
+  # (inner_w=62 / 2). Keys/values may contain ANSI; padding is
+  # visible-aware via _pad.
+  local col_w=$(((PANEL_W - 2) / 2))
+  local left right
+  left="$(_pad "$(printf '%-9s ' "$1")$2" "${col_w}")"
+  right="$(_pad "$(printf '%-9s ' "$3")$4" "${col_w}")"
+  _panel_line "${left}${right}"
+}
+
+# Compute which compose stack is present here. A host typically only
+# runs nl1 OR nl2; if both .env files exist (developer laptop) we
+# show "both". Output: "nl1" | "nl2" | "both" | "none".
+_detect_stack() {
+  local has1=0 has2=0
+  [[ -f "${DEPLOY_DIR}/nl1/.env" ]] && has1=1
+  [[ -f "${DEPLOY_DIR}/nl2/.env" ]] && has2=1
+  if   [[ "${has1}" == "1" && "${has2}" == "0" ]]; then echo nl1
+  elif [[ "${has1}" == "0" && "${has2}" == "1" ]]; then echo nl2
+  elif [[ "${has1}" == "1" && "${has2}" == "1" ]]; then echo both
+  else echo none
+  fi
+}
+
+# Returns "<up>/<total>" or "n/a" without docker/compose.
+_compose_count() {
+  local stack="$1"
+  if [[ -z "${DOCKER_BIN}" || ${#DOCKER_COMPOSE[@]} -eq 0 ]]; then
+    echo "n/a"; return
+  fi
+  case "${stack}" in
+    nl1)  _compose_count_for compose_nl1 ;;
+    nl2)  _compose_count_for compose_nl2 ;;
+    both) echo "$(_compose_count nl1) / $(_compose_count nl2)" ;;
+    *)    echo "no .env" ;;
+  esac
+}
+_compose_count_for() {
+  local fn="$1" total up
+  total="$("${fn}" ps --services 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+  up="$("${fn}" ps --services --filter status=running 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+  printf '%s/%s' "${up}" "${total}"
+}
+
+_read_env_value() {
+  # _read_env_value KEY <stack>  -> value or empty
+  local key="$1" stack="$2"
+  local file="${DEPLOY_DIR}/${stack}/.env"
+  [[ -f "${file}" ]] || { echo ""; return; }
+  awk -F= -v k="${key}" '$1==k { sub(/^[^=]*=/, ""); print; exit }' "${file}" \
+    | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+_short_sha() { git -C "${PROJECT_ROOT}" rev-parse --short HEAD 2>/dev/null || echo "?"; }
+_branch()    { git -C "${PROJECT_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?"; }
+_docker_ver() {
+  [[ -z "${DOCKER_BIN}" ]] && { echo "not installed"; return; }
+  docker version --format '{{.Server.Version}}' 2>/dev/null \
+    || docker --version 2>/dev/null | awk '{print $3}' | tr -d , \
+    || echo "?"
+}
+
+draw_status_panel() {
+  local stack count branch sha domain dver
+  stack="$(_detect_stack)"
+  count="$(_compose_count "${stack}")"
+  branch="$(_branch)"; sha="$(_short_sha)"
+  dver="$(_docker_ver)"
+  local stack_for_env="${stack}"
+  [[ "${stack}" == "both" ]] && stack_for_env="nl2"
+  domain="$(_read_env_value SERVER_NAME "${stack_for_env}")"
+  [[ -z "${domain}" ]] && domain="—"
+
+  local status_pill
+  if [[ "${count}" == "n/a" || "${count}" == "no .env" ]]; then
+    status_pill="${C_YELLOW}● ${count}${C_RESET}"
+  else
+    local up="${count%%/*}" total="${count##*/}"
+    if [[ "${up}" == "${total}" && "${up}" != "0" ]]; then
+      status_pill="${C_GREEN}● RUNNING${C_RESET}"
+    elif [[ "${up}" == "0" ]]; then
+      status_pill="${C_RED}● STOPPED${C_RESET}"
+    else
+      status_pill="${C_YELLOW}● DEGRADED${C_RESET}"
+    fi
+  fi
+
+  _panel_top
+  _panel_line "${C_BOLD}DWTGBot${C_RESET} — Telegram media bot operator menu"
+  _panel_sep
+  _panel_kv2 "Stack:"   "${stack}"            "Status:" "${status_pill}"
+  _panel_kv2 "Compose:" "${count}"            "Branch:" "${branch}@${sha}"
+  _panel_kv2 "Domain:"  "${domain}"           "Docker:" "${dver}"
+  _panel_kv2 "OS:"      "${OS_ID} ${OS_VER}"  "Mode:"   "plain"
+  _panel_sep
   local i=0
   while [[ $i -lt ${#MENU_ITEMS[@]} ]]; do
-    printf '  %2s) %s\n' "${MENU_ITEMS[i]}" "${MENU_ITEMS[i+1]}"
+    local key="${MENU_ITEMS[i]}" label="${MENU_ITEMS[i+1]}"
+    # Pad single-digit keys so ``[1]`` and ``[17]`` align labels at the
+    # same column (4 visible chars: ``[N] `` or ``[NN]``).
+    local key_cell
+    printf -v key_cell '[%2s]' "${key}"
+    _panel_line "${C_BOLD}${key_cell}${C_RESET} ${label}"
     i=$((i + 2))
   done
+  _panel_bot
+  printf '%sdwtgbot installer%s | %s--whiptail switches to dialog UI%s\n' \
+    "${C_DIM}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
+  printf '%sgithub.com/ariestop/DWTGBot%s\n\n' "${C_DIM}" "${C_RESET}"
+}
+
+draw_plain() {
+  # main() captures our stdout via ``$()`` to read the operator's
+  # choice. The banner + status panel are UI ("chrome") and must hit
+  # the terminal directly, so we route them to stderr. ``read -p``
+  # already prints its prompt to stderr by convention. Only the final
+  # ``echo "${choice}"`` lands on stdout and becomes the function's
+  # return value.
+  draw_banner       >&2
+  draw_status_panel >&2
   local choice
-  read -r -p "Choice: " choice
+  read -r -p "Enter choice [0]: " choice
   echo "${choice}"
 }
 
 main() {
-  log_info "OS: ${OS_ID} ${OS_VER} (target: ubuntu 24.04 LTS)"
-  log_info "Docker: ${DOCKER_BIN:-not installed}"
-  log_info "Compose: ${DOCKER_COMPOSE[*]:-not available}"
+  # The styled-plain panel surfaces OS/Docker/Stack/Compose state, so we
+  # don't duplicate them here. Only show a single warning if the host
+  # OS is unsupported — that's actionable.
   if [[ "${OS_ID}" != "ubuntu" || "${OS_VER}" != "24.04" ]]; then
-    log_warn "Unsupported OS detected; some actions may fail. Target is Ubuntu 24.04 LTS."
+    log_warn "Unsupported OS detected (${OS_ID} ${OS_VER}); target is Ubuntu 24.04 LTS"
   fi
 
   while true; do
