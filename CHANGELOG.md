@@ -12,6 +12,47 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — Telegram preview crawler still burned `/d/<token>` slots despite `is_disabled=True`
+
+The 2026-04-26 fix (`8bece85`) routed `disable_web_page_preview=True`
+through PTB. PTB faithfully forwards
+`link_preview_options.is_disabled=true` to `sendMessage`, but
+production traffic on the same day proved this is **not enough**:
+Telegram's preview crawler (`User-Agent: TelegramBot (like
+TwitterBot)`) still issued real GETs against `/d/<token>` and
+incremented `temp_links.downloads_count` by 1+ per message — exactly
+the failure mode `is_disabled=true` is supposed to prevent. The flag
+reliably hides the preview UI in clients but does not always suppress
+the server-side fetch (likely cache warming / forward-rendering).
+
+The structural fix removes the URL from the only surface Telegram's
+crawler scrapes — the message text/caption — and puts it on a surface
+it does not scrape: an inline `url=` button. URL buttons are
+documented as not subject to preview generation, so the crawler
+literally never sees the URL.
+
+- `DeliveryService._deliver_via_link`: temp-link URL is delivered
+  exclusively as an `InlineKeyboardButton(text="📥 Скачать", url=...)`
+  prepended to the existing keyboard (preserves the "Получить текст
+  поста" callback button when present). The message body now carries
+  only filename + size + TTL hint; no URL, no `<a href="...">` anchor.
+- `TelegramSender.send_text`: switched from the deprecated
+  `disable_web_page_preview=` kwarg to the canonical
+  `link_preview_options=LinkPreviewOptions(is_disabled=...)` (PTB
+  21.x). Behaviour is identical (PTB's `parse_lpo_and_dwpp` does the
+  same conversion) but explicit usage future-proofs us against the
+  legacy alias being removed in PTB v22, and survives via
+  defense-in-depth even if a future code change re-introduces a URL
+  to the message body.
+- Tests updated: `test_temp_link_delivery_attaches_button` now
+  asserts the keyboard layout (download row + post-text row) and
+  proves the URL is not in the message text. New regression
+  `test_temp_link_delivery_no_post_text_still_has_download_button`
+  guarantees we never fall back to a textual URL when the post-text
+  store is empty.
+- `docs/10-temp-links-and-delivery.md` §11: rewrote the "preview
+  crawler" pitfall row with the new mitigation.
+
 ### Fixed — `/d/<token>` 502 Bad Gateway after every auto-deploy
 
 `docker compose up -d api` rolls the api container, which gives it a new

@@ -184,24 +184,59 @@ class DeliveryService:
             raise FileTooLargeError(f"File {file.name} exceeds MAX_FILE_SIZE_MB")
 
         _, url = await self._temp_links.issue(job_id=job_id, file_path=str(file))
-        message = (
-            f"📦 Файл слишком большой для Telegram ({_format_size(size)}).\n"
-            f'Скачать (TTL ограничен): <a href="{url}">{file.name}</a>'
-        )
+        # The URL is delivered as an inline ``url=`` button — never as
+        # text/HTML in the message body. Rationale (production incident
+        # 2026-04-26, see docs/10-temp-links-and-delivery.md §rationale):
+        #
+        #   1. Telegram's preview crawler (UA "TelegramBot (like
+        #      TwitterBot)") fetches links inside message text/captions
+        #      to render OG cards. The crawler issues a real GET to
+        #      ``/d/<token>``, which atomically increments
+        #      ``temp_links.downloads_count`` and on some payloads
+        #      issues additional Range probes — burning multiple slots
+        #      before the user even taps the link. Visible failure
+        #      mode: 410 "Link expired or exhausted" on what the user
+        #      perceives as their first click.
+        #   2. ``link_preview_options=LinkPreviewOptions(is_disabled=True)``
+        #      is *supposed* to prevent this, and PTB faithfully sends
+        #      the field to ``sendMessage``. Empirically (same incident)
+        #      Telegram's crawler still fires for some clients/forwards
+        #      regardless of the flag — likely because the flag only
+        #      hides the preview UI, while the server-side fetch
+        #      happens for cache warming.
+        #   3. Inline ``url=`` buttons are documented as **not** subject
+        #      to preview generation: they render as buttons, the user
+        #      taps, and only then their browser issues a request. No
+        #      bot-side crawler ever sees the URL. This is the only
+        #      airtight way to keep ``downloads_count`` for the user.
+        #
+        # We still pass ``link_preview_options(is_disabled=True)`` as
+        # defense-in-depth in case a future translator/branding change
+        # accidentally re-introduces a URL into the body.
+        message_lines = [
+            f"📦 <b>{_escape(file.name)}</b>",
+            f"Файл слишком большой для Telegram ({_format_size(size)}).",
+            "Ссылка действует ограниченное время и фиксированное число скачиваний.",
+        ]
         footer = self._settings.BRAND_FOOTER
         if footer:
-            message = f"{message}\n\n{footer}"
-        # Disable the link preview: otherwise Telegram's server-side
-        # crawler hits ``/d/<token>`` to render the OG card and burns
-        # one (sometimes more) slots from ``temp_links.downloads_count``
-        # before the user has a chance to click. The visible failure
-        # mode is a 410 ``"Link expired or exhausted"`` on what the
-        # user perceives as their first click. ``docs/10-temp-links-
-        # and-delivery.md`` §rationale documents this exact pitfall.
+            message_lines.append("")
+            message_lines.append(_escape(footer))
+        message = "\n".join(message_lines)
+
+        download_button = InlineKeyboardButton("📥 Скачать", url=url)
+        if reply_markup is None:
+            link_markup = InlineKeyboardMarkup([[download_button]])
+        else:
+            # Prepend a fresh row with the download button so it is the
+            # primary call-to-action; preserve any pre-existing rows
+            # (e.g. the "Получить текст поста" callback button).
+            link_markup = InlineKeyboardMarkup([[download_button], *reply_markup.inline_keyboard])
+
         await self._sender.send_text(
             chat_id,
             message,
-            reply_markup=reply_markup,
+            reply_markup=link_markup,
             disable_web_page_preview=True,
         )
         _logger.info("delivered_via_temp_link", job_id=job_id, size=size, file=file.name)

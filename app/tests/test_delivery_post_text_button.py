@@ -292,13 +292,74 @@ class TestPostTextButton:
 
         assert outcome.method is DeliveryMethod.TEMP_LINK
         assert len(sender.calls) == 1
-        assert sender.calls[0].kind == "text"
-        assert _extract_button_data(sender.calls[0].reply_markup) == _expected_callback_data(42)
-        assert _extract_button_label(sender.calls[0].reply_markup) == "Получить текст поста 👇"
-        assert sender.calls[0].text is not None
-        assert "Нажмите, чтобы получить текст поста" not in sender.calls[0].text
-        # Telegram's preview crawler must not be allowed to hit
-        # ``/d/<token>`` and pre-consume slots from the atomic
-        # ``downloads_count`` counter — otherwise the user's first
-        # manual click returns 410 "Link expired or exhausted".
-        assert sender.calls[0].disable_web_page_preview is True
+        call = sender.calls[0]
+        assert call.kind == "text"
+
+        # The keyboard now has TWO rows: row 0 is the download URL
+        # button (primary CTA), row 1 is the original "Получить текст
+        # поста" callback button. Row 0 carries the temp-link URL —
+        # this is the entire reason the URL is no longer in the
+        # message body (see DeliveryService._deliver_via_link
+        # rationale: URL buttons are NOT subject to Telegram's
+        # preview crawler, so ``temp_links.downloads_count`` is no
+        # longer pre-consumed before the user's first tap).
+        assert call.reply_markup is not None
+        keyboard = call.reply_markup.inline_keyboard
+        assert len(keyboard) == 2
+        download_row = keyboard[0]
+        assert len(download_row) == 1
+        assert download_row[0].text == "📥 Скачать"
+        assert download_row[0].url == "https://tmp.example/abc"
+        assert download_row[0].callback_data is None
+        post_text_row = keyboard[1]
+        assert len(post_text_row) == 1
+        assert post_text_row[0].text == "Получить текст поста 👇"
+        assert post_text_row[0].callback_data == _expected_callback_data(42)
+
+        # The message text must NOT contain the temp-link URL nor an
+        # ``<a href="...">`` anchor — both would expose the URL to
+        # Telegram's link-preview crawler. Title is still shown.
+        assert call.text is not None
+        assert download_row[0].url not in call.text
+        assert "href=" not in call.text
+        assert "<a " not in call.text
+        assert "big.mp4" in call.text  # filename rendered as title
+
+        # Defense-in-depth: even though the URL is now in a button
+        # (which the crawler does not see), keep ``is_disabled=True``
+        # so a future regression that re-introduces a URL in the body
+        # at least hides the preview UI in the client.
+        assert call.disable_web_page_preview is True
+
+    @pytest.mark.asyncio
+    async def test_temp_link_delivery_no_post_text_still_has_download_button(
+        self, tmp_path: Path
+    ) -> None:
+        # When there's no post-text key the keyboard collapses to a
+        # single row containing only the download button. Critically:
+        # we never fall back to putting the URL in the message text,
+        # because that would re-open the crawler-burning-slots path.
+        store = _FakePostTextStore(existing=set())
+        service, sender = _make_service(post_text_store=store)
+        f = tmp_path / "big.mp4"
+        f.write_bytes(b"x" * (60 * 1024 * 1024))
+        result = DownloadResult(
+            files=(str(f),),
+            total_size_bytes=f.stat().st_size,
+            primary_mime="video/mp4",
+            title="Demo",
+            kind=MediaKind.VIDEO,
+        )
+
+        outcome = await service.deliver(job_id=42, chat_id=99, result=result)
+
+        assert outcome.method is DeliveryMethod.TEMP_LINK
+        call = sender.calls[0]
+        assert call.reply_markup is not None
+        keyboard = call.reply_markup.inline_keyboard
+        assert len(keyboard) == 1
+        assert keyboard[0][0].text == "📥 Скачать"
+        assert keyboard[0][0].url == "https://tmp.example/abc"
+        assert call.text is not None
+        assert keyboard[0][0].url not in call.text
+        assert "href=" not in call.text

@@ -317,7 +317,7 @@ runs in a self-hosted Bot API server, raise this in `Settings` to up to
 | Cleanup container disabled | Disk fills up | Re-enable; alert on disk > 80% |
 | `PUBLIC_BASE_URL` does not match cert SAN | TLS error in browser | Re-issue cert with the right `--domains` |
 | Bot sends link before `mark_done` persisted | If worker crashes between, message exists but DB lacks `public_url` | Order: persist first, then send |
-| Temp-link message sent **with** Telegram link preview enabled | First user click returns 410 "Link expired or exhausted" because the Telegram preview crawler hit `/d/<token>` and consumed slot(s) from `downloads_count` | Send the temp-link message with `disable_web_page_preview=True` (see `DeliveryService._deliver_via_link`) |
+| Temp-link URL embedded in **message text** (anchor or plain) | First user click returns 410 "Link expired or exhausted" because Telegram's preview crawler (UA `TelegramBot (like TwitterBot)`) hit `/d/<token>` and consumed slot(s) from `downloads_count` — observed in production 2026-04-26 even with `link_preview_options.is_disabled=True` | Move the URL out of the message body into an inline `url=` button (`InlineKeyboardButton(text="📥 Скачать", url=...)`). Inline URL buttons are not subject to preview generation; the crawler never sees the URL. Keep `link_preview_options(is_disabled=True)` as defense-in-depth. See `DeliveryService._deliver_via_link`. |
 
 ---
 

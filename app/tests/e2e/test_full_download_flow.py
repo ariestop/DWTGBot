@@ -545,8 +545,21 @@ async def test_large_result_falls_back_to_temp_link_without_direct_upload(
 
     assert sender.videos == []
     assert len(sender.texts) == 1
-    assert "https://media.example.com/d/temp-100" in sender.texts[0].text
-    assert "Footer text" in sender.texts[0].text
+    sent = sender.texts[0]
+    # Post-incident invariant (2026-04-26, see
+    # ``DeliveryService._deliver_via_link``): the temp-link URL is
+    # delivered ONLY via an inline ``url=`` button — never as text or
+    # an HTML anchor in the body. Telegram's preview crawler scrapes
+    # text/captions but not URL buttons; keeping the URL out of the
+    # body is the only way to stop the crawler from pre-consuming
+    # ``temp_links.downloads_count``.
+    assert "https://media.example.com/d/temp-100" not in sent.text
+    assert "href=" not in sent.text
+    assert "Footer text" in sent.text
+    assert sent.reply_markup is not None
+    keyboard = sent.reply_markup.inline_keyboard
+    assert keyboard[0][0].text == "📥 Скачать"
+    assert keyboard[0][0].url == "https://media.example.com/d/temp-100"
     expected_path = str(storage.job_dir(payload.job_id) / "result.mp4")
     assert temp_links.issued == [(payload.job_id, expected_path)]
     job = await repo.get(payload.job_id)

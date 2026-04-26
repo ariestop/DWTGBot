@@ -26,7 +26,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from telegram import Bot, InlineKeyboardMarkup, InputFile
+from telegram import Bot, InlineKeyboardMarkup, InputFile, LinkPreviewOptions
 from telegram.constants import ParseMode
 from telegram.request import HTTPXRequest
 
@@ -147,19 +147,29 @@ class TelegramSender:
         reply_markup: InlineKeyboardMarkup | None = None,
         disable_web_page_preview: bool = False,
     ) -> None:
-        # ``disable_web_page_preview`` exists primarily for the temp-link
-        # delivery path. Without it Telegram's preview crawler fetches
-        # ``/d/<token>`` before the user clicks, which consumes one (or
-        # more, with Range probes) slots from the atomic
-        # ``downloads_count`` counter and can leave the user staring at
-        # a "Link expired or exhausted" 410 on their first manual click
-        # — see ``docs/10-temp-links-and-delivery.md`` §rationale.
+        # The ``disable_web_page_preview`` kwarg was kept for backwards
+        # source compatibility (call-sites in ``app/bot/callbacks/``
+        # still pass it). Internally we forward via the canonical PTB
+        # 21.x API ``link_preview_options=LinkPreviewOptions(is_disabled=...)``;
+        # PTB's auto-conversion of the legacy bool was traced to be
+        # equivalent (see ``telegram/_utils/argumentparsing.py
+        # parse_lpo_and_dwpp`` in v21.11.1) but using the typed object
+        # explicitly removes any future ambiguity if the legacy alias
+        # is removed in PTB v22.
+        #
+        # IMPORTANT: ``is_disabled=True`` reliably HIDES the preview
+        # in Telegram clients but does NOT reliably suppress the
+        # server-side crawler that fetches the URL to warm preview
+        # caches. The temp-link path therefore additionally moves the
+        # URL into an inline ``url=`` button (URL buttons are not
+        # crawled) — see ``DeliveryService._deliver_via_link``.
+        link_preview = LinkPreviewOptions(is_disabled=disable_web_page_preview)
         await self._bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
-            disable_web_page_preview=disable_web_page_preview,
+            link_preview_options=link_preview,
         )
 
     async def send_video(
