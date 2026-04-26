@@ -156,7 +156,7 @@ opt_create_env() {
 opt_firewall() {
   log_step "Firewall setup"
   local target
-  prompt_value target "Stack" "nl1"
+  prompt_value target "Stack" "$(_default_stack)"
   if [[ "${target}" == "nl1" ]]; then
     prompt_value PRIVATE_NET "Private network CIDR (WireGuard subnet)" "10.10.0.0/24"
     sudo PRIVATE_NET="${PRIVATE_NET}" bash "${SCRIPT_DIR}/firewall_setup.sh" nl1
@@ -178,14 +178,29 @@ opt_cleanup() { bash "${SCRIPT_DIR}/cleanup.sh"; }
 
 opt_deploy_update() {
   local target
-  prompt_value target "Stack" "nl1"
+  prompt_value target "Stack" "$(_default_stack)"
   bash "${SCRIPT_DIR}/deploy_update.sh" "${target}"
 }
 
 opt_install_autodeploy() {
   local target
-  prompt_value target "Стек для автодеплоя (nl1/nl2)" "nl1"
+  prompt_value target "Стек для автодеплоя (nl1/nl2)" "$(_default_stack)"
   sudo bash "${SCRIPT_DIR}/install_autodeploy.sh" "${target}"
+}
+
+# _default_stack — какой стек предложить по умолчанию для опций,
+# которые требуют выбора между nl1/nl2. На реальных хостах
+# присутствует только один ``.env`` (NL-1 ИЛИ NL-2), и проще
+# подставить его автоматически, чем заставлять оператора каждый раз
+# набирать nl2 руками. Если ничего не найдено или есть оба
+# (laptop dev) — fallback на nl1 для обратной совместимости.
+_default_stack() {
+  case "$(_detect_stack)" in
+    nl1)  echo nl1 ;;
+    nl2)  echo nl2 ;;
+    both) echo nl1 ;;
+    *)    echo nl1 ;;
+  esac
 }
 
 # Auto-pick whichever stack has an .env on this host. If both exist, ask.
