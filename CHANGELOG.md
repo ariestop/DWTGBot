@@ -12,6 +12,16 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Changed — `install.sh` defaults to plain text menu (whiptail opt-in)
+
+Operator feedback: the whiptail dialog hid the scrolling shell context
+(last command output, healthcheck results, log tails) the moment it
+drew, which is the wrong UX during a deploy where the operator is
+reading state between actions. `bash deploy/scripts/install.sh` now
+draws the numbered menu inline with the existing scrollback. Whiptail
+remains available via `--whiptail` flag or `INSTALL_TUI_MODE=whiptail`
+env var.
+
 ### Fixed — Telegram preview crawler still burned `/d/<token>` slots despite `is_disabled=True`
 
 The 2026-04-26 fix (`8bece85`) routed `disable_web_page_preview=True`

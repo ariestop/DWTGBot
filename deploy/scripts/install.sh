@@ -3,16 +3,62 @@
 # DWTGBot TUI installer / operator menu.
 #
 # Run as a regular user (it will sudo when needed). Idempotent and safe
-# to re-run. Uses whiptail for TUI when available; falls back to numbered menu.
+# to re-run.
 #
-#   bash deploy/scripts/install.sh
+#   bash deploy/scripts/install.sh              # default: plain numbered menu
+#   bash deploy/scripts/install.sh --whiptail   # whiptail GUI (if installed)
+#   INSTALL_TUI_MODE=whiptail bash deploy/scripts/install.sh
+#
+# Why plain by default (operator feedback 2026-04-26): whiptail's
+# dialog box hides the scrolling shell context (last command output,
+# log lines, healthcheck results) the moment it draws, which is
+# exactly the wrong UX during a deploy where the operator is reading
+# logs between actions. Plain mode keeps everything in the same
+# scrollable buffer; whiptail remains opt-in for SSH sessions on
+# capable terminals where the dialog UX is preferred.
 # =====================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 source "${SCRIPT_DIR}/helpers.sh"
 
+# Mode resolution order: CLI flag > env var > auto. The default
+# ``auto`` always picks ``plain`` so the menu degrades to text on any
+# host regardless of whether ``whiptail`` happens to be installed.
+INSTALL_TUI_MODE="${INSTALL_TUI_MODE:-auto}"
+for arg in "$@"; do
+  case "${arg}" in
+    --whiptail) INSTALL_TUI_MODE="whiptail" ;;
+    --plain)    INSTALL_TUI_MODE="plain" ;;
+    -h|--help)
+      cat <<USAGE
+Usage: install.sh [--plain | --whiptail]
+
+  --plain       (default) numbered text menu, keeps shell scrollback
+  --whiptail    full-screen whiptail dialog (requires whiptail binary)
+
+Env: INSTALL_TUI_MODE=plain|whiptail (overridden by flags above).
+USAGE
+      exit 0
+      ;;
+  esac
+done
+
 USE_WHIPTAIL=0
-if has_command whiptail; then USE_WHIPTAIL=1; fi
+case "${INSTALL_TUI_MODE}" in
+  whiptail)
+    if has_command whiptail; then
+      USE_WHIPTAIL=1
+    else
+      log_warn "whiptail requested but not installed; falling back to plain menu"
+    fi
+    ;;
+  plain|auto)
+    USE_WHIPTAIL=0
+    ;;
+  *)
+    log_warn "Unknown INSTALL_TUI_MODE='${INSTALL_TUI_MODE}'; using plain"
+    ;;
+esac
 
 # ---------- option implementations ----------
 

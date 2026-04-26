@@ -19,7 +19,7 @@ called out.
 >   NL-2 (worker + Nginx + storage + cleanup + certbot).
 > - **OS**: Ubuntu 24.04 LTS (`noble`).
 > - **Runtime**: Docker + Docker Compose plugin only (no k8s).
-> - **Operator surface**: `deploy/scripts/install.sh` (interactive bash menu).
+> - **Operator surface**: `deploy/scripts/install.sh` — numbered text menu by default; `--whiptail` (or `INSTALL_TUI_MODE=whiptail`) opts into the full-screen dialog UX. Plain stays default so the menu does not redraw over scrolling shell output (logs, healthcheck results) operators are reading.
 > - **Idempotent**: any step is safe to re-run.
 
 ---
