@@ -82,7 +82,7 @@ sequenceDiagram
     SVC ->> DB: temp_links INSERT (token, expires_at, max_downloads)
     DB -->> SVC: TempLink with id
     SVC -->> W: (link, "https://media.host/d/<token>")
-    W ->> TG: send_text("📦 Файл слишком большой...<a href=URL>name</a>")
+    W ->> TG: send_text("📦 Файл слишком большой...", reply_markup=url button)
     W ->> DB: jobs.update(mark_done(public_url=URL))
 
     U ->> NX: GET https://media.host/d/<token>
@@ -175,13 +175,16 @@ location /d/ {
     proxy_pass         $api_upstream;
     proxy_set_header   X-Internal-XAccel "1";
     proxy_buffering    off;
+    gzip               off;
+    gunzip             off;
 }
 
 location /_protected/ {
     internal;
     alias /var/lib/dwtgbot/storage/;
     sendfile on;
-    add_header Content-Disposition "attachment" always;
+    gzip off;
+    gunzip off;
 }
 ```
 
@@ -191,8 +194,15 @@ location /_protected/ {
   the layout.
 - `alias` maps the URL prefix to `STORAGE_PATH` mounted into the nginx
   container.
-- `add_header Content-Disposition "attachment"` — even if a browser would
-  inline-render the content, we force download semantics.
+- `Content-Disposition` is set by the API before returning
+  `X-Accel-Redirect` and is forwarded by nginx. Do **not** add a second
+  `Content-Disposition` in `/_protected/`: duplicate values (`attachment;
+  filename=...` plus bare `attachment`) caused browser edge-case failures
+  during the 2026-04-26 production incident.
+- `gzip off; gunzip off;` on both locations guarantees raw byte delivery.
+  Temp-link payloads are arbitrary binaries (MP4/JPEG/audio), often already
+  compressed and range-requested by browsers. Content negotiation here adds
+  no value and can create `Content-Encoding` mismatches.
 
 > **Operational rule:** if you ever change `alias` or `STORAGE_PATH`,
 > restart both nginx and the API container so they agree on paths.
@@ -256,7 +266,7 @@ runs in a self-hosted Bot API server, raise this in `Settings` to up to
 | Failure | Behaviour |
 |---|---|
 | Telegram upload fails (`Timeout`, `5xx`) | Sender raises; use case logs and proceeds to fail the job (no automatic fallback to link) |
-| Temp link issued but worker crashes before sending the message | DB has the row; user gets nothing. Cleanup will reap it. Mitigation: send-text comes *after* `mark_done`, so the next manual re-send can be done by querying `download_jobs.public_url` |
+| Temp link issued but worker crashes before `mark_done` persists the `DeliveryOutcome` | The `temp_links` row exists, but `download_jobs.public_url` may still be NULL. Cleanup will reap it. Re-run the job or inspect `temp_links.job_id` during incident triage. |
 | User shares link in a group; 6 people open it | First 5 succeed; the 6th gets `410 Gone`. Configurable via `TEMP_LINK_MAX_DOWNLOADS` |
 | File deleted between issue and serve | `410 Gone` with "File no longer available". Logged at INFO |
 | `ensure_within` rejects `file_path` | `403 Forbidden`. Logged at ERROR — investigate immediately |
@@ -271,13 +281,14 @@ runs in a self-hosted Bot API server, raise this in `Settings` to up to
 4. **Path validation** (`ensure_within(STORAGE_PATH, file_path)`).
 5. **Internal-only file serving** (`internal;` in nginx).
 6. **No directory listing** (nginx default; we never enable autoindex).
-7. **Forced download** (`Content-Disposition: attachment`).
+7. **Forced download** (`Content-Disposition: attachment; filename=...`,
+   set once by the API and forwarded through `X-Accel-Redirect`).
 8. **No referer or auth required** — the token *is* the credential.
 9. **No HTTP caching** — `Cache-Control: no-store` (+ `Pragma: no-cache`
    + `Expires: 0`) is set explicitly by nginx on both `/d/` and
    `/_protected/` so a single-use, time-bounded file is never held by
    intermediaries or the user-agent. See `deploy/nginx/conf.d/media.conf.template`
-   and [`17-security.md`](17-security.md) §6.
+   and [`17-security.md`](17-security.md) §5.
 10. **TLS only** — port 80 redirects to 443; `/d/` is reachable only on
     443.
 11. **Per-IP rate limiting on `/d/`** — `limit_req` (10 r/s, burst 20
@@ -313,11 +324,13 @@ runs in a self-hosted Bot API server, raise this in `Settings` to up to
 |---|---|---|
 | Worker writes outside `STORAGE_PATH` | `403 Forbidden` on `/d/<token>` | Always pass `LocalStorage.job_dir(job_id)` to the provider |
 | Nginx alias path mismatched with worker mount | `404` from nginx after API returns `200` | Ensure both containers mount the same path with the same uid/gid |
-| Counter not incrementing | Off-by-one on retries | Confirm `temp_links_repo.update(link)` runs (it should `await`); add an integration test |
+| Counter not incrementing | Off-by-one on retries | Confirm `TempLinksRepository.try_register_use(token)` performs the atomic `UPDATE ... RETURNING`; add an integration test |
 | Cleanup container disabled | Disk fills up | Re-enable; alert on disk > 80% |
 | `PUBLIC_BASE_URL` does not match cert SAN | TLS error in browser | Re-issue cert with the right `--domains` |
-| Bot sends link before `mark_done` persisted | If worker crashes between, message exists but DB lacks `public_url` | Order: persist first, then send |
+| Bot sends link before `mark_done` persisted | If worker crashes between, message exists but DB lacks `public_url` | Known current ordering: `DeliveryService` sends, then `ProcessDownloadUseCase` persists the returned `DeliveryOutcome`. During incidents, search by `temp_links.job_id`; do not assume `download_jobs.public_url` is populated. |
 | Temp-link URL embedded in **message text** (anchor or plain) | First user click returns 410 "Link expired or exhausted" because Telegram's preview crawler (UA `TelegramBot (like TwitterBot)`) hit `/d/<token>` and consumed slot(s) from `downloads_count` — observed in production 2026-04-26 even with `link_preview_options.is_disabled=True` | Move the URL out of the message body into an inline `url=` button (`InlineKeyboardButton(text="📥 Скачать", url=...)`). Inline URL buttons are not subject to preview generation; the crawler never sees the URL. Keep `link_preview_options(is_disabled=True)` as defense-in-depth. See `DeliveryService._deliver_via_link`. |
+| `Content-Disposition` added both by API and nginx | Some browsers abort or behave inconsistently; headers show two `content-disposition` lines | Keep the filename-bearing header in the API response only. `/_protected/` must not add its own `Content-Disposition`. |
+| Compression enabled on `/d/` or `/_protected/` | Firefox may show "Corrupted Content Error" / "Ошибка искажения содержимого"; partial body in nginx logs while `curl` works | Keep `gzip off; gunzip off;` in both locations. Verify with `curl --compressed -D - -o /tmp/body.bin https://.../d/<token>`: no `Content-Encoding`, size matches `Content-Length`, `file` identifies the MP4/JPEG/audio. |
 
 ---
 

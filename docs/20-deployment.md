@@ -580,9 +580,11 @@ sudo bash deploy/scripts/certbot_init.sh \
 ```
 
 The script:
-1. Confirms DNS resolves to this host.
-2. Runs certbot in webroot mode (`/var/www/certbot`) against the running nginx.
-3. On success, drops the HTTPS server-block from `deploy/nginx/sites-available/*.conf` and reloads nginx.
+1. Reads `SERVER_NAME` / `DOMAIN` and `EMAIL` from `deploy/nl2/.env` (or prompts).
+2. Creates a short-lived self-signed dummy cert so nginx can start with the
+   HTTPS server block from `deploy/nginx/conf.d/media.conf.template`.
+3. Runs certbot in webroot mode (`/var/www/certbot`) against the running nginx.
+4. On success, force-renews the real cert in place and reloads nginx.
 
 After that, `:80` redirects to `:443`.
 
@@ -791,7 +793,33 @@ Two non-negotiable rules:
 1. **Never run `docker compose down -v` on NL-1.** That deletes named volumes (`postgres_data`, `redis_data`, `backups`). If you really mean to reset, do it on a scratch host.
 2. **Never delete files in `STORAGE_PATH` while their `temp_links` rows are still `is_active=true`.** Mark inactive first. The cleanup loop already does this.
 
-### 8.6 Updates (rolling deploy)
+### 8.6 Updates from the TUI (operator path)
+
+The installer menu is the preferred operator surface on production hosts:
+
+```bash
+cd /opt/DWTGBot
+bash deploy/scripts/install.sh
+```
+
+The deploy-related options are intentionally split:
+
+| Option | Meaning | Use when |
+|---|---|---|
+| **`[16] Update to latest main (autodeploy now)`** | Starts `dwtgbot-autodeploy.service` synchronously (`systemctl start --wait`). The service queries GitHub for the current head of `main`, waits for green `ci.yml` + `build-images.yml`, exports the correct immutable `IMAGE_*` tags for that SHA, checks out that SHA, then calls `deploy_update.sh`. | You want this host to advance to the latest green `main`. This is the default human deploy button. |
+| **`[17] Rolling restart with current .env`** | Runs `deploy_update.sh <stack>` using the `IMAGE_*` values already present in the environment / `.env`. It does not discover the latest GitHub SHA. | You only want to bounce containers or apply bind-mounted config that is already on disk. |
+| **`[18] Install autodeploy service`** | Installs `dwtgbot-autodeploy.service` + timer and creates `/etc/dwtgbot/autodeploy.env` if missing. | First-time setup on each host. Fill `GITHUB_TOKEN` before the first real run. |
+
+The TUI auto-detects the default stack from which `deploy/{nl1,nl2}/.env`
+exists on the host. On a normal NL-2 host, prompts should default to
+`Stack [nl2]:`; on NL-1, to `Stack [nl1]:`.
+
+Between autodeploy runs the repository may be in detached HEAD. That is
+expected: `auto_deploy.sh` pins `/opt/DWTGBot` to the same SHA as the
+running images. `deploy_update.sh` detects that state and skips `git pull`
+cleanly.
+
+### 8.7 Manual rolling restart primitive
 
 ```bash
 # NL-1 first (so migrations apply before the new worker starts on NL-2)
@@ -802,17 +830,24 @@ sudo bash deploy/scripts/deploy_update.sh nl2
 
 `deploy_update.sh` per stack:
 
-1. `git fetch && git checkout <ref>`.
-2. `docker compose pull` (image tags are pinned in `.env`).
-3. NL-1 only: `docker compose run --rm migrate alembic upgrade head`.
-4. `docker compose up -d` (Compose recreates only changed services).
-5. Wait for healthchecks to report green; abort + log if anything stays `unhealthy` longer than the timeout.
+1. If on a normal branch, `git pull --ff-only`; if the host is in detached
+   HEAD (autodeploy-pinned), skip pull cleanly.
+2. Validate compose config.
+3. NL-1 only: take a pre-deploy DB backup when Postgres is running.
+4. `docker compose pull` using image tags from the current environment /
+   `.env`.
+5. `docker compose up -d` (Compose recreates only changed services).
+6. NL-1 only: run Alembic migrations.
+7. NL-2 only: restart nginx defensively so bind-mounted config and upstream
+   resolution are refreshed.
+8. Wait for healthchecks to report green; abort + log if anything stays
+   `unhealthy` longer than the timeout.
 
 Idempotent and safe to re-run.
 
-> Equivalent: installer option **16) Deploy update**.
+> Equivalent: installer option **17) Rolling restart with current .env**.
 
-### 8.7 Host-side autodeploy service
+### 8.8 Host-side autodeploy service
 
 Если нужен автодеплой по опросу GitHub прямо с серверов, установите
 systemd timer на **каждый** хост:
@@ -850,7 +885,7 @@ journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
 - Сам rollout по-прежнему выполняется через `deploy_update.sh`, то есть
   базовый механизм раскатки на хосте не меняется.
 
-#### 8.7.1 Canonical order for agents and operators
+#### 8.8.1 Canonical order for agents and operators
 
 Если задача звучит как "установи автодеплой", "запусти автодеплой
 сейчас" или "проверь host-side автодеплой", используйте **ровно** этот
@@ -865,7 +900,7 @@ journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
 | 5 | Только после успеха NL-1 запускайте тот же service на **NL-2** (или дождитесь его timer). | NL-2 должен видеть тот же зелёный SHA и успешный deployment status от NL-1. |
 | 6 | На обоих хостах проверяйте checkout, `last_successful_sha` и steady state systemd. | Это подтверждает не только запуск unit, но и факт раскатки нужного SHA. |
 
-#### 8.7.2 Verification snippet
+#### 8.8.2 Verification snippet
 
 ```bash
 set -a
@@ -887,7 +922,7 @@ Expected steady state between runs:
 - `git rev-parse HEAD` matches
   `${AUTODEPLOY_STATE_DIR}/${DEPLOY_TARGET}.last_successful_sha`
 
-#### 8.7.3 Do not improvise
+#### 8.8.3 Do not improvise
 
 - Do **not** edit `/etc/systemd/system/dwtgbot-autodeploy.*` manually if
   reinstalling from `deploy/systemd/` is possible.
@@ -954,8 +989,18 @@ echo | openssl s_client -connect media.example.com:443 -servername media.example
 2. Paste a YouTube URL.
 3. Expect: keyboard with format options.
 4. Pick a small format (e.g. audio MP3 128). Expect file delivered to the chat.
-5. Pick a large format (e.g. 1080p video). Expect: a temp link reply; clicking it downloads the file.
-6. After test: confirm new rows in DB:
+5. Pick a large format (e.g. 1080p video). Expect: a temp-link reply with
+   an inline **"📥 Скачать"** URL button. The `/d/<token>` URL must **not**
+   appear in the message text body; otherwise Telegram's preview crawler can
+   consume download slots before the user clicks.
+6. Before clicking the button, verify nginx saw no prefetch for that token:
+   ```bash
+   docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env \
+     logs --since=60s nginx | grep -E '/d/|TelegramBot' || true
+   ```
+   A correct fresh message produces no `/d/` access until the user taps the
+   button. After the tap, expect one browser request with `status=200`.
+7. After test: confirm new rows in DB:
 
 ```bash
 docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
@@ -1264,8 +1309,9 @@ echo | openssl s_client -connect media.example.com:443 -servername media.example
      | openssl x509 -noout -dates -issuer -subject
 
 # ── Deploy / rollback ─────────────────────────────────────
-sudo bash deploy/scripts/deploy_update.sh nl1   # always NL-1 first
-sudo bash deploy/scripts/deploy_update.sh nl2
+bash deploy/scripts/install.sh                  # [16] = latest green main
+sudo systemctl start --wait dwtgbot-autodeploy.service  # same primitive
+sudo bash deploy/scripts/deploy_update.sh nl2   # rolling restart only; current .env
 
 # ── Disk ──────────────────────────────────────────────────
 df -h / /var/lib/dwtgbot /var/backups/dwtgbot 2>/dev/null

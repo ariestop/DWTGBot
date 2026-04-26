@@ -848,7 +848,7 @@ docker exec dwtgbot_api curl -fsS http://localhost:8080/readyz --max-time 3
 3. **Bad config** → fix in repo, deploy via §16. **Never** edit
    `nginx.conf` on the live host.
 4. **Rate-limit zone exhausted** → tune `limit_req_zone` rates in
-   `deploy/nl2/nginx/nginx.conf`; deploy.
+   `deploy/nginx/nginx.conf`; deploy.
 5. **Network policy / DNS** → from inside nginx container:
    `getent hosts api`. Should resolve to the compose network IP.
    If not — recreate the network: `$NL2 down && $NL2 up -d`.

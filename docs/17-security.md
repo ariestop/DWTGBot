@@ -160,6 +160,10 @@ during install and after any host re-image.**
 - `Content-Disposition: attachment; filename="..."` — the filename comes
   from `file_path.name`, which was created by yt-dlp with
   `restrictfilenames=True`. Result: ASCII-only, no quotes, safe.
+- The header is set **once** by the API response that carries
+  `X-Accel-Redirect`. Nginx forwards it while serving `/_protected/`; it
+  must not add a second bare `Content-Disposition: attachment`, because
+  duplicate values create browser-specific download failures.
 
 ### Headers (set by nginx for every response)
 
@@ -180,6 +184,12 @@ Per-endpoint headers added in `conf.d/media.conf.template`:
 | `/d/`, `/_protected/` | `Pragma` | `no-cache` | HTTP/1.0 fallback for ancient corporate proxies. |
 | `/d/`, `/_protected/` | `Expires` | `0` | Same fallback; some intermediaries respect this even when `Cache-Control` is parsed. |
 | `/d/` | `429 Too Many Requests` | (response code) | `limit_req` / `limit_conn` rejections — see §2 row "Token guessing". |
+
+Nginx explicitly disables `gzip` and `gunzip` on both `/d/` and
+`/_protected/`. Temp-link responses are arbitrary binary files and often
+already compressed; transforming them can break range requests and can surface
+as Firefox "Corrupted Content Error" / "Ошибка искажения содержимого" if
+headers and bytes get out of sync.
 
 ### Rate limiting (RL_ENABLED)
 

@@ -182,6 +182,8 @@ the first command to run.
 | 4 | Worker logs show start then silence (no `_done`) | hung subprocess (yt-dlp / ffmpeg) | `docker exec dwtgbot_worker pgrep -af 'yt-dlp\|ffmpeg'` | §5.8 |
 | 5 | `worker_job_done` present but user got no file | delivery failed (Telegram 413, temp link not created) | grep `worker_delivery_failed`; check `temp_links` row | §4.6 / §5.4 |
 | 6 | Big file: link arrives, click → 502/504/403 | nginx / api / `temp_links.file_path` mismatch | `$NL2 logs nginx \| tail; $NL2 logs api \| tail` | §4.3 |
+| 6a | Big file: link click → 410 "Link expired or exhausted" before user downloaded | temp-link counter consumed by preview/crawler or repeated probes | nginx logs for `TelegramBot (like TwitterBot)` and DB `downloads_count` | §5.10 |
+| 6b | Firefox shows "Corrupted Content Error" / "Ошибка искажения содержимого" | client/content-encoding mismatch, duplicate headers, or a local TLS-inspecting client | `curl --compressed -D /tmp/headers.txt -o /tmp/body.bin https://.../d/<token>` | §5.10 |
 | 7 | One platform broken, others fine | provider / yt-dlp upstream change | `docker exec dwtgbot_worker yt-dlp --version` + reproduce | §5.6 |
 | 8 | All platforms broken at once | yt-dlp itself missing / image regression | `docker exec dwtgbot_worker which yt-dlp ffmpeg` | §5.6 |
 | 9 | Spike of 5xx in API logs | DB or Redis behind it; or readiness false | §1.6 step 4 + 5 | §4.4 / §4.5 |
@@ -1040,6 +1042,86 @@ dmesg | grep -i -E 'oom|killed' | tail
 Cure: §11 of `24-`. Common root cause for the worker is reading
 a huge file fully into memory instead of streaming — fix in code.
 
+### 5.10 Temp-link download failures (`410`, Firefox corruption, crawler)
+
+Use this when the bot successfully produced a large-file temp link but the
+browser cannot download it.
+
+#### A. Confirm the deployed version first
+
+```bash
+cd /opt/DWTGBot
+git log -1 --oneline
+docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env images
+systemctl is-active dwtgbot-autodeploy.timer 2>/dev/null || true
+sudo cat /var/lib/dwtgbot/autodeploy/nl2.last_successful_sha 2>/dev/null || true
+```
+
+If images or checkout are older than the fix you expect, deploy via the TUI:
+
+```bash
+bash deploy/scripts/install.sh
+# [16] Update to latest main (autodeploy now)
+```
+
+#### B. Distinguish `HEAD` from `GET`
+
+`curl -I` sends `HEAD`. The `/d/{token}` endpoint accepts `GET` only, so
+`curl -I https://.../d/<token>` returning `405 Allow: GET` is expected and
+does not test the file path.
+
+Use a real GET:
+
+```bash
+TOKEN='<fresh-token>'
+curl -s --compressed -o /tmp/body.bin -D /tmp/headers.txt \
+  "https://media.example.com/d/${TOKEN}"
+echo "== headers =="; sed -n '1,40p' /tmp/headers.txt
+echo "== body =="; wc -c /tmp/body.bin; file /tmp/body.bin
+```
+
+Expected for a healthy MP4 temp link:
+
+- no `Content-Encoding` header,
+- `Content-Length` equals `wc -c`,
+- `file /tmp/body.bin` identifies the media format,
+- nginx access log has `status=200` and `body_bytes_sent` close to file size.
+
+#### C. Diagnose unexpected `410 Gone`
+
+`410 {"detail":"Link expired or exhausted"}` is correct when the token is
+expired, inactive, or `downloads_count >= max_downloads`. If the user sees it
+on the first apparent click:
+
+```bash
+docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env \
+  logs --since=10m nginx | grep -E '/d/|TelegramBot|status":410'
+```
+
+Signals:
+
+| Signal | Meaning | Fix |
+|---|---|---|
+| `TelegramBot (like TwitterBot)` hits `/d/<token>` before the user clicked | the URL was exposed in message text or preview generation found it | temp-link URL must live only in `InlineKeyboardButton(url=...)`; no URL in the message body |
+| browser/user agent hits same token many times | client retries or multiple manual opens exhausted `TEMP_LINK_MAX_DOWNLOADS` | issue a fresh link; consider raising the max only with product justification |
+| token was tested with `curl` before opening in browser | the test consumed one use | request a fresh link before user smoke |
+
+#### D. Diagnose Firefox "Corrupted Content Error"
+
+If Firefox shows "Corrupted Content Error" / "Ошибка искажения содержимого"
+but `curl --compressed` downloads a valid full file, the server bytes are
+good. Check:
+
+- `Content-Encoding` should be absent for `/d/` responses.
+- `Content-Disposition` should appear once, with `filename=...`.
+- Test Chrome/Safari and Firefox private window; local HTTPS inspection
+  (VPN, antivirus, extensions) can surface as nginx `SSL_read() failed ...
+  bad record mac` and client-side decode failures.
+
+Server-side guardrails live in `deploy/nginx/conf.d/media.conf.template`:
+`gzip off; gunzip off;` on `/d/` and `/_protected/`, and only the API sets
+`Content-Disposition`.
+
 ---
 
 ## §6 — Common AI-agent debugging mistakes
@@ -1087,14 +1169,14 @@ the file.
 | `Conflict: terminated by other getUpdates` | another process / duplicate bot polling same token | bot replicas / dev env still up |
 | `password authentication failed` from worker | `POSTGRES_URL` on NL-2 has stale password | `deploy/nl2/.env::POSTGRES_URL` |
 | `invalid input value for enum platform` | new `Platform.X` shipped without ENUM migration (P10) | `migrations/versions/` lacks `ALTER TYPE … ADD VALUE` |
-| `Bad Gateway` (502) on links | `internal;` `/links/` location missing in nginx | `deploy/nl2/nginx/...` |
+| `Bad Gateway` (502) on links | nginx cannot reach `api` or cached a stale Docker IP | `deploy/nginx/conf.d/media.conf.template`; verify dynamic `resolver 127.0.0.11` + variable `proxy_pass` and restart nginx |
 | `403 Forbidden` on links with `temp_link_path_invalid` | `temp_links.file_path` outside `STORAGE_PATH` | provider P11 violation; `file_path` audit |
 | Cookies expired / 403 on a platform | `PROVIDER_<X>_COOKIES` not mounted or stale | `deploy/nl2/.env` + host file `/srv/dwtgbot/secrets/...` |
 | `MAX_PARALLEL_DOWNLOADS=0` (typo) → workers idle | env mistyped | `deploy/nl2/.env` + `Settings` validation (Field `ge=1`) |
 | Default `TEMP_LINK_TTL_SECONDS` accidentally 0 | links 410 immediately | `Settings` defaults; `13-config-and-env.md` |
 | `STORAGE_PATH` differs between worker and cleanup | files orphaned; cleanup doesn't reach them | `deploy/nl2/docker-compose.yml::worker.environment` ⊕ `cleanup.environment` |
-| Old image tag pinned in `.env` after deploy | new code "doesn't take effect" | `deploy/<host>/.env::<SVC>_IMAGE` |
-| `PROXY_READ_TIMEOUT` too low for big files | sporadic 504 on links | `deploy/nl2/nginx/sites-available/*.conf` |
+| Old image tag pinned in `.env` after deploy | new code "doesn't take effect" after a plain rolling restart | `deploy/<host>/.env::IMAGE_*`; prefer TUI `[16] Update to latest main` / `dwtgbot-autodeploy.service` for real advancement |
+| `proxy_read_timeout` too low for big files | sporadic 504 on links | `deploy/nginx/conf.d/media.conf.template` |
 | Off-host backup destination unreachable | `Connection refused` in backup logs | `BACKUP_DEST_*` env + network |
 | `MAX_FILE_SIZE_MB` higher than disk allows | recurring §12 (disk full) | `deploy/nl2/.env` + `df` |
 | `BOT_TOKEN` set in NL-1 but missing from NL-2 secret store | next deploy clobbers it | secrets-management automation |

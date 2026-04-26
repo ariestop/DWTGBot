@@ -20,7 +20,9 @@ manual fallback for when CI is unavailable.
 > - **CI host**: GitHub Actions (`ubuntu-latest`).
 > - **Registry**: GHCR (`ghcr.io/<org>/<repo>-<svc>`).
 > - **Deploy transport**: SSH (`appleboy/ssh-action`) into both hosts.
-> - **Operator surface on each host**: `deploy/scripts/deploy_update.sh`.
+> - **Low-level rollout primitive on each host**: `deploy/scripts/deploy_update.sh`;
+>   human operators normally use `deploy/scripts/install.sh` (TUI) option
+>   `[16] Update to latest main`, which triggers host-side autodeploy.
 > - **Order**: NL-1 always before NL-2 (`needs: [nl1]` in `deploy.yml`).
 
 ---
@@ -63,9 +65,13 @@ flowchart LR
 | Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | running new images on NL-1, then NL-2 |
 | Roll out (automatic) | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
 
-Ручной `deploy.yml` остаётся штатным операторским путём. Автодеплой -
-это **дополнительный host-side механизм**, который можно установить на
-NL-1 и NL-2, если нужен rollout по таймеру без ручного `workflow_dispatch`.
+Ручной `deploy.yml` остаётся штатным GitHub-side путём. На самих хостах
+операторский путь — `deploy/scripts/install.sh`: `[16] Update to latest
+main` запускает `dwtgbot-autodeploy.service` немедленно, `[17] Rolling
+restart with current .env` вызывает низкоуровневый `deploy_update.sh` без
+вычисления нового SHA. Автодеплой — **дополнительный host-side механизм**,
+который можно установить на NL-1 и NL-2, если нужен rollout по таймеру без
+ручного `workflow_dispatch`.
 
 ---
 
@@ -614,7 +620,10 @@ A normal post-deploy should produce **zero** errors in the first 10 minutes (war
 
 ### 10.5 End-to-end smoke
 
-The single non-negotiable smoke is: from a Telegram client, paste one URL, pick one small format, receive the file; pick one large format, receive the temp link, click it, get the file.
+The single non-negotiable smoke is: from a Telegram client, paste one URL,
+pick one small format, receive the file; pick one large format, receive the
+temp-link message with an inline **"📥 Скачать"** button (no `/d/<token>` URL in
+the message body), click the button, get the file.
 
 Then check the DB:
 

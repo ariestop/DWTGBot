@@ -1188,7 +1188,7 @@ via tokenised HTTPS link, with TTL, max-downloads, and Nginx
 | `app/infrastructure/temp_links/repo.py` | DB persistence of `temp_links` rows |
 | `app/api/public/downloads.py` | `/d/{token}` route; `X-Accel-Redirect` |
 | `app/infrastructure/telegram/sender.py` | Small-file send path |
-| `deploy/nginx/sites-available/dwtgbot.conf` | Public route, `internal;`, rate limit |
+| `deploy/nginx/conf.d/media.conf.template` | Public route, `internal;`, rate limit |
 | `docs/10-temp-links-and-delivery.md` | Narrative + diagrams + token format |
 | `docs/17-security.md` | If auth/header/expiry surface changes |
 | `app/tests/test_temp_link_service.py` | Service tests |
@@ -1876,9 +1876,9 @@ or certificate renewal.
 
 | File / area | Change |
 |---|---|
-| `deploy/nginx/sites-available/dwtgbot.conf` | Routes, locations, headers |
+| `deploy/nginx/conf.d/media.conf.template` | Routes, locations, download headers |
 | `deploy/nginx/snippets/security.conf` | Security headers |
-| `deploy/nginx/snippets/ratelimit.conf` | Rate limit zones |
+| `deploy/nginx/nginx.conf` | Log format, token redaction, rate-limit zones |
 | `deploy/certbot/cli.ini` (or similar) | Certbot config |
 | `deploy/scripts/certbot_init.sh` | Provisioning |
 | `docs/10-temp-links-and-delivery.md` | Public flow + headers |

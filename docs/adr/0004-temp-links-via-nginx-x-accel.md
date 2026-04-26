@@ -87,7 +87,13 @@ zones declared in `deploy/nginx/nginx.conf`):
   **429** on overflow.
 - `Cache-Control: no-store` (+ `Pragma`/`Expires` fallbacks) on both
   `/d/` and `/_protected/` so single-use tokens are never held by
-  intermediaries — see [`../17-security.md`](../17-security.md) §6.
+  intermediaries — see [`../17-security.md`](../17-security.md) §5.
+- `gzip off; gunzip off;` on both `/d/` and `/_protected/`. Temp-link
+  payloads are arbitrary binaries and often range-requested; nginx must serve
+  the exact bytes from disk, not negotiate `Content-Encoding`.
+- `Content-Disposition` is set by the API together with
+  `X-Accel-Redirect` and forwarded by nginx. The internal
+  `/_protected/` location must not add a duplicate header.
 
 ---
 
@@ -97,8 +103,9 @@ zones declared in `deploy/nginx/nginx.conf`):
 
 - **Application is fast.** Token validation is O(1) DB lookup;
   FastAPI returns immediately after issuing the redirect.
-- **Streaming is Nginx's job.** Range requests, sendfile, gzip
-  (where applicable), partial downloads — all handled natively.
+- **Streaming is Nginx's job.** Range requests, sendfile, partial downloads
+  — all handled natively. Compression is deliberately disabled for this
+  path.
 - **Filesystem is private.** The storage volume is mounted into
   Nginx but the relevant `location` is `internal;` — direct access
   is impossible.
@@ -171,7 +178,7 @@ zones declared in `deploy/nginx/nginx.conf`):
 
 - Code: `app/api/public/downloads.py`,
   `app/application/services/temp_link_service.py`,
-  `deploy/nginx/sites-available/dwtgbot.conf`,
+  `deploy/nginx/conf.d/media.conf.template`,
   `deploy/nl2/docker-compose.yml`.
 - Docs: [`10-temp-links-and-delivery.md`](../10-temp-links-and-delivery.md),
   [`11-storage-strategy.md`](../11-storage-strategy.md),
@@ -185,3 +192,4 @@ zones declared in `deploy/nginx/nginx.conf`):
 | Date | Status | Note |
 |---|---|---|
 | 2025-01-XX | Accepted | Initial decision, locked at project inception. |
+| 2026-04-26 | Accepted | Clarified operational constraints discovered in production: dynamic Docker DNS resolution for the `api` upstream, raw-byte delivery (`gzip/gunzip off`), and single-source `Content-Disposition` from the API. |

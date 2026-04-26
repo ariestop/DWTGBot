@@ -860,7 +860,7 @@ end-to-end. The short version:
 | Add a new container service | `deploy/nl1/docker-compose.yml` or `deploy/nl2/docker-compose.yml` |
 | Change container env | the relevant compose `environment:` block + `.env` template |
 | Change a build step | the relevant `docker/<image>.Dockerfile` |
-| Change Nginx routing | `deploy/nginx/sites-available/dwtgbot.conf` or `snippets/*.conf` |
+| Change Nginx routing | `deploy/nginx/conf.d/media.conf.template`, `deploy/nginx/nginx.conf`, or `deploy/nginx/snippets/*.conf` |
 | Change Certbot behavior | `deploy/certbot/*` + `certbot_init.sh` |
 | Change CI pipeline | `.github/workflows/<flow>.yml` |
 | Add an install step | `deploy/scripts/install.sh` (idempotent!) |
