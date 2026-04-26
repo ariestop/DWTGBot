@@ -48,9 +48,21 @@ PY_LOCK ?= python3.14
 LOCK_FLAGS := --universal --python-version 3.14 --generate-hashes --quiet
 
 lock: ## Regenerate requirements/*.lock from *.txt
-	$(PY_LOCK) -m uv pip compile requirements/base.txt -o requirements/base.lock $(LOCK_FLAGS)
-	$(PY_LOCK) -m uv pip compile requirements/dev.txt  -o requirements/dev.lock  $(LOCK_FLAGS)
-	$(PY_LOCK) -m uv pip compile requirements/prod.txt -o requirements/prod.lock $(LOCK_FLAGS)
+	@# Resolve from a tmpdir holding only requirements/*.txt so uv does
+	@# not pick up the project root's ``pyproject.toml`` (project
+	@# ``requires-python = ">=3.14"`` skews transitive resolution and
+	@# diverged from ``lock-check``'s output, producing perpetual
+	@# spurious "lockfiles are stale" failures in CI). The CI gate
+	@# (``lock-check``) and the developer-facing ``lock`` target now
+	@# share the exact same resolver context.
+	@tmpdir=$$(mktemp -d); \
+	mkdir -p $$tmpdir/requirements; \
+	cp requirements/*.txt $$tmpdir/requirements/; \
+	for r in base dev prod; do \
+	  (cd $$tmpdir && $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o requirements/$$r.lock $(LOCK_FLAGS)); \
+	  cp $$tmpdir/requirements/$$r.lock requirements/$$r.lock; \
+	done; \
+	rm -rf $$tmpdir
 
 lock-check: ## Fail if *.lock drifts from *.txt (used in CI)
 	@tmpdir=$$(mktemp -d); \
