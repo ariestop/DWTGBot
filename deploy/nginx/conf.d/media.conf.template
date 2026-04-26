@@ -176,7 +176,20 @@ server {
         # Force download semantics for unknown types.
         types { }
         default_type application/octet-stream;
-        add_header Content-Disposition "attachment" always;
+        # NB: we deliberately do NOT add ``Content-Disposition`` here.
+        # The api already sets ``Content-Disposition: attachment;
+        # filename="<original filename>"`` on the upstream response
+        # before issuing X-Accel-Redirect; nginx forwards that header
+        # to the client. If we ``add_header`` again here, the response
+        # carries TWO ``Content-Disposition`` lines (the api's full
+        # one with filename plus our bare ``attachment``). Most UAs
+        # tolerate this, but some Firefox builds were observed to
+        # abort the download with "Ошибка искажения содержимого" when
+        # the headers were duplicated (2026-04-26 user report).
+        # Trade-off accepted: if a future api code path forgets to
+        # set Content-Disposition, the file will render inline
+        # instead of downloading. That's a louder failure than a
+        # silent dup, so we prefer it.
         add_header Cache-Control       "no-store"   always;
         add_header Pragma              "no-cache"   always;
         add_header Expires             "0"          always;
