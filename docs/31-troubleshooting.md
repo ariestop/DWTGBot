@@ -974,9 +974,10 @@ yt-dlp -j --no-warnings '<failing url>' 2>&1 | tail -30
 | `Unable to extract` | extractor broken in our pinned version | bump yt-dlp pin (§5 of `24-`) |
 | `Sign in to confirm you're not a bot` | bot-detection on yt-dlp's IP | rotate egress IP / cookies (out of scope short-term) |
 | `HTTP Error 429` | upstream rate limit | reduce concurrency |
-| `HTTP Error 403` | auth required / cookies expired | rotate cookies (`PROVIDER_<X>_COOKIES`) |
+| `HTTP Error 403` | auth required / cookies expired | rotate cookies — for Instagram, replace `/srv/dwtgbot/secrets/cookies-instagram.txt` on **both** hosts and restart bot+worker (see [`24-runbooks.md` §5.4 step 4](24-runbooks.md)) |
 | `Private video` | user pasted a private link | clean user message |
-| `Sign in required to access this content` | age-gate | needs cookies |
+| `Sign in required to access this content` | age-gate / login required (Instagram public posts now hit this when the egress IP is bot-flagged) | upload Instagram cookies (Netscape txt) to `/srv/dwtgbot/secrets/cookies-instagram.txt` on NL-1 + NL-2; provider auto-passes them as `cookiefile` |
+| worker log: `instagram_cookiefile_missing` | `INSTAGRAM_COOKIES_FILE` set but file absent inside the container | check the bind-mount (`docker exec dwtgbot_worker ls -l /srv/dwtgbot/secrets/`) and that the host file is mode `0640` and readable by the container UID |
 | `This live event will begin in N hours` | live stream | reject in `get_info` |
 | `DRM` | DRM-protected | reject in `get_info` |
 
@@ -1171,7 +1172,7 @@ the file.
 | `invalid input value for enum platform` | new `Platform.X` shipped without ENUM migration (P10) | `migrations/versions/` lacks `ALTER TYPE … ADD VALUE` |
 | `Bad Gateway` (502) on links | nginx cannot reach `api` or cached a stale Docker IP | `deploy/nginx/conf.d/media.conf.template`; verify dynamic `resolver 127.0.0.11` + variable `proxy_pass` and restart nginx |
 | `403 Forbidden` on links with `temp_link_path_invalid` | `temp_links.file_path` outside `STORAGE_PATH` | provider P11 violation; `file_path` audit |
-| Cookies expired / 403 on a platform | `PROVIDER_<X>_COOKIES` not mounted or stale | `deploy/nl2/.env` + host file `/srv/dwtgbot/secrets/...` |
+| Cookies expired / 403 on a platform | cookies file missing or stale on either host (Instagram needs both NL-1 and NL-2) | `deploy/nl1/.env` + `deploy/nl2/.env::INSTAGRAM_COOKIES_FILE` and host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (RO bind-mount into bot+worker). Rotate per [`24-runbooks.md` §5.4 step 4](24-runbooks.md). |
 | `MAX_PARALLEL_DOWNLOADS=0` (typo) → workers idle | env mistyped | `deploy/nl2/.env` + `Settings` validation (Field `ge=1`) |
 | Default `TEMP_LINK_TTL_SECONDS` accidentally 0 | links 410 immediately | `Settings` defaults; `13-config-and-env.md` |
 | `STORAGE_PATH` differs between worker and cleanup | files orphaned; cleanup doesn't reach them | `deploy/nl2/docker-compose.yml::worker.environment` ⊕ `cleanup.environment` |

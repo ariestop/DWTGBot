@@ -383,6 +383,56 @@ chmod 0600 deploy/nl1/.env
 
 After running §5.1.1, save `PG_PASS`, `RD_PASS`, and `API_TOK` somewhere safe — you'll paste Postgres/Redis passwords into NL-2's `.env` (§6.1) verbatim.
 
+#### 5.1.2 Provider secrets — Instagram cookies (optional but required for IG)
+
+Instagram now serves the login wall to most non-residential egress IPs even
+for public posts. Without a cookie file the worker raises
+`MediaPrivateError` and users see *"Контент приватный или требует
+авторизации"*. The fix is a Netscape `cookies.txt` exported from a
+logged-in browser session. Both `deploy/nl1/docker-compose.yml` (bot) and
+`deploy/nl2/docker-compose.yml` (worker) bind-mount
+`/srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro`, so the canonical path is
+`/srv/dwtgbot/secrets/cookies-instagram.txt` on **both** hosts.
+
+```bash
+# 1. Export cookies.txt from an Instagram-logged-in browser
+#    (e.g. "Get cookies.txt LOCALLY" extension, Netscape format).
+
+# 2. Upload to BOTH hosts (NL-1 needs it for extract_info, NL-2 for download).
+for HOST in nl1 nl2; do
+  scp cookies-instagram.txt "$HOST:/tmp/"
+  ssh "$HOST" 'sudo install -o root -g root -m 0640 \
+    /tmp/cookies-instagram.txt \
+    /srv/dwtgbot/secrets/cookies-instagram.txt && \
+    rm /tmp/cookies-instagram.txt'
+done
+
+# 3. INSTAGRAM_COOKIES_FILE in deploy/{nl1,nl2}/.env is auto-set by
+#    deploy/scripts/deploy_update.sh::ensure_instagram_cookie_env on every
+#    deploy. If you skip the deploy, set it manually:
+sudo sed -i 's|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=/srv/dwtgbot/secrets/cookies-instagram.txt|' \
+  deploy/nl1/.env deploy/nl2/.env
+
+# 4. Restart the affected containers.
+sudo docker compose -f deploy/nl1/docker-compose.yml restart bot       # on NL-1
+sudo docker compose -f deploy/nl2/docker-compose.yml restart worker    # on NL-2
+```
+
+Operational notes:
+
+- `deploy_update.sh` runs `ensure_secrets_dir` early; it creates
+  `/srv/dwtgbot/secrets` (mode `0750`) and warns if the cookies file is
+  absent — but it never **creates** the file (we never want a secret to
+  appear out of thin air on the host).
+- Missing file is graceful: the provider logs
+  `instagram_cookiefile_missing` and falls back to anonymous fetches.
+  Anonymous fetches will fail for IG today, but other providers stay
+  unaffected.
+- Rotate the file when it expires; see
+  [`24-runbooks.md` §5.4 step 4](24-runbooks.md). For the threat model
+  and rotation policy see
+  [`17-security.md` §7](17-security.md#7-secrets-management).
+
 ### 5.2 Validate config
 
 ```bash

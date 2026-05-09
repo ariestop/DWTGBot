@@ -222,7 +222,14 @@ the provider does **not** unlink files.
 
 - **Hosts**: `*.instagram.com`.
 - **Options**: type-based — Video / Image (single) / Carousel (gallery).
-- **Auth**: respects `INSTAGRAM_COOKIES_FILE` if configured (private posts).
+- **Auth**: respects `INSTAGRAM_COOKIES_FILE` (canonical path
+  `/srv/dwtgbot/secrets/cookies-instagram.txt`, bind-mounted RO into both
+  bot and worker). Required in practice for most public posts because
+  Instagram now serves the login wall to non-residential egress IPs.
+  Missing file → provider logs `instagram_cookiefile_missing` and falls
+  through to anonymous fetch (which usually surfaces `MediaPrivateError`
+  to the user). Setup: [`20-deployment.md` §5.1.2](20-deployment.md);
+  rotation: [`24-runbooks.md` §5.4 step 4](24-runbooks.md).
 - **Carousels**: `download()` produces multiple files; `DownloadResult.kind`
   is `MediaKind.GALLERY`.
 - **Stories/Reels**: handled as videos.

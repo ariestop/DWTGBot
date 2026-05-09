@@ -84,7 +84,7 @@ plus the absence of `ports:` declarations in the compose stacks.
 | **Container escape** | yt-dlp parser exploit | non-root `app:1000`, minimal base image, no `--privileged` |
 | **Supply chain (yt-dlp/ffmpeg)** | malicious dependency update | pinned versions, GHCR image digests, manual yt-dlp bumps |
 | **Malicious URL → SSRF / RCE** | yt-dlp following redirects to internal / metadata hosts | yt-dlp is constrained by `allowed_extractors` + `match_filter` host allowlist; optional `HTTPS_PROXY_URL` adds outbound ACL on NL-2 |
-| **Cookie / session leak** | Instagram cookies in logs | mounted as file, never logged; pattern: file path only |
+| **Cookie / session leak** | Instagram cookies in logs | bind-mounted RO at `/srv/dwtgbot/secrets/cookies-instagram.txt`, never logged; only the file path is emitted, file content stays inside yt-dlp |
 | **Replay of expired link** | resharing public URL | TTL + counter; `is_active=false` after exhaustion |
 | **TLS downgrade / no TLS** | MITM | TLS 1.2+ only; HSTS `max-age=63072000; preload` |
 | **CSRF on temp links** | n/a | links are GET-only, idempotent (counter aside); no auth state to confuse |
@@ -264,7 +264,7 @@ model.
 | `REDIS_PASSWORD` | same | rotate in `redis-server` config + envs; restart |
 | `API_INTERNAL_TOKEN` | `.env` on NL-1 + NL-2 | random 32 bytes; rotate per quarter |
 | Let's Encrypt private key | `letsencrypt_conf` volume on NL-2 | auto-rotated by certbot |
-| Instagram cookies | mounted file (path in env) | refresh when bot reports auth issues |
+| Instagram cookies | host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (mode `0640`), bind-mounted RO into NL-1 `bot` and NL-2 `worker`; path tracked in `INSTAGRAM_COOKIES_FILE` env | refresh when worker logs `instagram_cookiefile_missing` or users report `MediaPrivateError`; re-upload to **both** hosts and restart bot+worker |
 | GHCR token | GitHub Actions secret | rotate per CI policy |
 | SSH keys | host `~/.ssh/authorized_keys` | rotate per access policy |
 
@@ -390,7 +390,7 @@ universe.
 | Built worker as root | container can write outside the volume | Build with `USER app`; verify with `docker exec` |
 | Updated yt-dlp without releasing | yt-dlp pulls untrusted plugins on the fly | Pin in `requirements/base.txt`; audit the changelog |
 | Set `cookiefile` to a globally-readable path | other system users can read it | `chmod 600`, `chown app:app`; never world-readable |
-| Used `cookiefile` from inside the bot container | cookies live on the wrong host | Cookies belong with the worker (where downloads happen) |
+| Uploaded `cookiefile` to only one host | extract_info on NL-1 succeeds, download on NL-2 (or vice-versa) falls back anonymous and Instagram returns login-required | Cookies must live on **both** NL-1 (bot does `extract_info`) and NL-2 (worker does the actual download); paths bind-mounted RO into both |
 | Allowed `0.0.0.0` on the SSH `AllowUsers` | brute-force lockouts | Restrict via firewall + key-only auth |
 
 ---
