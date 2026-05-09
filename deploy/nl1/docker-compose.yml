@@ -133,6 +133,11 @@ services:
         condition: service_completed_successfully
     networks:
       - dwtgbot_internal
+    volumes:
+      # Provider secrets (Instagram cookies). The bot runs analyze/extract_info
+      # on NL-1, so it needs the same cookiefile path to authenticate metadata
+      # probes. Missing files are handled gracefully by the providers.
+      - /srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro
     # Audit fix A30: use /proc-based liveness so the probe works even
     # on images that predate the ``procps`` addition (see
     # docker/bot.Dockerfile). Keeps healthchecks image-agnostic for

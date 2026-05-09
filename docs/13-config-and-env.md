@@ -165,7 +165,7 @@ Grouped by concern. **Bold** = required, no safe default.
 | `FFMPEG_BIN` | str | `ffmpeg` | Resolved via `PATH` |
 | `YTDLP_BIN` | str | `yt-dlp` | We use the Python lib; var is for diagnostics |
 | `HTTPS_PROXY_URL` | str | empty | S9 audit fix: outbound proxy injected into `yt-dlp` opts for both `extract_info` and `download`. Empty = direct. Format `http://user:pass@host:port` or `socks5h://host:port`. Lets you egress through a regional proxy without leaking creds into process env. |
-| `INSTAGRAM_COOKIES_FILE` | path-like str | empty | Optional Netscape cookies file for Instagram auth-required content. Passed to yt-dlp as `cookiefile` on metadata probe and download calls. Keep the same value on NL-1 and NL-2 because NL-1 does `extract_info` while NL-2 performs the actual download. |
+| `INSTAGRAM_COOKIES_FILE` | path-like str | empty | Optional Netscape cookies file for Instagram auth-required content. Passed to yt-dlp as `cookiefile` on metadata probe and download calls. Keep the same value on NL-1 and NL-2 because NL-1 does `extract_info` while NL-2 performs the actual download. The compose stacks bind-mount `/srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro` into the bot (NL-1) and worker (NL-2) containers, so the canonical path is `/srv/dwtgbot/secrets/cookies-instagram.txt`. Upload the file to that host directory (mode `0640`, owner `root` or your deploy user) — `deploy_update.sh` ensures the directory exists but never creates the cookies file itself. If the path is set but the file is missing the providers log a warning and proceed without auth. |
 
 ### Circuit breaker — yt-dlp upstream (`docs/34-error-taxonomy.md`, L5 audit fix)
 

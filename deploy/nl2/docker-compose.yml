@@ -74,6 +74,10 @@ services:
     volumes:
       - storage:/var/lib/dwtgbot/storage
       - storage_tmp:/var/lib/dwtgbot/tmp
+      # Provider secrets (Instagram cookies, future per-platform auth files).
+      # Read-only bind from host; missing files are handled gracefully by
+      # the providers (cookiefile is dropped from yt-dlp opts when absent).
+      - /srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro
     # Audit fix A30: use a Python-only liveness probe via /proc so the
     # healthcheck does not depend on ``pgrep`` being present in the
     # image (``procps`` is installed in docker/worker.Dockerfile, but

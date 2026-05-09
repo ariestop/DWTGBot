@@ -89,6 +89,27 @@ ensure_instagram_cookie_env() {
   fi
 }
 
+# Ensure the host directory backing the bind-mount exists with safe perms,
+# so docker compose can mount it into bot/worker even before an operator
+# uploads the actual cookies.txt. The provider treats a missing file as
+# "no cookies" and proceeds (with a warning), so an empty directory is OK.
+ensure_secrets_dir() {
+  local secrets_dir
+  secrets_dir="$(dirname "${INSTAGRAM_COOKIE_PATH}")"
+  log_step "Ensuring secrets directory ${secrets_dir}"
+  if [[ ! -d "${secrets_dir}" ]]; then
+    mkdir -p "${secrets_dir}"
+  fi
+  chmod 0750 "${secrets_dir}" 2>/dev/null || true
+  if [[ -f "${INSTAGRAM_COOKIE_PATH}" ]]; then
+    chmod 0640 "${INSTAGRAM_COOKIE_PATH}" 2>/dev/null || true
+    log_info "Instagram cookies file present: ${INSTAGRAM_COOKIE_PATH}"
+  else
+    log_warn "Instagram cookies file NOT FOUND at ${INSTAGRAM_COOKIE_PATH}"
+    log_warn "Upload a Netscape cookies.txt to enable authenticated Instagram downloads."
+  fi
+}
+
 pull_images() {
   log_step "Pulling images"
   run_compose pull
@@ -150,6 +171,7 @@ main() {
   log_info "Updating ${TARGET}"
   git_pull_if_possible
   ensure_instagram_cookie_env
+  ensure_secrets_dir
   validate_config
   pre_backup
   pull_images
