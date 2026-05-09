@@ -46,7 +46,7 @@ class InstagramProvider(BaseProvider):
     platform = Platform.INSTAGRAM
 
     async def get_info(self, url: str) -> MediaInfo:
-        raw = await self._ytdlp.extract_info(url)
+        raw = await self._ytdlp.extract_info(url, extra_opts=self._auth_extra_opts())
 
         entries = raw.get("entries")
         if entries:
@@ -145,7 +145,9 @@ class InstagramProvider(BaseProvider):
         probed = await self._ytdlp.probe_size(
             url,
             format_spec="bestvideo*+bestaudio/best",
-            extra_opts=({"playlist_items": playlist_items} if playlist_items else None),
+            extra_opts=self._with_auth_extra_opts(
+                {"playlist_items": playlist_items} if playlist_items else None
+            ),
         )
         if probed is not None:
             return probed
@@ -190,7 +192,9 @@ class InstagramProvider(BaseProvider):
             format_spec="bestvideo*+bestaudio/best",
             target_dir=out_dir,
             merge_output_format="mp4",
-            extra_opts=({"playlist_items": playlist_items} if playlist_items else None),
+            extra_opts=self._with_auth_extra_opts(
+                {"playlist_items": playlist_items} if playlist_items else None
+            ),
             force_transcode=True,
             on_progress=on_progress,
         )
@@ -239,6 +243,24 @@ class InstagramProvider(BaseProvider):
         if option.key == "gallery_photos":
             return tuple(item for item in info.items if item.kind is MediaKind.PHOTO)
         return info.items
+
+    def _auth_extra_opts(self) -> dict[str, str] | None:
+        cookiefile = (self._settings.INSTAGRAM_COOKIES_FILE or "").strip()
+        if not cookiefile:
+            return None
+        cookie_path = Path(cookiefile)
+        if not cookie_path.is_file():
+            _logger.warning("instagram_cookiefile_missing", path=cookiefile)
+            return None
+        return {"cookiefile": str(cookie_path)}
+
+    def _with_auth_extra_opts(self, extra_opts: dict[str, str] | None) -> dict[str, str] | None:
+        auth_opts = self._auth_extra_opts()
+        if auth_opts is None:
+            return extra_opts
+        if extra_opts is None:
+            return auth_opts
+        return {**extra_opts, **auth_opts}
 
 
 # -------------------------- helpers --------------------------

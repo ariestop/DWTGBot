@@ -53,6 +53,29 @@ async def test_extract_info_passes_allowed_extractors_and_match_filter(
 
 
 @pytest.mark.asyncio
+async def test_extract_info_merges_extra_opts(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = _make_runner(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    def _capture(url: str, opts: dict[str, Any]) -> dict[str, Any]:
+        captured["url"] = url
+        captured["opts"] = opts
+        return {"id": "ig"}
+
+    monkeypatch.setattr(runner, "_extract_sync", staticmethod(_capture))
+
+    await runner.extract_info(
+        "https://instagram.com/reel/abc",
+        extra_opts={"cookiefile": "/tmp/ig.cookies.txt"},
+    )
+
+    opts = captured["opts"]
+    assert opts["cookiefile"] == "/tmp/ig.cookies.txt"
+    assert opts["allowed_extractors"] == ["Youtube", "YoutubeTab", "Instagram"]
+    assert callable(opts["match_filter"])
+
+
+@pytest.mark.asyncio
 async def test_download_passes_allowed_extractors_and_match_filter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

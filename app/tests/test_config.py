@@ -102,3 +102,13 @@ def test_max_concurrent_jobs_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_CONCURRENT_JOBS_PER_USER", "5")
     get_settings.cache_clear()
     assert get_settings().MAX_CONCURRENT_JOBS_PER_USER == 5
+
+
+def test_instagram_cookies_file_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("INSTAGRAM_COOKIES_FILE", raising=False)
+    get_settings.cache_clear()
+    assert get_settings().INSTAGRAM_COOKIES_FILE == ""
+
+    monkeypatch.setenv("INSTAGRAM_COOKIES_FILE", "/tmp/ig.cookies.txt")
+    get_settings.cache_clear()
+    assert get_settings().INSTAGRAM_COOKIES_FILE == "/tmp/ig.cookies.txt"

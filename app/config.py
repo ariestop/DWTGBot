@@ -242,6 +242,10 @@ class Settings(BaseSettings):
     # calls). Format: ``http://user:pass@host:port`` or
     # ``socks5h://host:port``.
     HTTPS_PROXY_URL: str = ""
+    # Optional path to a Netscape cookies.txt file for Instagram.
+    # When set, the Instagram provider passes it as yt-dlp ``cookiefile``
+    # for metadata probe + download calls.
+    INSTAGRAM_COOKIES_FILE: str = ""
 
     # --- Sentry (L7) ---
     # Error aggregation. Blank DSN disables the integration entirely

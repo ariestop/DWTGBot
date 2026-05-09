@@ -41,7 +41,8 @@ Component responsibilities:
 
 ```python
 class YtDlpRunner:
-    async def extract_info(self, url: str) -> dict[str, Any]: ...
+    async def extract_info(self, url: str, *,
+                           extra_opts: dict | None = None) -> dict[str, Any]: ...
     async def download(self, url: str, *, format_spec: str,
                        target_dir: Path,
                        postprocessors: list[dict] | None = None,
@@ -51,6 +52,9 @@ class YtDlpRunner:
 
 ### `extract_info`
 - `skip_download=True`, `socket_timeout=30 s`, `retries=1`.
+- `extra_opts` lets providers inject extractor-specific params (for example
+  Instagram `cookiefile`) while preserving shared guards (`allowed_extractors`,
+  `match_filter`) and proxy wiring.
 - Runs `ydl.sanitize_info(...)` so what we cache is JSON-safe.
 - All exceptions normalised through `_classify(...)`.
 

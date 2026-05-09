@@ -23,7 +23,13 @@ class _FakeYtDlp(YtDlpRunner):
         super().__init__(settings)
         self._raw = raw
 
-    async def extract_info(self, url: str) -> dict[str, Any]:  # type: ignore[override]
+    async def extract_info(
+        self,
+        url: str,
+        *,
+        extra_opts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:  # type: ignore[override]
+        del url, extra_opts
         return self._raw
 
 

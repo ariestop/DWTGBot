@@ -272,7 +272,12 @@ class YtDlpRunner:
         self._settings = settings
         self._breaker = breaker
 
-    async def extract_info(self, url: str) -> dict[str, Any]:
+    async def extract_info(
+        self,
+        url: str,
+        *,
+        extra_opts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Fetch metadata only; no download."""
         host = _host_of(url)
         await self._trip_if_open(host)
@@ -286,6 +291,8 @@ class YtDlpRunner:
             "retries": 1,
         }
         self._apply_source_guards(opts)
+        if extra_opts:
+            opts.update(extra_opts)
         self._apply_proxy(opts)
         try:
             result = await asyncio.to_thread(self._extract_sync, url, opts)
