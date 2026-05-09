@@ -53,10 +53,10 @@ jobs:
             git checkout "${{ inputs.ref }}"
             git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
             COOKIE_PATH="/srv/dwtgbot/secrets/cookies-instagram.txt"
-            if grep -q '^INSTAGRAM_COOKIES_FILE=' deploy/nl1/.env; then
-              sed -i "s|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=${COOKIE_PATH}|" deploy/nl1/.env
+            if sudo grep -q '^INSTAGRAM_COOKIES_FILE=' deploy/nl1/.env; then
+              sudo sed -i "s|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=${COOKIE_PATH}|" deploy/nl1/.env
             else
-              echo "INSTAGRAM_COOKIES_FILE=${COOKIE_PATH}" >> deploy/nl1/.env
+              printf 'INSTAGRAM_COOKIES_FILE=%s\n' "${COOKIE_PATH}" | sudo tee -a deploy/nl1/.env >/dev/null
             fi
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
@@ -104,10 +104,10 @@ jobs:
             git checkout "${{ inputs.ref }}"
             git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
             COOKIE_PATH="/srv/dwtgbot/secrets/cookies-instagram.txt"
-            if grep -q '^INSTAGRAM_COOKIES_FILE=' deploy/nl2/.env; then
-              sed -i "s|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=${COOKIE_PATH}|" deploy/nl2/.env
+            if sudo grep -q '^INSTAGRAM_COOKIES_FILE=' deploy/nl2/.env; then
+              sudo sed -i "s|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=${COOKIE_PATH}|" deploy/nl2/.env
             else
-              echo "INSTAGRAM_COOKIES_FILE=${COOKIE_PATH}" >> deploy/nl2/.env
+              printf 'INSTAGRAM_COOKIES_FILE=%s\n' "${COOKIE_PATH}" | sudo tee -a deploy/nl2/.env >/dev/null
             fi
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
