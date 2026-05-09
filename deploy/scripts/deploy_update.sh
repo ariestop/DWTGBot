@@ -26,6 +26,7 @@ TARGET="${1:-}"
 
 ENV_FILE="${DEPLOY_DIR}/${TARGET}/.env"
 require_env_file "${ENV_FILE}"
+INSTAGRAM_COOKIE_PATH="${INSTAGRAM_COOKIE_PATH:-/srv/dwtgbot/secrets/cookies-instagram.txt}"
 
 run_compose() {
   if [[ "${TARGET}" == "nl1" ]]; then compose_nl1 "$@"; else compose_nl2 "$@"; fi
@@ -72,6 +73,19 @@ pre_backup() {
     else
       log_info "Postgres container not running — skipping pre-deploy backup (first boot?)"
     fi
+  fi
+}
+
+ensure_instagram_cookie_env() {
+  log_step "Ensuring INSTAGRAM_COOKIES_FILE in ${ENV_FILE}"
+  if [[ ! -w "${ENV_FILE}" ]]; then
+    log_warn "Cannot modify ${ENV_FILE}; skipping INSTAGRAM_COOKIES_FILE sync"
+    return
+  fi
+  if grep -q '^INSTAGRAM_COOKIES_FILE=' "${ENV_FILE}"; then
+    sed -i "s|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=${INSTAGRAM_COOKIE_PATH}|" "${ENV_FILE}"
+  else
+    printf 'INSTAGRAM_COOKIES_FILE=%s\n' "${INSTAGRAM_COOKIE_PATH}" >>"${ENV_FILE}"
   fi
 }
 
@@ -135,6 +149,7 @@ main() {
   trap 'print_rollback_hint' ERR
   log_info "Updating ${TARGET}"
   git_pull_if_possible
+  ensure_instagram_cookie_env
   validate_config
   pre_backup
   pull_images
