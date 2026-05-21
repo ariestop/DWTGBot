@@ -26,6 +26,7 @@ TARGET="${1:-}"
 
 ENV_FILE="${DEPLOY_DIR}/${TARGET}/.env"
 require_env_file "${ENV_FILE}"
+YOUTUBE_COOKIE_PATH="${YOUTUBE_COOKIE_PATH:-/srv/dwtgbot/secrets/cookies-youtube.txt}"
 INSTAGRAM_COOKIE_PATH="${INSTAGRAM_COOKIE_PATH:-/srv/dwtgbot/secrets/cookies-instagram.txt}"
 
 run_compose() {
@@ -76,23 +77,26 @@ pre_backup() {
   fi
 }
 
-ensure_instagram_cookie_env() {
-  log_step "Ensuring INSTAGRAM_COOKIES_FILE in ${ENV_FILE}"
+ensure_cookie_env() {
+  local env_name="$1"
+  local cookie_path="$2"
+
+  log_step "Ensuring ${env_name} in ${ENV_FILE}"
   if [[ ! -w "${ENV_FILE}" ]]; then
-    log_warn "Cannot modify ${ENV_FILE}; skipping INSTAGRAM_COOKIES_FILE sync"
+    log_warn "Cannot modify ${ENV_FILE}; skipping ${env_name} sync"
     return
   fi
-  if grep -q '^INSTAGRAM_COOKIES_FILE=' "${ENV_FILE}"; then
-    sed -i "s|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=${INSTAGRAM_COOKIE_PATH}|" "${ENV_FILE}"
+  if grep -q "^${env_name}=" "${ENV_FILE}"; then
+    sed -i "s|^${env_name}=.*|${env_name}=${cookie_path}|" "${ENV_FILE}"
   else
-    printf 'INSTAGRAM_COOKIES_FILE=%s\n' "${INSTAGRAM_COOKIE_PATH}" >>"${ENV_FILE}"
+    printf '%s=%s\n' "${env_name}" "${cookie_path}" >>"${ENV_FILE}"
   fi
 }
 
 # Ensure the host directory backing the bind-mount exists with safe perms,
 # so docker compose can mount it into bot/worker even before an operator
-# uploads the actual cookies.txt. The provider treats a missing file as
-# "no cookies" and proceeds (with a warning), so an empty directory is OK.
+# uploads the actual cookies.txt files. Providers treat missing files as
+# "no cookies" and proceed (with a warning), so an empty directory is OK.
 ensure_secrets_dir() {
   local secrets_dir
   secrets_dir="$(dirname "${INSTAGRAM_COOKIE_PATH}")"
@@ -101,13 +105,19 @@ ensure_secrets_dir() {
     mkdir -p "${secrets_dir}"
   fi
   chmod 0750 "${secrets_dir}" 2>/dev/null || true
-  if [[ -f "${INSTAGRAM_COOKIE_PATH}" ]]; then
-    chmod 0640 "${INSTAGRAM_COOKIE_PATH}" 2>/dev/null || true
-    log_info "Instagram cookies file present: ${INSTAGRAM_COOKIE_PATH}"
-  else
-    log_warn "Instagram cookies file NOT FOUND at ${INSTAGRAM_COOKIE_PATH}"
-    log_warn "Upload a Netscape cookies.txt to enable authenticated Instagram downloads."
+  if [[ "$(dirname "${YOUTUBE_COOKIE_PATH}")" != "${secrets_dir}" ]]; then
+    mkdir -p "$(dirname "${YOUTUBE_COOKIE_PATH}")"
+    chmod 0750 "$(dirname "${YOUTUBE_COOKIE_PATH}")" 2>/dev/null || true
   fi
+  for cookie_path in "${YOUTUBE_COOKIE_PATH}" "${INSTAGRAM_COOKIE_PATH}"; do
+    if [[ -f "${cookie_path}" ]]; then
+      chmod 0640 "${cookie_path}" 2>/dev/null || true
+      log_info "Cookies file present: ${cookie_path}"
+    else
+      log_warn "Cookies file NOT FOUND at ${cookie_path}"
+      log_warn "Upload a Netscape cookies.txt to enable authenticated provider downloads."
+    fi
+  done
 }
 
 pull_images() {
@@ -170,7 +180,8 @@ main() {
   trap 'print_rollback_hint' ERR
   log_info "Updating ${TARGET}"
   git_pull_if_possible
-  ensure_instagram_cookie_env
+  ensure_cookie_env "YOUTUBE_COOKIES_FILE" "${YOUTUBE_COOKIE_PATH}"
+  ensure_cookie_env "INSTAGRAM_COOKIES_FILE" "${INSTAGRAM_COOKIE_PATH}"
   ensure_secrets_dir
   validate_config
   pre_backup

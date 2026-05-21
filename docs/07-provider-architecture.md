@@ -213,6 +213,9 @@ the provider does **not** unlink files.
 - **Format spec** (video): yt-dlp's
   `bestvideo[height<=H][ext=mp4]+bestaudio[ext=m4a]` with sane fallbacks.
 - **Audio**: `bestaudio/best` then `FFmpegExtractAudio` postprocessor.
+- **Auth**: respects `YOUTUBE_COOKIES_FILE` for age/auth-gated videos and
+  Shorts. Keep the same path on NL-1 and NL-2 because NL-1 probes metadata
+  and NL-2 downloads bytes.
 - **Size estimates**: rough bitrate buckets per height + duration; null
   when duration unknown.
 - **Playlists**: only the first entry is kept; treat playlist URLs as

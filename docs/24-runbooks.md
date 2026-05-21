@@ -533,30 +533,34 @@ docker exec dwtgbot_worker yt-dlp -j --no-warnings 'https://www.youtube.com/watc
    - Pin a banner in user channel: "Provider X temporarily
      unavailable while upstream fixes a bug."
    - Watch yt-dlp issue tracker; un-disable when fix lands.
-4. **Cookies expired** (Instagram is the canonical case; same shape for any
-   future auth-gated provider) → rotate the cookie file on **both** hosts:
+4. **Cookies expired** (YouTube age-gated Shorts/videos and Instagram
+   auth-gated posts use the same shape) → rotate the cookie file on
+   **both** hosts:
    ```bash
    # Export Netscape cookies.txt from a logged-in browser session.
+   PLATFORM=youtube   # or: instagram
    for HOST in nl1 nl2; do
-     scp cookies-instagram.txt "$HOST:/tmp/"
+     scp "cookies-${PLATFORM}.txt" "$HOST:/tmp/"
      ssh "$HOST" 'sudo install -o root -g root -m 0640 \
-       /tmp/cookies-instagram.txt \
-       /srv/dwtgbot/secrets/cookies-instagram.txt && \
-       rm /tmp/cookies-instagram.txt'
+       /tmp/cookies-'"${PLATFORM}"'.txt \
+       /srv/dwtgbot/secrets/cookies-'"${PLATFORM}"'.txt && \
+       rm /tmp/cookies-'"${PLATFORM}"'.txt'
    done
    # Restart the containers that read the file.
    ssh nl1 'cd <NL1_REPO_PATH>/deploy/nl1 && sudo docker compose restart bot'
    ssh nl2 'cd <NL2_REPO_PATH>/deploy/nl2 && sudo docker compose restart worker'
    ```
-   The path is canonical (`/srv/dwtgbot/secrets/cookies-instagram.txt`,
-   mode `0640`) because both compose stacks bind-mount
+   The paths are canonical (`/srv/dwtgbot/secrets/cookies-youtube.txt` and
+   `/srv/dwtgbot/secrets/cookies-instagram.txt`, mode `0640`) because both
+   compose stacks bind-mount
    `/srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro` into bot/worker.
-   `INSTAGRAM_COOKIES_FILE` in the `.env` files points at exactly that path
-   and is auto-synced by `deploy_update.sh::ensure_instagram_cookie_env`.
+   `YOUTUBE_COOKIES_FILE` / `INSTAGRAM_COOKIES_FILE` in the `.env` files
+   point at exactly those paths and are auto-synced by
+   `deploy_update.sh::ensure_cookie_env`.
    Confirm the worker actually picked it up:
    ```bash
-   docker exec dwtgbot_worker test -f /srv/dwtgbot/secrets/cookies-instagram.txt && echo OK
-   docker logs dwtgbot_worker --since 5m | grep -i instagram_cookiefile_missing || echo "no warnings"
+   docker exec dwtgbot_worker test -f "/srv/dwtgbot/secrets/cookies-${PLATFORM}.txt" && echo OK
+   docker logs dwtgbot_worker --since 5m | grep -i "${PLATFORM}_cookiefile_missing" || echo "no warnings"
    ```
 5. **Geo / bot-detection** → consider rotating egress IP (out of
    scope for runbook; ADR required); short-term, surface a

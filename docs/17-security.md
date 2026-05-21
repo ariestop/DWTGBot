@@ -264,6 +264,7 @@ model.
 | `REDIS_PASSWORD` | same | rotate in `redis-server` config + envs; restart |
 | `API_INTERNAL_TOKEN` | `.env` on NL-1 + NL-2 | random 32 bytes; rotate per quarter |
 | Let's Encrypt private key | `letsencrypt_conf` volume on NL-2 | auto-rotated by certbot |
+| YouTube cookies | host file `/srv/dwtgbot/secrets/cookies-youtube.txt` (mode `0640`), bind-mounted RO into NL-1 `bot` and NL-2 `worker`; path tracked in `YOUTUBE_COOKIES_FILE` env | refresh when worker logs `youtube_cookiefile_missing` or age/auth-gated YouTube videos fail with `MediaPrivateError`; re-upload to **both** hosts and restart bot+worker |
 | Instagram cookies | host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (mode `0640`), bind-mounted RO into NL-1 `bot` and NL-2 `worker`; path tracked in `INSTAGRAM_COOKIES_FILE` env | refresh when worker logs `instagram_cookiefile_missing` or users report `MediaPrivateError`; re-upload to **both** hosts and restart bot+worker |
 | GHCR token | GitHub Actions secret | rotate per CI policy |
 | SSH keys | host `~/.ssh/authorized_keys` | rotate per access policy |

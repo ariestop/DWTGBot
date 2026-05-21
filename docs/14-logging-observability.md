@@ -139,7 +139,9 @@ Existing events you'll see in the codebase (non-exhaustive):
 | `link_rejected` | bot | INFO | invalid/unsupported URL |
 | `link_analysis_failed` | bot | WARNING | `AppError` from analyze |
 | `link_analysis_unexpected_error` | bot | ERROR (with `exc_info`) | unexpected exception |
+| `youtube_cookiefile_missing` | provider | WARNING | `YOUTUBE_COOKIES_FILE` is set but unreadable/missing; YouTube auth-gated content falls back to anonymous |
 | `youtube_download_done` | provider | INFO | per-job summary |
+| `instagram_cookiefile_missing` | provider | WARNING | `INSTAGRAM_COOKIES_FILE` is set but unreadable/missing; Instagram auth-gated content falls back to anonymous |
 | `worker_started` / `worker_stopped` | worker | INFO | arq lifecycle |
 | `worker_startup_check_failed` | worker | ERROR | `validate_runtime` errors |
 | `job_done` | worker | INFO | success path; carries `total_seconds`, `file_size_class` (see ADR-0007 §2.4) |

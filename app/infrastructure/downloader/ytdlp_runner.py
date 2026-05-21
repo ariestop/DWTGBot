@@ -523,6 +523,9 @@ class YtDlpRunner:
         if (
             "private" in msg
             or "login required" in msg
+            or "sign in to confirm" in msg
+            or "use --cookies" in msg
+            or "use --cookies-from-browser" in msg
             or ("requested format is not available" in msg and "private" in msg)
         ):
             return MediaPrivateError(str(exc))

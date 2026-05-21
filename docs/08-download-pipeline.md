@@ -53,8 +53,8 @@ class YtDlpRunner:
 ### `extract_info`
 - `skip_download=True`, `socket_timeout=30 s`, `retries=1`.
 - `extra_opts` lets providers inject extractor-specific params (for example
-  Instagram `cookiefile`) while preserving shared guards (`allowed_extractors`,
-  `match_filter`) and proxy wiring.
+  YouTube / Instagram `cookiefile`) while preserving shared guards
+  (`allowed_extractors`, `match_filter`) and proxy wiring.
 - Runs `ydl.sanitize_info(...)` so what we cache is JSON-safe.
 - All exceptions normalised through `_classify(...)`.
 
@@ -227,7 +227,7 @@ short timeout can flap.
 |---|---|---|
 | URL gibberish | `extract_first_url` returns nothing | "Это не похоже на ссылку." |
 | Host unsupported | `detect_platform` returns `None` | "Этот источник пока не поддерживается." |
-| yt-dlp says "Private video" | `MediaPrivateError` | "Видео приватное / требует авторизации." |
+| yt-dlp says "Private video" / "Sign in to confirm your age" | `MediaPrivateError` | "Видео приватное / требует авторизации." |
 | Removed / 404 | `MediaNotFoundError` | "Видео недоступно или удалено." |
 | Network / TLS / DNS | `DownloadError` ("network") | "Не удалось скачать. Попробуйте позже." |
 | Format unavailable | `DownloadError` | same as above; logs include `format_spec` |

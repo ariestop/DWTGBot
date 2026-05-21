@@ -29,7 +29,7 @@ class YouTubeProvider(BaseProvider):
     platform = Platform.YOUTUBE
 
     async def get_info(self, url: str) -> MediaInfo:
-        raw = await self._ytdlp.extract_info(url)
+        raw = await self._ytdlp.extract_info(url, extra_opts=self._auth_extra_opts())
         # `entries` would mean a playlist; we treat the first entry as the target.
         entry: dict[str, Any] = raw["entries"][0] if raw.get("entries") else raw
 
@@ -147,7 +147,11 @@ class YouTubeProvider(BaseProvider):
         option: DownloadOption,
     ) -> int | None:
         del info
-        return await self._ytdlp.probe_size(url, format_spec=_format_spec_for_option(option))
+        return await self._ytdlp.probe_size(
+            url,
+            format_spec=_format_spec_for_option(option),
+            extra_opts=self._auth_extra_opts(),
+        )
 
     async def download(
         self,
@@ -171,6 +175,7 @@ class YouTubeProvider(BaseProvider):
                         "preferredquality": str(option.bitrate_kbps or 192),
                     }
                 ],
+                extra_opts=self._auth_extra_opts(),
                 on_progress=on_progress,
             )
             files = [p for p in files if p.suffix.lower() == ".mp3"] or files
@@ -192,11 +197,22 @@ class YouTubeProvider(BaseProvider):
                 format_spec=_format_spec_for_option(option),
                 target_dir=out_dir,
                 merge_output_format="mp4",
+                extra_opts=self._auth_extra_opts(),
                 on_progress=on_progress,
             )
             return self._build_result(files, info_title=out_dir.name, kind=MediaKind.VIDEO)
 
         raise DownloadError(f"Unsupported YouTube option: {option.key}")
+
+    def _auth_extra_opts(self) -> dict[str, str] | None:
+        cookiefile = (self._settings.YOUTUBE_COOKIES_FILE or "").strip()
+        if not cookiefile:
+            return None
+        cookie_path = Path(cookiefile)
+        if not cookie_path.is_file():
+            _logger.warning("youtube_cookiefile_missing", path=cookiefile)
+            return None
+        return {"cookiefile": str(cookie_path)}
 
     def _build_result(
         self,

@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from yt_dlp.utils import DownloadError as YtDlpDownloadError
 
 from app.config import Settings
+from app.exceptions import MediaPrivateError
 from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
 from app.utils.url import is_allowed_host
 
@@ -111,3 +113,14 @@ def test_is_allowed_host_accepts_supported_provider_cdns() -> None:
     assert is_allowed_host("https://scontent-arn2-1.xx.fbcdn.net/v/t51.2885-15/abc.jpg") is True
     assert is_allowed_host("https://169.254.169.254/latest/meta-data/") is False
     assert is_allowed_host("https://example.com/file.mp4") is False
+
+
+def test_age_gate_error_is_classified_as_private() -> None:
+    exc = YtDlpDownloadError(
+        "Sign in to confirm your age. This video may be inappropriate for some users. "
+        "Use --cookies-from-browser or --cookies for the authentication."
+    )
+
+    classified = YtDlpRunner._classify(exc)
+
+    assert isinstance(classified, MediaPrivateError)

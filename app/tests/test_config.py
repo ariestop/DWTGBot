@@ -112,3 +112,13 @@ def test_instagram_cookies_file_default_and_override(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("INSTAGRAM_COOKIES_FILE", "/tmp/ig.cookies.txt")
     get_settings.cache_clear()
     assert get_settings().INSTAGRAM_COOKIES_FILE == "/tmp/ig.cookies.txt"
+
+
+def test_youtube_cookies_file_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    get_settings.cache_clear()
+    assert get_settings().YOUTUBE_COOKIES_FILE == ""
+
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", "/tmp/yt.cookies.txt")
+    get_settings.cache_clear()
+    assert get_settings().YOUTUBE_COOKIES_FILE == "/tmp/yt.cookies.txt"
