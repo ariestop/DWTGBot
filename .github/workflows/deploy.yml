@@ -21,6 +21,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   nl1:
@@ -59,6 +60,7 @@ jobs:
             export IMAGE_API="ghcr.io/${REPO_LC}-api:${IMAGE_TAG}"
             export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
             export IMAGE_BACKUP="ghcr.io/${REPO_LC}-backup:${IMAGE_TAG}"
+            echo "${GITHUB_TOKEN}" | sudo docker login ghcr.io -u github-actions --password-stdin
             ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
 
   nl2:
@@ -102,4 +104,5 @@ jobs:
             REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
             export IMAGE_API="ghcr.io/${REPO_LC}-api:${IMAGE_TAG}"
             export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
+            echo "${GITHUB_TOKEN}" | sudo docker login ghcr.io -u github-actions --password-stdin
             ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl2
