@@ -201,7 +201,7 @@ Bind-mounts (host paths, not named volumes):
 
 | Host path → container path | Owners | Mode | Purpose |
 |---|---|---|---|
-| `/srv/dwtgbot/secrets` → `/srv/dwtgbot/secrets` | NL-1 bot, NL-2 worker | RO | per-platform auth files (e.g. `cookies-instagram.txt`) referenced by `INSTAGRAM_COOKIES_FILE`. `deploy_update.sh` (`ensure_secrets_dir`) creates the host directory with mode `0750`; the cookies file itself is uploaded out-of-band by the operator. Missing files are tolerated — providers log `instagram_cookiefile_missing` and fall back to anonymous fetches. See [`13-config-and-env.md`](13-config-and-env.md#instagram_cookies_file) and [`17-security.md`](17-security.md#secrets-inventory). |
+| `/srv/dwtgbot/secrets` → `/srv/dwtgbot/secrets` | NL-1 bot, NL-2 worker | RO | per-platform auth files (e.g. `cookies-youtube.txt`, `cookies-instagram.txt`) referenced by `YOUTUBE_COOKIES_FILE` / `INSTAGRAM_COOKIES_FILE`. `deploy_update.sh` (`ensure_secrets_dir`) creates the host directory with mode `0750`; the cookies files themselves are uploaded out-of-band by the operator. Missing files are tolerated — providers log `<platform>_cookiefile_missing` and fall back to anonymous fetches. See [`13-config-and-env.md`](13-config-and-env.md#tooling) and [`17-security.md`](17-security.md#7-secrets-management). |
 
 Networks:
 
