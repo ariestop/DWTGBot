@@ -62,8 +62,11 @@ services:
       - backups:/var/backups/dwtgbot
     networks:
       - dwtgbot_internal
-    # No ports: — DB is accessible only inside the docker network and via
-    # the host private interface (configure firewall + WireGuard).
+    # Bind only to the WireGuard interface so NL-2 worker/api can reach
+    # Postgres over the private subnet. UFW enforces source restriction
+    # (allow from 10.10.0.2 only — see deploy/scripts/firewall_setup.sh).
+    ports:
+      - "10.10.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -96,6 +99,9 @@ services:
       - redis_data:/data
     networks:
       - dwtgbot_internal
+    # Bind only to the WireGuard interface (same rationale as postgres above).
+    ports:
+      - "10.10.0.1:6379:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 10s
@@ -137,7 +143,7 @@ services:
       # Provider secrets (Instagram cookies). The bot runs analyze/extract_info
       # on NL-1, so it needs the same cookiefile path to authenticate metadata
       # probes. Missing files are handled gracefully by the providers.
-      - /srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro
+      - /srv/dwtgbot/secrets:/srv/dwtgbot/secrets:rw
     # Audit fix A30: use /proc-based liveness so the probe works even
     # on images that predate the ``procps`` addition (see
     # docker/bot.Dockerfile). Keeps healthchecks image-agnostic for

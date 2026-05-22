@@ -111,7 +111,8 @@ ensure_secrets_dir() {
   fi
   for cookie_path in "${YOUTUBE_COOKIE_PATH}" "${INSTAGRAM_COOKIE_PATH}"; do
     if [[ -f "${cookie_path}" ]]; then
-      chmod 0640 "${cookie_path}" 2>/dev/null || true
+      chgrp 1000 "${cookie_path}" 2>/dev/null || true
+      chmod 0660 "${cookie_path}" 2>/dev/null || true
       log_info "Cookies file present: ${cookie_path}"
     else
       log_warn "Cookies file NOT FOUND at ${cookie_path}"

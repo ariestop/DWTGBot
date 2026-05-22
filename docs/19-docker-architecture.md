@@ -201,7 +201,7 @@ Bind-mounts (host paths, not named volumes):
 
 | Host path → container path | Owners | Mode | Purpose |
 |---|---|---|---|
-| `/srv/dwtgbot/secrets` → `/srv/dwtgbot/secrets` | NL-1 bot, NL-2 worker | RO | per-platform auth files (e.g. `cookies-youtube.txt`, `cookies-instagram.txt`) referenced by `YOUTUBE_COOKIES_FILE` / `INSTAGRAM_COOKIES_FILE`. `deploy_update.sh` (`ensure_secrets_dir`) creates the host directory with mode `0750`; the cookies files themselves are uploaded out-of-band by the operator. Missing files are tolerated — providers log `<platform>_cookiefile_missing` and fall back to anonymous fetches. See [`13-config-and-env.md`](13-config-and-env.md#tooling) and [`17-security.md`](17-security.md#7-secrets-management). |
+| `/srv/dwtgbot/secrets` → `/srv/dwtgbot/secrets` | NL-1 bot, NL-2 worker | RW | per-platform auth files (e.g. `cookies-youtube.txt`, `cookies-instagram.txt`) referenced by `YOUTUBE_COOKIES_FILE` / `INSTAGRAM_COOKIES_FILE`. The mount is writable because `yt-dlp` may refresh and save cookies on successful authenticated requests. `deploy_update.sh` (`ensure_secrets_dir`) creates the host directory with mode `0750` and sets cookie files to group `1000` with mode `0660`; the files themselves are uploaded out-of-band by the operator. Missing files are tolerated — providers log `<platform>_cookiefile_missing` and fall back to anonymous fetches. See [`13-config-and-env.md`](13-config-and-env.md#tooling) and [`17-security.md`](17-security.md#7-secrets-management). |
 
 Networks:
 
