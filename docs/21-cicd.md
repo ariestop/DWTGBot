@@ -33,10 +33,13 @@ manual fallback for when CI is unavailable.
 flowchart LR
   subgraph GH[GitHub]
     PR[Pull Request] --> CI[ci.yml]
-    Main[Push to main / tag v*] --> CI
-    Main --> BUILD[build-images.yml]
+    Main[Push to main] --> CI
+    CI -->|green on main| BUILD[build-images.yml]
+    Tag[tag v*] --> BUILD
     BUILD --> GHCR[(ghcr.io)]
-    Manual[workflow_dispatch] --> DEP[deploy.yml]
+    BUILD -->|green on main| DEP[deploy.yml]
+    Manual[workflow_dispatch] --> BUILD
+    ManualDeploy[workflow_dispatch] --> DEP
   end
 
   DEP -- SSH --> NL1[NL-1: deploy_update.sh nl1]
@@ -61,17 +64,25 @@ flowchart LR
 | Stage | Workflow | Trigger | Output |
 |---|---|---|---|
 | Verify | `ci.yml` | every push + PR | green / red status checks |
-| Publish | `build-images.yml` | push to `main` + `v*.*.*` tag + manual | tagged images in GHCR |
-| Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | running new images on NL-1, then NL-2 |
+| Publish | `build-images.yml` | successful `ci.yml` on `main` + `v*.*.*` tag + manual | tagged images in GHCR |
+| Roll out (automatic) | `deploy.yml` | successful `build-images.yml` on `main` | running new images on NL-1, then NL-2 |
+| Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | selected ref/target deployed over SSH |
 | Roll out (automatic) | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
 
-Ручной `deploy.yml` остаётся штатным GitHub-side путём. На самих хостах
-операторский путь — `deploy/scripts/install.sh`: `[16] Update to latest
-main` запускает `dwtgbot-autodeploy.service` немедленно, `[17] Rolling
-restart with current .env` вызывает низкоуровневый `deploy_update.sh` без
-вычисления нового SHA. Автодеплой — **дополнительный host-side механизм**,
-который можно установить на NL-1 и NL-2, если нужен rollout по таймеру без
-ручного `workflow_dispatch`.
+Canonical GitHub-side order for `main` is:
+
+1. `ci.yml` must finish green.
+2. `build-images.yml` starts from that successful CI run and publishes
+   `sha-<short>` images to GHCR.
+3. `deploy.yml` starts from that successful image build and deploys the
+   exact same SHA to NL-1, then NL-2.
+
+Ручной `deploy.yml` остаётся emergency / operator override путём. На самих
+хостах операторский путь — `deploy/scripts/install.sh`: `[16] Update to
+latest main` запускает `dwtgbot-autodeploy.service` немедленно, `[17]
+Rolling restart with current .env` вызывает низкоуровневый
+`deploy_update.sh` без вычисления нового SHA. Host-side автодеплой —
+дополнительный механизм для окружений, где нужен rollout по таймеру.
 
 ---
 
@@ -80,13 +91,13 @@ restart with current .env` вызывает низкоуровневый `deploy
 | File | Trigger | Concurrency | Permissions | Purpose |
 |---|---|---|---|---|
 | `.github/workflows/ci.yml` | `push`, `pull_request` to `main`/`develop` | `ci-${{ github.ref }}`, `cancel-in-progress: true` | `contents: read` | Lint, type-check, unit + integration tests, scanners, shellcheck |
-| `.github/workflows/build-images.yml` | `push` to `main`, tags `v*.*.*`, `workflow_dispatch` | (none — concurrent OK) | `contents: read`, `packages: write` | Build & push 4 images to GHCR |
-| `.github/workflows/deploy.yml` | `workflow_dispatch` (target + ref) | `deploy-${{ inputs.target }}`, `cancel-in-progress: false` | `contents: read` | SSH into NL-1 then NL-2, run `deploy_update.sh` |
+| `.github/workflows/build-images.yml` | successful `CI` run on `main`, tags `v*.*.*`, `workflow_dispatch` | `build-images-${{ github.event.workflow_run.head_sha || github.ref }}` | `contents: read`, `packages: write` | Build & push 4 images to GHCR |
+| `.github/workflows/deploy.yml` | successful `Build & push images` run on `main`, `workflow_dispatch` (target + ref) | `deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'both' }}`, `cancel-in-progress: false` | `contents: read`, `packages: read` | SSH into NL-1 then NL-2, run `deploy_update.sh` |
 | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | systemd timer on each host | `flock` lock per target (`nl1` / `nl2`) | GitHub token on host (`Actions: read`, `Contents: read`, `Deployments: read/write`) | Wait for green `ci.yml` + `build-images.yml`, then run host-side deploy |
 
 **Concurrency contract:**
 - CI cancels stale runs on the same branch (PR rebase friendly).
-- Builds may overlap (different shas → different tags).
+- Builds are serialised per git ref; `main` builds start only after CI is green.
 - Deploys are **never cancelled** mid-flight (`cancel-in-progress: false`) — ordering matters more than queue length. A second `deploy.yml` run for the same target queues until the first finishes.
 
 For the canonical install / run / verify order of host-side autodeploy,
@@ -189,7 +200,7 @@ services:
 | Not in CI | Why | Where instead |
 |---|---|---|
 | Build images | costs minutes on every PR; not all PRs change runtime | `build-images.yml` on `main` |
-| Deploy | safety: every deploy is manual | `deploy.yml` (manual dispatch) |
+| Deploy directly from CI | build artifact must exist first | automatic `deploy.yml` after `build-images.yml` succeeds |
 | Live Telegram / public-edge smoke | needs deployed infra and a human eyeball | post-deploy checks in `20-deployment.md` |
 
 ### 3.8 Local parity
@@ -228,14 +239,23 @@ Builds **four** images in parallel (matrix) and pushes them to GHCR:
 
 | Trigger | Tags pushed |
 |---|---|
-| Push to `main` | `main`, `sha-<short>` |
+| Successful `CI` run on `main` | `main`, `sha-<short>` |
 | Push tag `v1.2.3` | `v1.2.3`, `1.2.3`, `1.2`, `sha-<short>`, `latest` |
-| Pull request | `pr-<num>` (push happens but is not used by deploy) |
 | `workflow_dispatch` | `sha-<short>` |
 
-**Rule for production:** pin the **immutable** tag (`sha-<short>` or `1.2.3`) in `IMAGE_*` env vars. Never pin `:latest` or `:main` in production.
+**Rule for production:** deploy workflow exports the **immutable** tag
+(`sha-<short>` or `1.2.3`) into `IMAGE_*` for the active run. If an
+operator edits host `.env` manually, they must use the same immutable tag.
+Never pin `:latest` or `:main` in production.
 
-`:latest` is **only** attached to semver tag builds (ADR-0008 §2.4) — never to `main` pushes — so a single `:latest` always points to a published release. Compose files use `${IMAGE_*:?...}` so a missing or unset variable fails `docker compose up` with a clear error instead of silently pulling whatever is currently tagged `:latest`. The deploy workflow sets `IMAGE_*` to `ghcr.io/<repo>-<svc>:sha-<short>` derived from `git rev-parse --short=7 HEAD` of the chosen ref before invoking `deploy_update.sh`. A `concurrency:` group on `build-images.yml` serialises overlapping builds for the same git ref to prevent tag races.
+`:latest` is **only** attached to semver tag builds (ADR-0008 §2.4) —
+never to `main` builds — so a single `:latest` always points to a published
+release. Compose files use `${IMAGE_*:?...}` so a missing or unset variable
+fails `docker compose up` with a clear error instead of silently pulling
+whatever is currently tagged `:latest`. The deploy workflow sets `IMAGE_*`
+to `ghcr.io/<repo>-<svc>:sha-<short>` derived from the checked-out ref before
+invoking `deploy_update.sh`. A `concurrency:` group on `build-images.yml`
+serialises overlapping builds for the same git ref to prevent tag races.
 
 ### 4.3 Build configuration
 
@@ -282,6 +302,10 @@ docker manifest inspect ghcr.io/<org>/<repo>-bot:sha-abc1234
 
 ```yaml
 on:
+  workflow_run:
+    workflows: ["Build & push images"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       target:
@@ -293,7 +317,10 @@ on:
         default: main
 ```
 
-Manual only. Operator picks:
+Automatic `main` deploy starts only when `Build & push images` completes
+successfully for `main`. It deploys the exact `head_sha` from that build run.
+
+Manual dispatch remains available for targeted operator actions. Operator picks:
 - **target**: `nl1` (control plane only), `nl2` (media plane only), `both` (default — full release).
 - **ref**: branch / tag / sha to check out on the host (`main` by default).
 
@@ -302,12 +329,12 @@ Manual only. Operator picks:
 ```yaml
 jobs:
   nl1:
-    if: ${{ inputs.target == 'nl1' || inputs.target == 'both' }}
+    if: workflow_run success OR manual target includes nl1
     environment: nl1                       # ← protected env
     ...
 
   nl2:
-    if: ${{ inputs.target == 'nl2' || inputs.target == 'both' }}
+    if: workflow_run success OR manual target includes nl2
     needs: [nl1]                           # ← NL-2 waits for NL-1 (or its skip)
     environment: nl2
     ...
@@ -338,8 +365,9 @@ Each job runs the same SSH script via `appleboy/ssh-action@v1.0.3`:
       cd "${{ secrets.NL1_REPO_PATH }}"
       GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
       git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-      git checkout "${{ inputs.ref }}"
-      git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
+      DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
+      git checkout "${DEPLOY_REF}"
+      git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
       ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
 ```
 
@@ -367,12 +395,13 @@ Required reviewers convert "manual deploy" into "manual deploy with explicit app
 
 ```yaml
 concurrency:
-  group: deploy-${{ inputs.target }}
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'both' }}
   cancel-in-progress: false
 ```
 
+- Automatic deploys use the `both` group and queue behind any running full deploy.
 - Two simultaneous `both` deploys queue (don't overlap).
-- A `nl1`-only deploy and a `nl2`-only deploy can run concurrently — that's fine because they target different hosts. A `both` deploy serializes against either of the single-target ones.
+- Manual `nl1`-only and `nl2`-only deploys can still run concurrently — that's useful for targeted recovery, but avoid doing it during normal release flow.
 
 ---
 

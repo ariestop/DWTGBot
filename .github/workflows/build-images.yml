@@ -1,8 +1,11 @@
 name: Build & push images
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
+  push:
     tags: ["v*.*.*"]
   workflow_dispatch:
 
@@ -10,12 +13,12 @@ permissions:
   contents: read
   packages: write
 
-# Audit fix #4: serialise builds for the same ref so two concurrent
-# pushes to ``main`` cannot race the registry — the second one would
-# otherwise overwrite tags the first push just created (e.g.
-# ``sha-XXX`` is unique, but a shared ``main`` tag was previously not).
+# Audit fix #4: serialise builds for the same ref so two concurrent runs
+# cannot race the registry — the second one would otherwise overwrite tags
+# the first push just created (e.g. ``sha-XXX`` is unique, but a shared
+# ``main`` tag is not).
 concurrency:
-  group: build-images-${{ github.ref }}
+  group: build-images-${{ github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -23,6 +26,7 @@ env:
 
 jobs:
   build:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -39,6 +43,8 @@ jobs:
             file: docker/backup.Dockerfile
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       # ``github.repository`` preserves ``DWTGBot`` casing; Docker image
       # names must be lowercase or ``docker pull`` on the host fails with
@@ -46,6 +52,10 @@ jobs:
       - name: Lowercase GHCR image prefix
         id: imgpre
         run: echo "prefix=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Compute immutable image tag
+        id: imgtag
+        run: echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -68,11 +78,10 @@ jobs:
           # for releases). The compose files now ``${VAR:?}`` on missing
           # IMAGE_* env vars so a forgotten tag fails fast on the host.
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
+            type=raw,value=main,enable=${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main') || github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
+            type=raw,value=sha-${{ steps.imgtag.outputs.short }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build & push

@@ -1,6 +1,10 @@
 name: Deploy
 
 on:
+  workflow_run:
+    workflows: ["Build & push images"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       target:
@@ -16,7 +20,7 @@ on:
         default: main
 
 concurrency:
-  group: deploy-${{ inputs.target }}
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'both' }}
   cancel-in-progress: false
 
 permissions:
@@ -25,7 +29,11 @@ permissions:
 
 jobs:
   nl1:
-    if: ${{ inputs.target == 'nl1' || inputs.target == 'both' }}
+    if: >-
+      ${{
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+        || (github.event_name == 'workflow_dispatch' && (inputs.target == 'nl1' || inputs.target == 'both'))
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: nl1
@@ -51,8 +59,9 @@ jobs:
             cd "${{ secrets.NL1_REPO_PATH }}"
             GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
             git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-            git checkout "${{ inputs.ref }}"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
+            DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
+            git checkout "${DEPLOY_REF}"
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
             REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
@@ -73,7 +82,10 @@ jobs:
     if: >-
       ${{
         always()
-        && (inputs.target == 'nl2' || inputs.target == 'both')
+        && (
+          (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+          || (github.event_name == 'workflow_dispatch' && (inputs.target == 'nl2' || inputs.target == 'both'))
+        )
         && (needs.nl1.result == 'success' || needs.nl1.result == 'skipped')
       }}
     needs: [nl1]
@@ -97,8 +109,9 @@ jobs:
             cd "${{ secrets.NL2_REPO_PATH }}"
             GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
             git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-            git checkout "${{ inputs.ref }}"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${{ inputs.ref }}" || true
+            DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
+            git checkout "${DEPLOY_REF}"
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
             REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
