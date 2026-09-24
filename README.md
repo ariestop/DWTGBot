@@ -4,13 +4,18 @@
 **Instagram**, отправляет небольшие файлы напрямую через Telegram, а большие
 выдаёт через **токенизированные временные HTTPS-ссылки**, обслуживаемые Nginx.
 
-Проект рассчитан на **двухсерверную топологию**:
+Система состоит из двух плоскостей:
 
-- **NL-1 (control plane)** — bot, Postgres, Redis, backups
-- **NL-2 (media plane)** — worker (`yt-dlp` + `ffmpeg`), Nginx + Certbot, файловое хранилище
+- **control plane** — bot, Postgres, Redis, backups
+- **media plane** — worker (`yt-dlp` + `ffmpeg`), Nginx + Certbot, файловое хранилище
 
-Две части системы общаются по **приватной сети** (например, WireGuard). В
-интернет на NL-2 открыты только `:80`/`:443`.
+Поддерживаются две топологии ([ADR-0011](docs/adr/0011-single-server-topology.md)):
+
+- **`single`** (рекомендуется для старта) — обе плоскости на одном хосте
+  (`deploy/single`). Они разделены сетями Docker, наружу открыты только `:80`/`:443`.
+- **`split`** — **NL-1** (control) + **NL-2** (media), связь по приватной сети
+  (WireGuard). Переход `single → split` не требует миграции данных
+  ([`docs/24-runbooks.md`](docs/24-runbooks.md) §26).
 
 ---
 
@@ -141,7 +146,22 @@ make worker
 
 Полная пошаговая инструкция находится в [`docs/20-deployment.md`](docs/20-deployment.md)
 (канонический документ), а [`docs/24-runbooks.md`](docs/24-runbooks.md) описывает
-реакцию на инциденты. Краткая версия:
+реакцию на инциденты.
+
+### Один сервер (`single`, рекомендуется)
+
+1. **Подготовьте VM** на Ubuntu 24.04 LTS (рекомендуется 4 vCPU / 8 GB RAM /
+   80+ GB SSD). Направьте DNS A-record домена на её IP.
+2. **Склонируйте репозиторий** в `/opt/dwtgbot` и запустите
+   `sudo bash deploy/scripts/install.sh`. В меню по порядку: `[1]` установка
+   Docker (нужен Compose ≥ 2.24) → `[19]` **Prepare single server** (каталоги +
+   генерация `deploy/single/.env`) → `[5]` firewall → `[6]` start containers → `[12]`
+   SSL-сертификат.
+3. **Настройте offsite-бэкапы** (`BACKUP_S3_*`). В `single` бэкап лежит на том
+   же диске, что и база, поэтому offsite обязателен.
+4. **Проверьте состояние**: `bash deploy/scripts/healthcheck.sh single`.
+
+### Два сервера (`split`)
 
 1. **Подготовьте две VM** (NL-1 control plane, NL-2 media plane). **Только
    Ubuntu 24.04 LTS** — TUI installer привязывает Docker apt repo к `noble`.
@@ -164,18 +184,20 @@ make worker
 
 ### Auto-deploy через GitHub Actions
 
-Настройте эти secrets для каждого environment (`nl1` и `nl2`):
+Задайте repo variable `DEPLOY_TOPOLOGY` (`single` или `split`, по умолчанию
+`split`) и secrets для каждого environment (`single`, либо `nl1` и `nl2`):
 
 | Secret | Описание |
 |---|---|
-| `NL1_HOST` / `NL2_HOST` | Публичный IP / DNS |
-| `NL1_SSH_USER` / `NL2_SSH_USER` | SSH-пользователь с `sudo` |
-| `NL1_SSH_KEY` / `NL2_SSH_KEY` | Приватный ключ (PEM) |
-| `NL1_SSH_PORT` / `NL2_SSH_PORT` | Опционально, по умолчанию 22 |
-| `NL1_REPO_PATH` / `NL2_REPO_PATH` | Где склонирован репозиторий (например, `/opt/dwtgbot`) |
+| `SINGLE_HOST` / `NL1_HOST` / `NL2_HOST` | Публичный IP / DNS |
+| `SINGLE_SSH_USER` / `NL1_SSH_USER` / `NL2_SSH_USER` | SSH-пользователь с `sudo` |
+| `SINGLE_SSH_KEY` / `NL1_SSH_KEY` / `NL2_SSH_KEY` | Приватный ключ (PEM) |
+| `SINGLE_SSH_PORT` / `NL1_SSH_PORT` / `NL2_SSH_PORT` | Опционально, по умолчанию 22 |
+| `SINGLE_REPO_PATH` / `NL1_REPO_PATH` / `NL2_REPO_PATH` | Где склонирован репозиторий (например, `/opt/dwtgbot`) |
 
-Затем запустите **Actions → Deploy → Run workflow** с `target=both` и нужным
-ref. Workflow выполнит `deploy/scripts/deploy_update.sh` по SSH на каждом хосте.
+Затем запустите **Actions → Deploy → Run workflow** с `target=single` (или
+`both` для split) и нужным ref. Workflow выполнит
+`deploy/scripts/deploy_update.sh` по SSH на каждом хосте.
 
 ---
 
@@ -216,6 +238,7 @@ ref. Workflow выполнит `deploy/scripts/deploy_update.sh` по SSH на �
 | `FFMPEG_BIN` / `YTDLP_BIN` | `ffmpeg` / `yt-dlp` | Override для нестандартных путей |
 
 Полные шаблоны см. в [`.env.example`](.env.example),
+[`deploy/single/.env.example`](deploy/single/.env.example),
 [`deploy/nl1/.env.example`](deploy/nl1/.env.example) и
 [`deploy/nl2/.env.example`](deploy/nl2/.env.example).
 
@@ -225,18 +248,18 @@ ref. Workflow выполнит `deploy/scripts/deploy_update.sh` по SSH на �
 
 Все операционные скрипты лежат в `deploy/scripts/`. Они используют общий
 `helpers.sh` (strict mode, цветные логи в `/var/log/dwtgbot.log`, `ERR`-trap,
-интерактивные подтверждения, wrappers `compose_nl1`/`compose_nl2`).
+интерактивные подтверждения, wrapper `compose_stack single|nl1|nl2`).
 
 | Скрипт | Назначение |
 |---|---|
-| `install.sh` | TUI-меню на whiptail (установка Docker, настройка env, firewall, start/stop/logs, backup/restore, deploy, certbot, cleanup, healthcheck) |
-| `deploy_update.sh nl1\|nl2` | `git pull` → config check → опциональный pre-backup → pull → `up -d` → migrate (NL-1) → healthcheck |
+| `install.sh` | TUI-меню на whiptail (установка Docker, подготовка single/NL-1/NL-2, настройка env, firewall, start/stop/logs, backup/restore, deploy, certbot, cleanup, healthcheck) |
+| `deploy_update.sh single\|nl1\|nl2` | `git pull` → config check → опциональный pre-backup → pull → `up -d` → migrate (single / NL-1) → healthcheck |
 | `backup.sh` | `pg_dump` (в контейнере или через host exec), gzip, retention prune |
-| `restore.sh` | Интерактивный выбор dump, drop/recreate DB, загрузка dump, restart зависимых сервисов |
-| `firewall_setup.sh nl1\|nl2` | Правила `ufw`; NL-1 требует `PRIVATE_NET` для Postgres/Redis |
+| `restore.sh` | Интерактивный выбор dump, drop/recreate DB, загрузка dump, restart зависимых сервисов (в single worker останавливается локально) |
+| `firewall_setup.sh single\|nl1\|nl2` | Правила `ufw`; NL-1 требует `PRIVATE_NET` для Postgres/Redis, в single 5432/6379 закрыты |
 | `cleanup.sh` | Удаляет старые `STORAGE_TMP_PATH/*`, запускает one-shot pass `cleanup_worker` |
-| `certbot_init.sh` | Bootstrap Let's Encrypt certificate на NL-2 |
-| `healthcheck.sh nl1\|nl2` | Статусы сервисов + HTTP probes |
+| `certbot_init.sh` | Bootstrap Let's Encrypt certificate на хосте media plane (single или NL-2) |
+| `healthcheck.sh single\|nl1\|nl2` | Статусы сервисов + HTTP probes |
 
 Задайте `ASSUME_YES=1`, чтобы отключить интерактивные prompts в automation.
 
@@ -289,8 +312,11 @@ make worker    # python -m app.main_worker
   shellcheck на каждом PR.
 - `.github/workflows/build-images.yml` собирает и публикует образы
   `bot`/`api`/`worker`/`backup` в GHCR на `main` и tags.
-- `.github/workflows/deploy.yml` запускается вручную; подключается по SSH к
-  NL-1/NL-2 и выполняет `deploy_update.sh`.
+- `.github/workflows/deploy.yml` запускается после сборки образов или вручную;
+  подключается по SSH к single-хосту или к NL-1/NL-2 (по `DEPLOY_TOPOLOGY`) и
+  выполняет `deploy_update.sh`.
+- Задача `compose-validate` проверяет `docker compose config` для всех трёх
+  стеков, а `app/tests/test_deploy_topology.py` проверяет инварианты топологий.
 
 ---
 
@@ -313,8 +339,11 @@ app/
   main_worker.py         arq worker entrypoint
   tests/                 Unit tests
 deploy/
-  nl1/docker-compose.yml      Control plane
-  nl2/docker-compose.yml      Media plane
+  compose/control.yml         Фрагмент control plane (postgres, redis, migrate, bot, backup)
+  compose/media.yml           Фрагмент media plane (api, worker, cleanup, nginx, certbot)
+  single/docker-compose.yml   Один хост: оба фрагмента + single.override.yml
+  nl1/docker-compose.yml      Split, control plane (+ nl1.overlay.yml)
+  nl2/docker-compose.yml      Split, media plane
   nginx/                      Nginx config + snippets + media.conf.template
   certbot/init-letsencrypt.sh
   scripts/                    Operational bash scripts
@@ -340,7 +369,7 @@ migrations/
 подсказок:
 
 - **"Sorry, I can't process this link"** → проверьте worker logs:
-  `compose_nl2 logs -f worker`. Обычно не удалось получить metadata через
+  `compose_stack single logs -f worker` (или `compose_nl2 …`). Обычно не удалось получить metadata через
   `yt-dlp` (private/region-locked content).
 - **Файлы не доставляются, jobs stuck `pending`** → проверьте Redis connectivity
   с NL-2. Убедитесь, что `REDIS_HOST`/`REDIS_URL` и приватная сеть настроены
@@ -366,7 +395,7 @@ migrations/
 | 5 | Download engine | `yt-dlp` |
 | 6 | Media processing | `ffmpeg` |
 | 7 | Delivery | small files → Telegram; big files → temporary HTTPS link |
-| 8 | Infrastructure | NL-1: bot + redis + postgres; NL-2: worker + nginx + certbot + cleanup |
+| 8 | Infrastructure | `single` (всё на одном хосте) или `split` (NL-1: bot + redis + postgres; NL-2: worker + nginx + certbot + cleanup), см. ADR-0011 |
 | 9 | Deployment | Docker Compose |
 | 10 | CI/CD | GitHub Actions |
 | 11 | OS target | Ubuntu 24.04 LTS |

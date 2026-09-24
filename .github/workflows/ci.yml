@@ -178,6 +178,28 @@ jobs:
           scandir: ./deploy/scripts
           severity: warning
 
+  compose-validate:
+    name: Compose config (single / nl1 / nl2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose version (include needs >= 2.24.0)
+        run: |
+          set -euo pipefail
+          v="$(docker compose version --short | sed 's/^v//')"
+          echo "docker compose ${v}"
+          [[ "$(printf '%s\n' 2.24.0 "${v}" | sort -V | head -n1)" == "2.24.0" ]]
+      - name: docker compose config -q
+        run: |
+          set -euo pipefail
+          for stack in single nl1 nl2; do
+            cp "deploy/${stack}/.env.example" "deploy/${stack}/.env"
+            echo "::group::${stack}"
+            (cd "deploy/${stack}" && docker compose config -q)
+            echo "::endgroup::"
+          done
+
   lockfile-check:
     name: Lockfile freshness (L8)
     runs-on: ubuntu-latest

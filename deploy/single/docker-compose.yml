@@ -1,0 +1,23 @@
+# =====================================================================
+# SINGLE — all services on one host (ADR-0011).
+# Services: postgres, redis, migrate, bot, backup (control fragment) +
+#           api, worker, cleanup, nginx, certbot (media fragment).
+#
+# single.override.yml wires the two planes together on one host:
+#   * api/worker/cleanup join dwtgbot_internal to reach Postgres/Redis;
+#   * nginx stays on dwtgbot_media only (no route to the data plane);
+#   * Postgres/Redis publish NO host ports — only nginx exposes 80/443;
+#   * worker gets lower CPU/IO weight so ffmpeg can't starve the bot/DB.
+#
+# Volume and container names match deploy/nl1 + deploy/nl2, so growing
+# into the split topology is a stack swap, not a data migration
+# (docs/24-runbooks.md §26). Requires Docker Compose >= 2.24.
+# =====================================================================
+
+include:
+  - path:
+      - ../compose/control.yml
+      - ../compose/media.yml
+      - ./single.override.yml
+    project_directory: .
+    env_file: .env

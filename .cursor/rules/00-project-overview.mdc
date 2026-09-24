@@ -18,15 +18,15 @@ through Telegram (small files) or temporary HTTPS links (large files).
 > The list below is a quick mirror; ADR-0005 is authoritative.
 
 1. **Python 3.14+** (ADR-0009; use 3.12/3.13/3.14 features freely; PEP 749 deferred annotations / t-strings allowed).
-2. **Two-server architecture** (NL-1 + NL-2 over WireGuard private subnet).
-3. **NL-1 = bot + redis + postgres (+ backup)** — control plane, no public ports.
-4. **NL-2 = worker + nginx + certbot + cleanup + api + storage** — media plane, public 80/443.
+2. **Topology `single` | `split`** (ADR-0011 supersedes ADR-0005 rows 2–4): `single` = one host (`deploy/single`), `split` = NL-1 + NL-2 over WireGuard.
+3. **Control plane = bot + redis + postgres (+ backup)** — `deploy/compose/control.yml`; no public ports (NL-1 in split).
+4. **Media plane = worker + nginx + certbot + cleanup + api + storage** — `deploy/compose/media.yml`; public 80/443 on nginx only (NL-2 in split). Stacks only `include` these fragments.
 5. **Provider-based design** for media platforms (`BaseProvider` interface; one class per platform).
 6. **Queue**: Redis + `arq`. Idempotency contract: `_job_id=job:<db_pk>`.
 7. **DB**: PostgreSQL as **source of truth** + SQLAlchemy 2.x + Alembic (forward-only migrations).
 8. **Delivery**: small → Telegram upload; large → tokenized HTTPS link served via nginx `X-Accel-Redirect` (internal location, TTL + use counter).
 9. **Logging**: `structlog`, JSON in production. Correlation context (`request_id`, `job_id`, `user_id`, `chat_id`) bound via contextvars.
-10. **Docker-first deployment**: Docker Compose v2, two stacks (`deploy/nl1`, `deploy/nl2`). No host-installed Python services.
+10. **Docker-first deployment**: Docker Compose v2 (≥ 2.24 for `include`), stacks `deploy/single` or `deploy/nl1` + `deploy/nl2`, built from fragments `deploy/compose/*`. No host-installed Python services.
 11. **CI/CD**: GitHub Actions (CI on every PR, build → GHCR, manual SSH-based deploy).
 12. **TUI installer**: bash (`deploy/scripts/install.sh`) with menu and idempotent non-interactive mode.
 

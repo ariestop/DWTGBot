@@ -1,0 +1,185 @@
+# =====================================================================
+# Control-plane fragment (ADR-0011).
+# Services: postgres, redis, migrate, bot, backup.
+#
+# Included by deploy/nl1 (split topology) and deploy/single (one host).
+# Never run this file directly: relative paths (``.env``) resolve against
+# the including stack directory via ``include.project_directory``.
+#
+# Postgres and Redis publish NO host ports here. The split topology adds
+# a WireGuard-bound ``ports:`` entry in deploy/nl1/nl1.overlay.yml; the
+# single topology keeps them reachable only over docker networks.
+# =====================================================================
+
+x-app-env: &app-env
+  env_file:
+    - .env
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+# Audit fix A9: cgroup resource caps per service. Without these, a
+# runaway process (query-storm, leak) could starve the host and take
+# unrelated containers down with it. Values are tuned for a small-box
+# control plane (4-8 GB RAM host); override via .env (LIMIT_*) if the
+# real workload justifies more — or less on a small single-server box.
+#
+# ``memswap_limit`` mirrors ``mem_limit`` to forbid swap — swap-thrash
+# under OOM pressure is worse than a clean kill. Docker needs cgroup
+# v2 (default on modern kernels) for this to stick.
+x-limits-small: &limits-small
+  mem_limit: ${LIMIT_SMALL_MEM:-512m}
+  memswap_limit: ${LIMIT_SMALL_MEM:-512m}
+  cpus: ${LIMIT_SMALL_CPUS:-1.0}
+
+x-limits-db: &limits-db
+  mem_limit: ${LIMIT_DB_MEM:-1g}
+  memswap_limit: ${LIMIT_DB_MEM:-1g}
+  cpus: ${LIMIT_DB_CPUS:-1.0}
+
+x-limits-redis: &limits-redis
+  # ``maxmemory`` (A4) is 1 GB of dataset; leave ~128 MB headroom for
+  # process overhead and AOF rewrite scratch.
+  mem_limit: ${LIMIT_REDIS_MEM:-1152m}
+  memswap_limit: ${LIMIT_REDIS_MEM:-1152m}
+  cpus: ${LIMIT_REDIS_CPUS:-0.5}
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: dwtgbot_postgres
+    <<: [*restart, *logging, *limits-db]
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - backups:/var/backups/dwtgbot
+    networks:
+      - dwtgbot_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  redis:
+    image: redis:7-alpine
+    container_name: dwtgbot_redis
+    <<: [*restart, *logging, *limits-redis]
+    # So ``redis-cli`` in the healthcheck authenticates when
+    # ``--requirepass`` is set (official image honours REDISCLI_AUTH).
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    # Audit fix A4: bound Redis memory + evict under pressure.
+    # ``volatile-lru`` (not ``allkeys-lru``) is deliberate: arq queue
+    # keys (``arq:queue``, ``arq:job:*``) are stored without TTL and
+    # must not be evicted — losing them silently drops enqueued jobs.
+    # All application-managed keys (progress:*, progress_meta:*,
+    # post_text:*, cancel:*, request_state:*) set TTL, so they are
+    # the only LRU candidates under memory pressure.
+    command: >
+      redis-server
+      --save 60 1000
+      --appendonly yes
+      --maxmemory ${REDIS_MAXMEMORY:-1gb}
+      --maxmemory-policy volatile-lru
+      ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - dwtgbot_internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  migrate:
+    # Audit fix #4: every app image MUST be pinned to an immutable tag
+    # (sha-XXXXXXX or vX.Y.Z). The :- default tag let stale ``:latest``
+    # ship by accident on first boot and made rollbacks ambiguous.
+    # ``${VAR:?msg}`` makes ``docker compose up`` fail fast with a clear
+    # message if the operator forgot to set the tag in .env.
+    image: ${IMAGE_BOT:?IMAGE_BOT must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-bot:sha-abc1234)}
+    container_name: dwtgbot_migrate
+    <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - dwtgbot_internal
+    entrypoint: ["tini", "--"]
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  bot:
+    image: ${IMAGE_BOT:?IMAGE_BOT must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-bot:sha-abc1234)}
+    container_name: dwtgbot_bot
+    <<: [*app-env, *restart, *logging, *limits-small]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - dwtgbot_internal
+    volumes:
+      # Provider secrets (Instagram cookies). The bot runs analyze/extract_info
+      # itself, so it needs the same cookiefile path to authenticate metadata
+      # probes. Missing files are handled gracefully by the providers.
+      - /srv/dwtgbot/secrets:/srv/dwtgbot/secrets:rw
+    # Audit fix A30: use /proc-based liveness so the probe works even
+    # on images that predate the ``procps`` addition (see
+    # docker/bot.Dockerfile). Keeps healthchecks image-agnostic for
+    # rollbacks.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import sys;from pathlib import Path;
+          sys.exit(0 if any('app.main_bot' in p.read_text(encoding='utf-8',errors='ignore').replace('\x00',' ') for p in Path('/proc').glob('[0-9]*/cmdline')) else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  backup:
+    image: ${IMAGE_BACKUP:?IMAGE_BACKUP must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-backup:sha-abc1234)}
+    container_name: dwtgbot_backup
+    <<: [*app-env, *restart, *logging, *limits-small]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_SCRIPT: /app/deploy/scripts/backup.sh
+    volumes:
+      - backups:/var/backups/dwtgbot
+    networks:
+      - dwtgbot_internal
+
+networks:
+  dwtgbot_internal:
+    name: dwtgbot_internal
+    driver: bridge
+    internal: false   # bot needs egress to api.telegram.org
+
+volumes:
+  postgres_data:
+    name: dwtgbot_postgres_data
+  redis_data:
+    name: dwtgbot_redis_data
+  backups:
+    name: dwtgbot_backups

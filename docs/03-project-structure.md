@@ -37,6 +37,8 @@ it is on the human/AI reviewer to enforce).
 │   └── main_worker.py    # Worker entrypoint
 │
 ├── deploy/
+│   ├── compose/          # Shared fragments: control.yml, media.yml (ADR-0011)
+│   ├── single/           # Single-host stack (both fragments) + .env.example
 │   ├── nl1/              # NL-1 docker-compose stack + .env.example
 │   ├── nl2/              # NL-2 docker-compose stack + .env.example
 │   ├── nginx/            # nginx.conf + snippets + media.conf.template
@@ -325,11 +327,19 @@ These files are **part of the architecture**. They have stricter rules:
 
 ```
 deploy/
+├── compose/
+│   ├── control.yml             # postgres, redis, migrate, bot, backup (no ports)
+│   └── media.yml               # api, worker, cleanup, nginx, certbot (80/443 on nginx only)
+├── single/
+│   ├── docker-compose.yml      # include: control + media + single.override.yml
+│   ├── single.override.yml     # networks, migrate deps, worker isolation
+│   └── .env.example
 ├── nl1/
-│   ├── docker-compose.yml      # Control plane stack
+│   ├── docker-compose.yml      # include: control + nl1.overlay.yml (split, control plane)
+│   ├── nl1.overlay.yml         # Postgres/Redis ports on NL1_PRIVATE_IP, internal api
 │   └── .env.example
 ├── nl2/
-│   ├── docker-compose.yml      # Media plane stack
+│   ├── docker-compose.yml      # include: media (split, media plane)
 │   └── .env.example
 ├── nginx/
 │   ├── nginx.conf
@@ -352,6 +362,11 @@ deploy/
 ```
 
 Rules:
+- Сервисы описываются только во фрагментах `deploy/compose/*`. Стеки
+  (`single`, `nl1`, `nl2`) подключают их через `include` и добавляют только
+  различия топологии (порты, сети, зависимости). Нужен Docker Compose ≥ 2.24.
+- Скрипты работают со стеком через `compose_stack <single|nl1|nl2>` из
+  `helpers.sh`, а не через жёстко прописанный путь.
 - All bash scripts source `helpers.sh` and use `set -Eeuo pipefail`.
 - Destructive commands (drop DB, force-recreate volumes) require an
   interactive `confirm` unless `ASSUME_YES=1` is set (used by CI).
@@ -515,7 +530,8 @@ flowchart TD
 | Bot handler validating a URL with regex | Use `app/utils/url.py`; do not duplicate |
 | Worker reading `os.environ` directly | Use `Settings` via the composition root |
 | New SQLAlchemy model with no Alembic migration | Generate `alembic revision --autogenerate -m "…"`; review the diff before commit |
-| New env var only in `deploy/nl1/.env.example` but not in `Settings` | Add to `app/config.py` first, then propagate to all `.env.example`, then to `13-config-and-env.md` |
+| New env var only in `deploy/nl1/.env.example` but not in `Settings` | Add to `app/config.py` first, then propagate to all `.env.example` (включая `deploy/single/.env.example`), then to `13-config-and-env.md` |
+| Сервис добавлен прямо в `deploy/single/docker-compose.yml` или `deploy/nl*/docker-compose.yml` | Перенести во фрагмент `deploy/compose/{control,media}.yml`; в стеке оставить только `include` |
 | Hard-coded port in compose file | Read from `.env` via `${VAR}` or expose a default in `Settings` |
 
 ---

@@ -8,12 +8,14 @@ VENV   ?= .venv
 PIP    := $(VENV)/bin/pip
 PY     := $(VENV)/bin/python
 
-COMPOSE_NL1 := docker compose -f deploy/nl1/docker-compose.yml --env-file deploy/nl1/.env
-COMPOSE_NL2 := docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env
+COMPOSE_SINGLE := docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env
+COMPOSE_NL1    := docker compose -f deploy/nl1/docker-compose.yml --env-file deploy/nl1/.env
+COMPOSE_NL2    := docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env
 
 .PHONY: help venv install dev-install lint fmt typecheck test \
         lock lock-check \
         up down logs ps restart \
+        single-up single-down single-logs \
         nl1-up nl1-down nl1-logs nl2-up nl2-down nl2-logs \
         migrate revision worker bot api \
         backup restore cleanup healthcheck \
@@ -112,6 +114,16 @@ migrate: ## Apply migrations
 revision: ## Autogenerate revision: make revision m="msg"
 	$(VENV)/bin/alembic revision --autogenerate -m "$(m)"
 
+# ---------- Compose: single (all services on one host, ADR-0011) ----------
+single-up: ## Start single-host stack
+	$(COMPOSE_SINGLE) up -d
+
+single-down: ## Stop single-host stack
+	$(COMPOSE_SINGLE) down
+
+single-logs: ## Tail single-host logs
+	$(COMPOSE_SINGLE) logs -f --tail=200
+
 # ---------- Compose: NL-1 (control plane) ----------
 nl1-up: ## Start NL-1 stack
 	$(COMPOSE_NL1) up -d
@@ -133,8 +145,8 @@ nl2-logs: ## Tail NL-2 logs
 	$(COMPOSE_NL2) logs -f --tail=200
 
 # ---------- Aggregate (used by install.sh menu) ----------
-up: nl1-up nl2-up ## Start both stacks
-down: nl1-down nl2-down ## Stop both stacks
+up: nl1-up nl2-up ## Start both split stacks (nl1 + nl2)
+down: nl1-down nl2-down ## Stop both split stacks (nl1 + nl2)
 
 # ---------- Ops scripts ----------
 healthcheck: ## Run healthcheck script

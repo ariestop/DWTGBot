@@ -61,6 +61,11 @@ Runs on NL-2, periodically removes expired temp links, scratch
 directories, and old job folders. See
 [`23-cleanup-retention.md`](23-cleanup-retention.md).
 
+**Compose fragment.**
+`deploy/compose/control.yml` / `deploy/compose/media.yml` — единственное
+место, где описаны сервисы. Стеки `single`, `nl1`, `nl2` подключают их
+через `include` ([ADR-0011](adr/0011-single-server-topology.md)).
+
 **Composition root.**
 The single place (`app/composition.py`) where concrete
 infrastructure is wired into the application. Every entrypoint
@@ -73,7 +78,8 @@ calls `build_bot()` / `build_worker()` / `build_api()`.
 
 **Control plane.**
 Synonym for **NL-1**: the server hosting bot, Postgres, Redis, and
-the backup job.
+the backup job. В `single` — те же сервисы (фрагмент
+`deploy/compose/control.yml`) на общем хосте.
 
 **Correlation ID.**
 A short identifier (`request_id`, `job_id`, `user_id`, `chat_id`,
@@ -322,6 +328,11 @@ A step-by-step incident playbook. Catalogue in
 
 ## S
 
+**`single`.**
+Однохостовая топология: стек `deploy/single` запускает control и media
+plane на одном сервере, разделяя их сетями Docker. Противоположность —
+`split` (NL-1 + NL-2). См. [ADR-0011](adr/0011-single-server-topology.md).
+
 **`sanitize_filename(name)`.**
 Strips path separators, NUL bytes, and dangerous characters from a
 candidate filename. Always used before writing user-provided names.
@@ -398,7 +409,9 @@ of "look up the file by token" → 32+ bytes of entropy → infeasible
 to guess.
 
 **Topology.**
-Two-server: NL-1 (control plane) + NL-2 (media plane). See
+`single` — control и media plane на одном хосте (`deploy/single`), или
+`split` — NL-1 (control plane) + NL-2 (media plane). См.
+[ADR-0011](adr/0011-single-server-topology.md),
 [`02-architecture.md`](02-architecture.md), [`19-docker-architecture.md`](19-docker-architecture.md).
 
 ---

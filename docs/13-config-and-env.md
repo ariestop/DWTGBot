@@ -70,7 +70,7 @@ Grouped by concern. **Bold** = required, no safe default.
 
 | Variable | Type | Default | Notes |
 |---|---|---|---|
-| `POSTGRES_HOST` | str | `postgres` | Service name in NL-1; private IP from NL-2 |
+| `POSTGRES_HOST` | str | `postgres` | Service name in `single` and NL-1; private IP from NL-2 |
 | `POSTGRES_PORT` | int | `5432` | |
 | `POSTGRES_DB` | str | `dwtgbot` | |
 | `POSTGRES_USER` | str | `dwtgbot` | |
@@ -120,7 +120,7 @@ Grouped by concern. **Bold** = required, no safe default.
 | `API_PORT` | int | `8080` | Container-internal; never published |
 | `API_INTERNAL_TOKEN` | str | empty | **Required in production** for internal admin endpoints |
 | `INTERNAL_TEST_TOKEN` | str | empty | **MUST be empty in production.** Non-empty value enables `POST /internal/test/enqueue` for capacity tests (`docs/37-load-and-capacity.md` §6); rejected at startup when `APP_ENV=production` |
-| `API_VALIDATE_STORAGE` | bool | `true` | If `true`, `main_api` runs `validate_runtime(require_storage=True)` like the worker. NL-1 control-plane API only exposes `/healthz` — set **`false`** in `deploy/nl1/.env` (see `deploy/nl1/.env.example`). NL-2 media-plane API **must** keep `true` so a broken volume fails fast. |
+| `API_VALIDATE_STORAGE` | bool | `true` | If `true`, `main_api` runs `validate_runtime(require_storage=True)` like the worker. NL-1 control-plane API only exposes `/healthz` — set **`false`** in `deploy/nl1/.env` (see `deploy/nl1/.env.example`). NL-2 media-plane API **must** keep `true` so a broken volume fails fast. В `single` api один и монтирует storage — `true`. |
 | `XACCEL_ENABLED` | bool | `false` | S6 audit fix: trust gate for nginx `X-Accel-Redirect` on `GET /api/v1/dl/{token}`. The api only emits `X-Accel-Redirect` when **both** the loopback `X-Internal-XAccel: 1` header (set unconditionally by `deploy/nginx/conf.d/media.conf.template`) *and* `XACCEL_ENABLED=true` are present. Flip to `true` only on hosts that actually have the bundled nginx in front of the api (NL-2). Leaving it `false` makes the api stream bytes itself — slower but safer if nginx is removed/misconfigured. |
 
 ### Worker / queue
@@ -320,6 +320,11 @@ flowchart LR
     subgraph Dev[Local dev]
         d1[.env at repo root] --> d2[get_settings reads via pydantic]
     end
+    subgraph Prod_Single[single prod]
+        s1[deploy/single/.env] --> s2[docker compose env_file:]
+        s2 --> s3[Container env<br/>worker: + DB_POOL_* override]
+        s3 --> s4[get_settings]
+    end
     subgraph Prod_NL1[NL-1 prod]
         p1[deploy/nl1/.env] --> p2[docker compose env_file:]
         p2 --> p3[Container env]
@@ -333,11 +338,22 @@ flowchart LR
 ```
 
 - The repository ships `.env.example` (root) and per-stack examples under
-  `deploy/nl1/.env.example`, `deploy/nl2/.env.example`. Real `.env` files
-  are gitignored.
-- Each stack has its **own** `.env` because NL-1 and NL-2 need different
+  `deploy/single/.env.example`, `deploy/nl1/.env.example`,
+  `deploy/nl2/.env.example`. Real `.env` files are gitignored.
+- Each split stack has its **own** `.env` because NL-1 and NL-2 need different
   values for `POSTGRES_HOST`, `REDIS_HOST` (NL-2 connects to NL-1's
   private IP, not the docker service name).
+- В `single` один `.env` на все сервисы (`POSTGRES_HOST=postgres`,
+  `REDIS_HOST=redis`, `API_VALIDATE_STORAGE=true`, `XACCEL_ENABLED=true`).
+  Отличия для worker задаются в `deploy/single/single.override.yml` через
+  `environment:` (у него приоритет над `env_file`): `DB_POOL_SIZE` и
+  `DB_MAX_OVERFLOW` берутся из `WORKER_DB_POOL_SIZE` / `WORKER_DB_MAX_OVERFLOW`
+  (по умолчанию 10/10), у остальных процессов — 5/10. Так суммарное число
+  соединений укладывается в `max_connections=100` у Postgres.
+- Переменные уровня compose (не `Settings`): `IMAGE_*`, `LIMIT_*_MEM`,
+  `LIMIT_*_CPUS`, `WORKER_CPU_SHARES`, `WORKER_DB_*`, `NL1_PRIVATE_IP`
+  (только nl1). Их читает только `docker compose` при интерполяции, в
+  `app/config.py` их нет.
 - The TUI installer (`deploy/scripts/install.sh`) writes these
   env files for you — see [`20-deployment.md`](20-deployment.md).
 - Host-side autodeploy uses a **separate** file,
@@ -354,7 +370,8 @@ flowchart LR
       sensible.
 - [ ] If derived, expose via `@property` (no caller-side recomputation).
 - [ ] Update `.env.example` (root) **and** the per-stack examples
-      (`deploy/nl1/.env.example`, `deploy/nl2/.env.example`).
+      (`deploy/single/.env.example`, `deploy/nl1/.env.example`,
+      `deploy/nl2/.env.example`).
 - [ ] Document in this file under the right group.
 - [ ] If it controls runtime behaviour, add a `validate_runtime` check
       (especially for "must be set in production").

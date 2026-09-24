@@ -76,7 +76,8 @@ opt_install_docker() {
   detect_os
   require_ubuntu_2404
   if has_command docker && docker compose version >/dev/null 2>&1; then
-    log_ok "Docker + compose plugin already installed"
+    log_ok "Docker + compose plugin already installed ($(compose_version || echo '?'))"
+    require_compose_version
     return
   fi
   confirm "Install Docker Engine from docker.com apt repo for noble?" "Y" || return
@@ -100,6 +101,7 @@ https://download.docker.com/linux/ubuntu noble stable" \
   sudo usermod -aG docker "${USER}" || true
   log_ok "Docker installed. Re-login (or 'newgrp docker') for group membership to take effect."
   detect_docker
+  require_compose_version
 }
 
 require_ubuntu_2404() {
@@ -135,12 +137,60 @@ opt_prepare_nl2() {
   fi
 }
 
+# Single host (ADR-0011): backups + storage dirs on the same box, one .env.
+opt_prepare_single() {
+  log_step "Prepare single server (all services on this host)"
+  sudo mkdir -p /var/backups/dwtgbot
+  sudo chown -R "${USER}:${USER}" /var/backups/dwtgbot 2>/dev/null || true
+  sudo mkdir -p /var/lib/dwtgbot/storage /var/lib/dwtgbot/tmp
+  sudo chown -R 1000:1000 /var/lib/dwtgbot
+  if [[ -f "$(stack_env_file single)" ]]; then
+    log_ok ".env already present"
+    return
+  fi
+  if confirm "Generate deploy/single/.env with random DB/Redis/API secrets?" "Y"; then
+    _create_single_env
+  else
+    log_info "Creating deploy/single/.env from example"
+    cp "${DEPLOY_DIR}/single/.env.example" "$(stack_env_file single)"
+    chmod 0600 "$(stack_env_file single)"
+    log_warn "Edit $(stack_env_file single) with real secrets before starting."
+  fi
+}
+
+# _create_single_env — deploy/single/.env.example with generated secrets
+# filled in. Only called when the file does not exist yet (idempotent).
+_create_single_env() {
+  local out pgpass rdpass apitoken domain
+  out="$(stack_env_file single)"
+  pgpass="$(gen_secret 32)"
+  rdpass="$(gen_secret 32)"
+  apitoken="$(gen_secret 32)"
+  prompt_value domain "Public domain (DNS A record → this host)" "media.example.com"
+  sed -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${pgpass}|" \
+      -e "s|^DATABASE_URL=.*|DATABASE_URL=postgresql+asyncpg://dwtgbot:${pgpass}@postgres:5432/dwtgbot|" \
+      -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${rdpass}|" \
+      -e "s|^REDIS_URL=.*|REDIS_URL=redis://:${rdpass}@redis:6379/0|" \
+      -e "s|^API_INTERNAL_TOKEN=.*|API_INTERNAL_TOKEN=${apitoken}|" \
+      -e "s|^SERVER_NAME=.*|SERVER_NAME=${domain}|" \
+      -e "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=https://${domain}|" \
+      "${DEPLOY_DIR}/single/.env.example" >"${out}"
+  chmod 0600 "${out}"
+  log_ok "Wrote ${out}"
+  log_warn "Set BOT_TOKEN, BOT_ADMIN_IDS, IMAGE_* and an off-site backup target (BACKUP_S3_BUCKET or BACKUP_RCLONE_REMOTE) before starting."
+}
+
 opt_create_env() {
-  log_step "Create .env from generic template"
+  log_step "Create .env from template"
   local target out
-  prompt_value target "Target stack" "nl1"
-  out="${DEPLOY_DIR}/${target}/.env"
+  prompt_value target "Target stack (single/nl1/nl2)" "$(_default_stack)"
+  require_stack "${target}"
+  out="$(stack_env_file "${target}")"
   [[ -f "${out}" ]] && { log_warn "Already exists: ${out}"; return; }
+  if [[ "${target}" == "single" ]]; then
+    _create_single_env
+    return
+  fi
   local pgpass apitoken domain
   pgpass="$(gen_secret 32)"
   apitoken="$(gen_secret 32)"
@@ -156,12 +206,13 @@ opt_create_env() {
 opt_firewall() {
   log_step "Firewall setup"
   local target
-  prompt_value target "Stack" "$(_default_stack)"
+  prompt_value target "Stack (single/nl1/nl2)" "$(_default_stack)"
+  require_stack "${target}"
   if [[ "${target}" == "nl1" ]]; then
     prompt_value PRIVATE_NET "Private network CIDR (WireGuard subnet)" "10.10.0.0/24"
     sudo PRIVATE_NET="${PRIVATE_NET}" bash "${SCRIPT_DIR}/firewall_setup.sh" nl1
   else
-    sudo bash "${SCRIPT_DIR}/firewall_setup.sh" nl2
+    sudo bash "${SCRIPT_DIR}/firewall_setup.sh" "${target}"
   fi
 }
 
@@ -178,13 +229,13 @@ opt_cleanup() { bash "${SCRIPT_DIR}/cleanup.sh"; }
 
 opt_deploy_update() {
   local target
-  prompt_value target "Stack" "$(_default_stack)"
+  prompt_value target "Stack (single/nl1/nl2)" "$(_default_stack)"
   bash "${SCRIPT_DIR}/deploy_update.sh" "${target}"
 }
 
 opt_install_autodeploy() {
   local target
-  prompt_value target "Стек для автодеплоя (nl1/nl2)" "$(_default_stack)"
+  prompt_value target "Стек для автодеплоя (single/nl1/nl2)" "$(_default_stack)"
   sudo bash "${SCRIPT_DIR}/install_autodeploy.sh" "${target}"
 }
 
@@ -232,41 +283,50 @@ opt_autodeploy_now() {
 }
 
 # _default_stack — какой стек предложить по умолчанию для опций,
-# которые требуют выбора между nl1/nl2. На реальных хостах
-# присутствует только один ``.env`` (NL-1 ИЛИ NL-2), и проще
-# подставить его автоматически, чем заставлять оператора каждый раз
-# набирать nl2 руками. Если ничего не найдено или есть оба
-# (laptop dev) — fallback на nl1 для обратной совместимости.
+# которые требуют выбора стека. На реальных хостах присутствует только
+# один ``.env`` (single, NL-1 или NL-2) — его и подставляем. На свежем
+# хосте без ``.env`` предлагаем ``single`` (ADR-0011: топология по
+# умолчанию для малого масштаба). Если есть nl1+nl2 (laptop dev) —
+# nl1, как и раньше; при прочих комбинациях — single.
 _default_stack() {
   case "$(_detect_stack)" in
-    nl1)  echo nl1 ;;
-    nl2)  echo nl2 ;;
-    both) echo nl1 ;;
-    *)    echo nl1 ;;
+    single) echo single ;;
+    nl1)    echo nl1 ;;
+    nl2)    echo nl2 ;;
+    both)   echo nl1 ;;
+    *)      echo single ;;
   esac
 }
 
-# Auto-pick whichever stack has an .env on this host. If both exist, ask.
+# Auto-pick whichever stack has an .env on this host. If several exist, ask.
 auto_compose() {
-  local has1=0 has2=0
-  [[ -f "${DEPLOY_DIR}/nl1/.env" ]] && has1=1
-  [[ -f "${DEPLOY_DIR}/nl2/.env" ]] && has2=1
-  if [[ "${has1}" == "1" && "${has2}" == "0" ]]; then compose_nl1 "$@"
-  elif [[ "${has1}" == "0" && "${has2}" == "1" ]]; then compose_nl2 "$@"
-  elif [[ "${has1}" == "1" && "${has2}" == "1" ]]; then
-    local pick; prompt_value pick "Stack (nl1/nl2)" "nl1"
-    [[ "${pick}" == "nl2" ]] && compose_nl2 "$@" || compose_nl1 "$@"
-  else
-    die "No .env found in deploy/nl1 or deploy/nl2"
-  fi
+  local stack
+  stack="$(_detect_stack)"
+  case "${stack}" in
+    single|nl1|nl2)
+      compose_stack "${stack}" "$@"
+      ;;
+    both|multiple)
+      local pick
+      prompt_value pick "Stack (single/nl1/nl2)" "$(_default_stack)"
+      require_stack "${pick}"
+      compose_stack "${pick}" "$@"
+      ;;
+    *)
+      die "No .env found in deploy/single, deploy/nl1 or deploy/nl2"
+      ;;
+  esac
 }
 
 # ---------- menu ----------
 
+# Keys are stable identifiers referenced from docs; [19] is listed second
+# on purpose — single is the default topology for a fresh host (ADR-0011).
 MENU_ITEMS=(
   "1"  "Install Docker"
-  "2"  "Prepare server NL-1"
-  "3"  "Prepare server NL-2"
+  "19" "Prepare single server (all-in-one)"
+  "2"  "Prepare server NL-1 (split)"
+  "3"  "Prepare server NL-2 (split)"
   "4"  "Create .env from template"
   "5"  "Configure firewall"
   "6"  "Start containers"
@@ -275,10 +335,10 @@ MENU_ITEMS=(
   "9"  "Show status"
   "10" "Tail logs"
   "11" "Run healthchecks"
-  "12" "Obtain SSL cert (NL-2)"
-  "13" "Backup database (NL-1)"
-  "14" "Restore database (NL-1)"
-  "15" "Cleanup old files (NL-2)"
+  "12" "Obtain SSL cert (single / NL-2)"
+  "13" "Backup database (single / NL-1)"
+  "14" "Restore database (single / NL-1)"
+  "15" "Cleanup old files (single / NL-2)"
   "16" "Update to latest main (autodeploy now)"
   "17" "Rolling restart with current .env"
   "18" "Install autodeploy service"
@@ -305,6 +365,7 @@ run_action() {
     16) opt_autodeploy_now ;;
     17) opt_deploy_update ;;
     18) opt_install_autodeploy ;;
+    19) opt_prepare_single ;;
     0)  exit 0 ;;
     *)  log_warn "Unknown choice: $1" ;;
   esac
@@ -406,19 +467,10 @@ _panel_kv2() {
   _panel_line "${left}${right}"
 }
 
-# Compute which compose stack is present here. A host typically only
-# runs nl1 OR nl2; if both .env files exist (developer laptop) we
-# show "both". Output: "nl1" | "nl2" | "both" | "none".
-_detect_stack() {
-  local has1=0 has2=0
-  [[ -f "${DEPLOY_DIR}/nl1/.env" ]] && has1=1
-  [[ -f "${DEPLOY_DIR}/nl2/.env" ]] && has2=1
-  if   [[ "${has1}" == "1" && "${has2}" == "0" ]]; then echo nl1
-  elif [[ "${has1}" == "0" && "${has2}" == "1" ]]; then echo nl2
-  elif [[ "${has1}" == "1" && "${has2}" == "1" ]]; then echo both
-  else echo none
-  fi
-}
+# Compute which compose stack is present here. A host typically runs
+# exactly one of single / nl1 / nl2; a developer laptop may have several
+# .env files ("both" = nl1+nl2, "multiple" = any other combination).
+_detect_stack() { detect_stack; }
 
 # Returns "<up>/<total>" or "n/a" without docker/compose.
 _compose_count() {
@@ -427,10 +479,11 @@ _compose_count() {
     echo "n/a"; return
   fi
   case "${stack}" in
-    nl1)  _compose_count_for compose_nl1 ;;
-    nl2)  _compose_count_for compose_nl2 ;;
-    both) echo "$(_compose_count nl1) / $(_compose_count nl2)" ;;
-    *)    echo "no .env" ;;
+    single) _compose_count_for compose_single ;;
+    nl1)    _compose_count_for compose_nl1 ;;
+    nl2)    _compose_count_for compose_nl2 ;;
+    both)   echo "$(_compose_count nl1) / $(_compose_count nl2)" ;;
+    *)      echo "no .env" ;;
   esac
 }
 _compose_count_for() {
@@ -466,6 +519,9 @@ draw_status_panel() {
   dver="$(_docker_ver)"
   local stack_for_env="${stack}"
   [[ "${stack}" == "both" ]] && stack_for_env="nl2"
+  if [[ "${stack}" == "multiple" ]]; then
+    stack_for_env="$(find_stack_with media || echo single)"
+  fi
   domain="$(_read_env_value SERVER_NAME "${stack_for_env}")"
   [[ -z "${domain}" ]] && domain="—"
 

@@ -1,0 +1,67 @@
+# =====================================================================
+# NL-1 overlay on top of deploy/compose/control.yml (split topology).
+#
+# 1. Publishes Postgres/Redis on the WireGuard interface only, so the
+#    NL-2 media plane can reach them over the private subnet. UFW
+#    enforces the source restriction (allow from PRIVATE_NET only — see
+#    deploy/scripts/firewall_setup.sh).
+# 2. Adds the NL-1 internal api (health + admin debug; no storage).
+#
+# Merged via ``include.path`` in deploy/nl1/docker-compose.yml — anchors
+# from the fragment are not visible here, hence the local copies.
+# =====================================================================
+
+x-app-env: &app-env
+  env_file:
+    - .env
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+x-limits-small: &limits-small
+  mem_limit: ${LIMIT_SMALL_MEM:-512m}
+  memswap_limit: ${LIMIT_SMALL_MEM:-512m}
+  cpus: ${LIMIT_SMALL_CPUS:-1.0}
+
+services:
+
+  postgres:
+    ports:
+      - "${NL1_PRIVATE_IP:-10.10.0.1}:5432:5432"
+
+  redis:
+    ports:
+      - "${NL1_PRIVATE_IP:-10.10.0.1}:6379:6379"
+
+  api:
+    image: ${IMAGE_API:?IMAGE_API must be set to an immutable tag (e.g. ghcr.io/<org>/dwtgbot-api:sha-abc1234)}
+    container_name: dwtgbot_api_nl1
+    <<: [*app-env, *restart, *logging, *limits-small]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dwtgbot_internal
+    healthcheck:
+      # Audit fix A2: /readyz checks downstream deps (Postgres, Redis,
+      # storage). /healthz (liveness) used to report "healthy" even when
+      # Postgres was unreachable, causing dependent containers to start
+      # with false-green depends_on.condition=service_healthy. A16 adds
+      # X-Internal-Token on /readyz, so the healthcheck must present it
+      # from the container env.
+      test: ["CMD-SHELL", "curl -fsS -H \"X-Internal-Token: $$API_INTERNAL_TOKEN\" http://127.0.0.1:${API_PORT:-8080}/readyz >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # No external ports — only used by docker healthchecks and as an
+    # admin debug endpoint reachable inside the private network.

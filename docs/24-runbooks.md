@@ -25,16 +25,18 @@ Run **in this order**. Every line is a single shell command. Do not
 skip lines.
 
 ```bash
-# 1) Identify which host you're on (NL-1 = bot/redis/postgres; NL-2 = worker/nginx/api)
+# 1) Identify which host you're on (NL-1 = bot/redis/postgres; NL-2 = worker/nginx/api;
+#    single = всё сразу — определяется по наличию deploy/single/.env)
 hostname
 cat /etc/dwtgbot-host 2>/dev/null || echo "NO HOST TAG — check manually"
+ls deploy/*/.env 2>/dev/null
 
-# 2) Snapshot service status on BOTH stacks (don't trust one host's view)
+# 2) Snapshot service status on every configured stack (don't trust one host's view)
 cd /opt/dwtgbot
-ls deploy/nl1/docker-compose.yml >/dev/null 2>&1 \
-  && docker compose -f deploy/nl1/docker-compose.yml ps
-ls deploy/nl2/docker-compose.yml >/dev/null 2>&1 \
-  && docker compose -f deploy/nl2/docker-compose.yml ps
+for stack in single nl1 nl2; do
+  test -f deploy/${stack}/.env \
+    && docker compose -f deploy/${stack}/docker-compose.yml --env-file deploy/${stack}/.env ps
+done
 
 # 3) Public health from outside the stack
 curl -fsS --max-time 5 https://media.example.com/healthz \
@@ -54,16 +56,16 @@ docker exec dwtgbot_postgres pg_isready -U dwtgbot -d dwtgbot 2>/dev/null \
   || echo "POSTGRES NOT READY"
 
 # 7) Last 5 minutes of ERROR logs across all containers
-for stack in nl1 nl2; do
-  test -f deploy/${stack}/docker-compose.yml \
-    && docker compose -f deploy/${stack}/docker-compose.yml logs --since=5m --no-color 2>/dev/null \
+for stack in single nl1 nl2; do
+  test -f deploy/${stack}/.env \
+    && docker compose -f deploy/${stack}/docker-compose.yml --env-file deploy/${stack}/.env logs --since=5m --no-color 2>/dev/null \
         | jq -c 'select(.level=="error")' 2>/dev/null | head -30
 done
 ```
 
 After §0 you should know:
 
-- which host owns the symptom (NL-1 or NL-2);
+- which host owns the symptom (NL-1 or NL-2; в `single` — какая плоскость: control или media);
 - which container is unhealthy (or none);
 - whether disk / Redis / Postgres are alive;
 - whether public TLS / DNS / nginx routing works;
@@ -124,11 +126,13 @@ The exact commands you will type 100× this year. Memorize.
 cd /opt/dwtgbot
 NL1='docker compose -f deploy/nl1/docker-compose.yml'
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
+# single: оба алиаса на один стек — все команды ниже работают без изменений
+#   NL1='docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env'; NL2="$NL1"
 
 # Status
 $NL1 ps
 $NL2 ps
-bash deploy/scripts/healthcheck.sh                    # auto-detects nl1/nl2
+bash deploy/scripts/healthcheck.sh                    # auto-detects single/nl1/nl2
 
 # Logs (last 200 lines, follow)
 $NL1 logs -f --tail=200 bot
@@ -167,7 +171,7 @@ wasted 10 minutes.
 | Concern | Host | Container | Volume / path |
 |---|---|---|---|
 | Telegram bot polling | NL-1 | `dwtgbot_bot` | — |
-| Internal API + healthchecks | NL-1 | `dwtgbot_api` | — |
+| Internal API + healthchecks | NL-1 | `dwtgbot_api_nl1` | — |
 | Postgres | NL-1 | `dwtgbot_postgres` | `dwtgbot_postgres_data` (`/var/lib/postgresql/data`) |
 | Redis (queue) | NL-1 | `dwtgbot_redis` | `dwtgbot_redis_data` (`/data`) |
 | Backups | NL-1 | `dwtgbot_backup` | `/var/backups/dwtgbot/` |
@@ -178,6 +182,12 @@ wasted 10 minutes.
 
 All env files: `deploy/nl{1,2}/.env`. Never edit on the live host
 without committing the same change to the repo.
+
+**`single`**: всё из таблицы работает на одном хосте с теми же
+`container_name` и volume (кроме `dwtgbot_api_nl1`: в `single` один api,
+`dwtgbot_api`). Env-файл один — `deploy/single/.env`. Колонку «Host»
+читайте как «плоскость»: NL-1 — control, NL-2 — media. Runbook'и ниже
+применимы как есть, если подставить алиасы из §0.2.
 
 ---
 
@@ -1066,6 +1076,12 @@ bash deploy/scripts/healthcheck.sh                                   # all green
 | Backup retention too long on NL-1 | `du -sh /var/backups/dwtgbot/*` |
 | Docker logs unbounded | `du -sh /var/lib/docker/containers/*/*-json.log` |
 | Postgres WAL piling up (archive failing) | `du -sh /var/lib/docker/volumes/dwtgbot_postgres_data` growing fast |
+
+> **`single`**: storage, Postgres и бэкапы делят один диск, поэтому
+> переполнение storage сразу ломает запись в базу и дампы. Сначала
+> освободите место через storage (cleanup, §12.4), не трогая
+> `dwtgbot_postgres_data`. Проверьте, что `STORAGE_MIN_FREE_MB > 0`. Если
+> инцидент повторяется, это сигнал к переходу на `split` (§26).
 
 ### 12.3 Quick diagnosis
 
@@ -2104,6 +2120,235 @@ hostname; cat /etc/dwtgbot-host 2>/dev/null      # which plane am I on?
 git log --oneline -5                             # last few commits in deployed branch
 git status                                       # local drift?
 ```
+
+---
+
+## §26 — Growth: single → split (ADR-0011)
+
+Плановый перенос media plane с единственного хоста на второй сервер.
+Новый ADR **не нужен**: обе топологии описаны в ADR-0011, а сервисы
+определены в одних и тех же фрагментах `deploy/compose/*.yml`. Когда
+пора переезжать — см. [37-load-and-capacity.md](37-load-and-capacity.md) §8.0.
+
+Схема переезда: **текущий хост становится NL-1** (Postgres, Redis и
+бэкапы остаются на месте в тех же volume), **новый хост становится
+NL-2** (worker, api, nginx, cleanup, certbot, storage). Имена volume и
+`container_name` в `single` и `nl1`/`nl2` совпадают, поэтому данные
+control plane не переносятся вообще.
+
+### 26.1 Preconditions
+
+- [ ] Свежий бэкап за последние 24 ч **и** он есть в offsite
+      (`bash deploy/scripts/backup.sh`, затем проверка по
+      [22-backup-restore.md](22-backup-restore.md)).
+- [ ] Новый хост подготовлен по [20-deployment.md](20-deployment.md)
+      §3 (Docker Compose ≥ 2.24, пользователь, SSH, клон репозитория на том
+      же SHA, что и на текущем хосте).
+- [ ] WireGuard между хостами поднят, пинг по приватным адресам проходит
+      в обе стороны ([20-deployment.md](20-deployment.md) §2). Интерфейс
+      должен подниматься при загрузке: `nl1.overlay.yml` публикует
+      Postgres/Redis **только** на `NL1_PRIVATE_IP`, без интерфейса
+      контейнеры не стартуют.
+- [ ] TTL A-записи `SERVER_NAME` снижен до 300 с минимум за сутки до
+      переезда.
+- [ ] Выбрано окно обслуживания (≈ 15–30 мин простоя media plane; бот
+      недоступен только на время перезапуска control plane).
+
+### 26.2 Prepare NL-2 (no downtime)
+
+На новом хосте (NL-2):
+
+```bash
+cd /opt/dwtgbot
+cp deploy/nl2/.env.example deploy/nl2/.env && chmod 600 deploy/nl2/.env
+```
+
+Перенесите значения из `deploy/single/.env` текущего хоста в
+`deploy/nl2/.env`. Совпадать **обязаны**: `BOT_TOKEN`,
+`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `API_INTERNAL_TOKEN`,
+`SERVER_NAME`, `PUBLIC_BASE_URL`, `IMAGE_API`,
+`IMAGE_WORKER`, лимиты и TTL. Отличаются:
+
+| Переменная | Значение на NL-2 |
+|---|---|
+| `APP_ROLE` | `worker` |
+| `POSTGRES_HOST`, `REDIS_HOST` | `NL1_PRIVATE_IP` (например `10.10.0.1`), **не** имя сервиса |
+| `DATABASE_URL`, `REDIS_URL` | тот же хост `NL1_PRIVATE_IP` вместо `postgres` / `redis` |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | бывшие `WORKER_DB_POOL_SIZE` / `WORKER_DB_MAX_OVERFLOW` (или значения из `deploy/nl2/.env.example`) |
+| `XACCEL_ENABLED` | `true` |
+
+Затем:
+
+```bash
+sudo bash deploy/scripts/firewall_setup.sh nl2
+docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env config -q
+docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env pull
+```
+
+Стек на NL-2 **пока не запускайте**: без доступа к Postgres на NL-1 api и
+worker не пройдут healthcheck.
+
+### 26.3 Copy TLS certificates (no downtime)
+
+Сертификаты копируются заранее, чтобы nginx на NL-2 сразу стартовал с
+действующим TLS и не зависел от распространения DNS. Выполняется от root,
+на NL-2 по SSH должен быть доступен root (или используйте `sudo rsync`
+через `--rsync-path="sudo rsync"`).
+
+```bash
+# На NL-2: создать пустой volume с тем же именем
+docker volume create dwtgbot_letsencrypt_conf
+
+# На текущем хосте: пути к данным volume
+SRC="$(docker volume inspect -f '{{ .Mountpoint }}' dwtgbot_letsencrypt_conf)"
+DST="$(ssh root@<NL2_PRIVATE_IP> docker volume inspect -f '{{ .Mountpoint }}' dwtgbot_letsencrypt_conf)"
+sudo rsync -aHAX --numeric-ids "${SRC}/" "root@<NL2_PRIVATE_IP>:${DST}/"
+```
+
+`-a` сохраняет симлинки `live/ → archive/`, без них nginx не найдёт
+сертификат.
+
+**Опционально — storage.** Если активные temp links должны пережить
+переезд, так же скопируйте `dwtgbot_storage` (первый проход — сейчас,
+второй — в окне обслуживания, см. 26.4 шаг 3). Если нет — ссылки,
+выданные до переезда, вернут 404; пользователь запросит файл повторно.
+
+### 26.4 Cutover (maintenance window)
+
+1. **Остановить приём задач** и дождаться in-flight задач:
+
+   ```bash
+   SINGLE='docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env'
+   $SINGLE stop bot
+   docker exec dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
+     "SELECT count(*) FROM download_jobs WHERE status = 'processing';"
+   ```
+
+   Повторяйте запрос, пока счётчик не станет `0` (обычно ≤ 5 мин).
+   Задачи в статусе `pending` остаются в Redis и будут выполнены worker'ом
+   на NL-2.
+
+2. **Свежий бэкап** непосредственно перед остановкой:
+   `bash deploy/scripts/backup.sh`.
+
+3. (Опционально) второй проход `rsync` для `dwtgbot_storage` — уже
+   инкрементальный и быстрый.
+
+4. **Остановить `single` без удаления volume** и убрать его `.env`, чтобы
+   скрипты (`detect_stack`, `find_stack_with`) больше не выбирали `single`:
+
+   ```bash
+   $SINGLE down            # НИКОГДА не добавляйте -v
+   mv deploy/single/.env "deploy/single/.env.migrated-$(date +%F)"
+   ```
+
+5. **Переделать текущий хост в NL-1:**
+
+   ```bash
+   cp "deploy/single/.env.migrated-$(date +%F)" deploy/nl1/.env && chmod 600 deploy/nl1/.env
+   ```
+
+   В `deploy/nl1/.env` измените: `APP_ROLE=bot`,
+   `NL1_PRIVATE_IP=<WireGuard IP этого хоста>`, `API_VALIDATE_STORAGE=false`,
+   `XACCEL_ENABLED=false`, `STORAGE_MIN_FREE_MB=0`. Переменные
+   `WORKER_*` и `IMAGE_WORKER` здесь не используются — их можно удалить.
+
+   Правила firewall для `single` запрещают 5432/6379 для всех и открывают
+   80/443. Уберите их **до** запуска `firewall_setup.sh nl1`, иначе ufw
+   применит deny раньше allow из приватной сети:
+
+   ```bash
+   sudo ufw delete deny 5432/tcp
+   sudo ufw delete deny 6379/tcp
+   sudo ufw delete allow 80/tcp
+   sudo ufw delete allow 443/tcp
+   sudo PRIVATE_NET=10.10.0.0/24 bash deploy/scripts/firewall_setup.sh nl1
+   bash deploy/scripts/deploy_update.sh nl1
+   ```
+
+   Postgres и Redis поднимаются на тех же volume (`dwtgbot_postgres_data`,
+   `dwtgbot_redis_data`), `migrate` не найдёт новых ревизий, бот снова
+   принимает задачи — они копятся в очереди до запуска NL-2.
+
+6. **Запустить NL-2:**
+
+   ```bash
+   nc -zv <NL1_PRIVATE_IP> 5432 && nc -zv <NL1_PRIVATE_IP> 6379
+   bash deploy/scripts/deploy_update.sh nl2
+   ```
+
+7. **Переключить DNS:** A-запись `SERVER_NAME` → публичный IP NL-2.
+   Пока запись распространяется (≤ TTL), ссылки на старый IP не
+   открываются — nginx там уже остановлен.
+
+8. **Проверка:**
+
+   ```bash
+   bash deploy/scripts/healthcheck.sh nl1     # на NL-1
+   bash deploy/scripts/healthcheck.sh nl2     # на NL-2
+   curl -fsS "https://${SERVER_NAME}/healthz"
+   ```
+
+   Затем smoke-тест: маленький файл (доставка через Telegram) и большой
+   (temp link через nginx на NL-2). Если сертификаты в 26.3 не
+   копировались, после распространения DNS выполните на NL-2
+   `bash deploy/scripts/certbot_init.sh`.
+
+### 26.5 After cutover
+
+- [ ] CI/CD: repo variable `DEPLOY_TOPOLOGY=split`; заполнить environment
+      `nl1`/`nl2` секретами `NL1_*`/`NL2_*` (для NL-1 — те же значения,
+      что были в `SINGLE_*`); secrets `SINGLE_*` удалить
+      ([21-cicd.md](21-cicd.md)).
+- [ ] Autodeploy: на NL-1 в `/etc/dwtgbot/autodeploy.env`
+      `DEPLOY_TARGET=nl1`; на NL-2 — `bash deploy/scripts/install_autodeploy.sh nl2`
+      ([20-deployment.md](20-deployment.md) §8.8).
+- [ ] Мониторинг: добавить NL-2 в алерты по диску, TLS, `/healthz`.
+- [ ] Offsite-бэкап продолжает работать с NL-1 (рекомендация, а не
+      требование, как в `single` — но отключать его не нужно).
+- [ ] Через `TEMP_LINK_TTL_SECONDS` (по умолчанию 24 ч) удалить на NL-1
+      volume media plane, которые больше не используются:
+
+      ```bash
+      docker volume rm dwtgbot_storage dwtgbot_storage_tmp \
+        dwtgbot_letsencrypt_conf dwtgbot_letsencrypt_www
+      rm "deploy/single/.env.migrated-"*
+      ```
+
+      Команда удаляет данные безвозвратно — убедитесь, что вы на **NL-1**
+      (`hostname`) и что `docker ps` не показывает `dwtgbot_nginx`.
+
+### 26.6 Rollback
+
+- **До шага 5** (NL-1 ещё не запускался): вернуть `.env` на место и
+  поднять `single`:
+
+  ```bash
+  mv "deploy/single/.env.migrated-$(date +%F)" deploy/single/.env
+  bash deploy/scripts/deploy_update.sh single
+  ```
+
+- **После шага 5**: остановить стеки (`docker compose ... down` без `-v`
+  на NL-2 и NL-1), вернуть правила firewall
+  (`sudo bash deploy/scripts/firewall_setup.sh single` после удаления
+  правил `postgres-private`/`redis-private`), удалить `deploy/nl1/.env`,
+  вернуть `deploy/single/.env` и выполнить `deploy_update.sh single`;
+  DNS вернуть на исходный IP. Postgres и Redis — те же volume, данных не
+  теряется; файлы, скачанные на NL-2 за время работы split, недоступны
+  (пользователь запросит их повторно).
+
+### 26.7 Common mistakes
+
+1. `$SINGLE down -v` — удаляет `dwtgbot_postgres_data`. Восстановление
+   только из бэкапа ([22-backup-restore.md](22-backup-restore.md)).
+2. Оставить `deploy/single/.env` рядом с `deploy/nl1/.env` — скрипты
+   предпочтут `single` (`detect_stack` вернёт `multiple`).
+3. `POSTGRES_HOST=postgres` на NL-2 — worker не найдёт БД; нужен
+   `NL1_PRIVATE_IP`.
+4. Запуск `firewall_setup.sh nl1` без удаления deny-правил `single` —
+   NL-2 не достучится до 5432/6379.
+5. Переключение DNS до запуска NL-2 — пользователи получают отказ
+   соединения вместо короткого простоя.
 
 ---
 

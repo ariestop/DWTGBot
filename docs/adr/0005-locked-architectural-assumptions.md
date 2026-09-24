@@ -59,9 +59,9 @@ explicitly supersedes the corresponding row of §3.
 | # | Locked assumption | Authoritative source(s) |
 |---|---|---|
 | 1 | **Language & runtime: Python 3.14+** (superseded from 3.11+ by [ADR-0009](0009-python-314-runtime.md)) | [ADR-0009](0009-python-314-runtime.md); [`27-coding-standards.md`](../27-coding-standards.md) §1 |
-| 2 | **Two-server architecture** (control plane / media plane, separated by WireGuard private network) | [ADR-0001](0001-two-server-topology.md); [`02-architecture.md`](../02-architecture.md), [`19-docker-architecture.md`](../19-docker-architecture.md) |
-| 3 | **NL-1 = bot + redis + postgres + backups** (control plane; no public ports) | [ADR-0001](0001-two-server-topology.md); [`19-docker-architecture.md`](../19-docker-architecture.md), [`20-deployment.md`](../20-deployment.md) |
-| 4 | **NL-2 = worker + nginx + certbot + cleanup + storage volume** (media plane; public 80/443) | [ADR-0001](0001-two-server-topology.md); [`19-docker-architecture.md`](../19-docker-architecture.md), [`11-storage-strategy.md`](../11-storage-strategy.md) |
+| 2 | ~~Locked~~ → see [ADR-0011](0011-single-server-topology.md). **Two supported topologies**: `single` (one host, default for small scale) and `split` (control plane / media plane, separated by WireGuard private network) | [ADR-0011](0011-single-server-topology.md), [ADR-0001](0001-two-server-topology.md); [`02-architecture.md`](../02-architecture.md), [`19-docker-architecture.md`](../19-docker-architecture.md) |
+| 3 | ~~Locked~~ → see [ADR-0011](0011-single-server-topology.md). **Control plane = bot + redis + postgres + backups** (`deploy/compose/control.yml`; NL-1 in `split`, no public ports) | [ADR-0011](0011-single-server-topology.md), [ADR-0001](0001-two-server-topology.md); [`19-docker-architecture.md`](../19-docker-architecture.md), [`20-deployment.md`](../20-deployment.md) |
+| 4 | ~~Locked~~ → see [ADR-0011](0011-single-server-topology.md). **Media plane = worker + nginx + certbot + cleanup + api + storage volume** (`deploy/compose/media.yml`; NL-2 in `split`; public 80/443) | [ADR-0011](0011-single-server-topology.md), [ADR-0001](0001-two-server-topology.md); [`19-docker-architecture.md`](../19-docker-architecture.md), [`11-storage-strategy.md`](../11-storage-strategy.md) |
 | 5 | **Provider-based design** for media platforms (`BaseProvider` interface; one concrete class per platform) | [`07-provider-architecture.md`](../07-provider-architecture.md); [`30-add-new-provider-guide.md`](../30-add-new-provider-guide.md) |
 | 6 | **Redis** as the queue and short-lived state store (`arq` on top) | This ADR; [`09-queue-and-workers.md`](../09-queue-and-workers.md) |
 | 7 | **PostgreSQL as the source of truth** for jobs, links, cache, audit (SQLAlchemy 2 + Alembic) | This ADR; [`12-db-schema.md`](../12-db-schema.md) |
@@ -127,7 +127,16 @@ rationale still holds — 3.14 is a strict superset.
 
 ### 3.2 Two-server architecture
 
-**Scope of lock:** the system runs on **exactly two** logical hosts —
+**Status:** superseded by [ADR-0011](0011-single-server-topology.md)
+(2026-09-24). The binding contract now reads: **two supported
+topologies** — `single` (all services on one host, `deploy/single`) and
+`split` (NL-1 + NL-2, as below). Both are built from the same fragments
+`deploy/compose/{control,media}.yml`. In `single`, Postgres and Redis
+publish no host ports at all and nginx has no network route to them.
+The original scope is preserved below as historical context and remains
+the description of `split`.
+
+**Scope of lock (historical, now = `split`):** the system runs on **exactly two** logical hosts —
 NL-1 (control) and NL-2 (media) — connected by a private network. Not
 one host, not three, not k8s.
 
@@ -142,6 +151,13 @@ surface minimization).
   *not* a supported deployment topology.
 
 ### 3.3 NL-1 = bot + redis + postgres (+ backups)
+
+**Status:** superseded by [ADR-0011](0011-single-server-topology.md):
+the service set below is now the **control-plane fragment**
+(`deploy/compose/control.yml`). In `split` it runs on NL-1; in `single`
+it shares the host with the media plane. The rules "bot must not mount
+`STORAGE_PATH`" and "no public port for Postgres/Redis" still apply in
+both topologies.
 
 **Scope of lock:** these are the only application services that run on
 NL-1. Specifically:
@@ -163,6 +179,12 @@ firewall rules minimal.
   [`17-security.md`](../17-security.md)).
 
 ### 3.4 NL-2 = worker + nginx + certbot + storage
+
+**Status:** superseded by [ADR-0011](0011-single-server-topology.md):
+the service set below is now the **media-plane fragment**
+(`deploy/compose/media.yml`). In `split` it runs on NL-2; in `single`
+it shares the host with the control plane. Public ports (80, 443) are
+still published only by nginx.
 
 **Scope of lock:** NL-2 runs the media-traffic-heavy services and only
 those:
@@ -358,7 +380,7 @@ The twelve assumptions are not independent. Common cascades:
 
 | If you change... | You'll likely also be forced to change... |
 |---|---|
-| #2 (two-server) | #3, #4, #10, #12 (compose layout, installer flow, deployment topology) |
+| #2 (topology; see ADR-0011) | #3, #4, #10, #12 (compose layout, installer flow, deployment topology) |
 | #6 (Redis queue) | #5 (provider seam may shift), #9 (logged events change), runbooks 2 & 5 |
 | #7 (Postgres SoT) | #6 (state ownership shifts), all migrations, healthchecks, backups |
 | #8 (temp links) | #4 (NL-2 surface), Nginx config, security model |
@@ -407,7 +429,9 @@ A PR is non-compliant if it does any of:
 
 - Adds a new long-running service outside Docker (lock 10).
 - Adds a host-installed Python venv to a production target (lock 10).
-- Adds a stateful service to NL-2 or a public port to NL-1 (locks 3, 4).
+- Adds a stateful service to the media-plane fragment, a public port to
+  NL-1, or any host port for Postgres/Redis in `single` (locks 3, 4;
+  ADR-0011).
 - Mounts `STORAGE_PATH` into the `bot` service (lock 3).
 - Stores authoritative state in Redis (lock 7).
 - Uses unstructured `print(...)` for application logging (lock 9).
@@ -499,3 +523,4 @@ This protocol applies equally to humans and AI agents.
 |---|---|---|
 | 2026-04-19 | Proposed | Drafted to consolidate the twelve foundational decisions into a single canonical lock register. |
 | 2026-04-19 | Accepted | Foundation of the project; supersedes the informal "🔒 LOCKED" list previously inlined in `28-implementation-playbook.md` §5. |
+| 2026-09-24 | Amended | Rows 2, 3, 4 superseded by [ADR-0011](0011-single-server-topology.md) (single + split topologies). |

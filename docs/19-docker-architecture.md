@@ -157,6 +157,34 @@ All overridable from the compose / build CLI. **Do not** change
 
 ## 4. Stack topology
 
+### 4.0 Compose-фрагменты и стеки (ADR-0011)
+
+Сервисы описаны один раз во фрагментах, а стеки их подключают через
+`include` (длинный синтаксис: `path` — список, сливается как цепочка `-f`;
+`project_directory: .`; `env_file: .env`). Нужен Docker Compose ≥ 2.24.0;
+`install.sh` и `deploy_update.sh` проверяют версию.
+
+| Файл | Содержит |
+|---|---|
+| `deploy/compose/control.yml` | postgres, redis, migrate, bot, backup; сеть `dwtgbot_internal`; без `ports` |
+| `deploy/compose/media.yml` | api, worker, cleanup, nginx, certbot; сеть `dwtgbot_media`; `80/443` только у nginx |
+| `deploy/nl1/nl1.overlay.yml` | порты 5432/6379 на `NL1_PRIVATE_IP`; внутренний api (`dwtgbot_api_nl1`) |
+| `deploy/single/single.override.yml` | api/worker/cleanup в обеих сетях; `depends_on: migrate`; веса CPU/IO; `oom_score_adj`; пул БД worker |
+
+| Стек | `include.path` |
+|---|---|
+| `deploy/single` | `control.yml` + `media.yml` + `single.override.yml` |
+| `deploy/nl1` | `control.yml` + `nl1.overlay.yml` |
+| `deploy/nl2` | `media.yml` |
+
+Относительные пути во фрагментах (`.env`, `../nginx/...`) разрешаются от
+каталога стека благодаря `project_directory: .`, поэтому
+`cd deploy/single && docker compose up -d` работает так же, как
+`compose_stack single up -d`. Якоря `x-*` не переходят между файлами
+`include`; каждый overlay объявляет свои копии.
+
+### 4.1 Split (NL-1 + NL-2)
+
 ```mermaid
 flowchart TB
     subgraph NL1[NL-1 — control plane]
@@ -214,6 +242,33 @@ There is **no** docker network spanning hosts. Cross-host traffic uses
 the host's private VLAN (WireGuard / VPC), reaching the **host IP** of
 NL-1 from NL-2.
 
+### 4.2 Single (один хост)
+
+Те же volume с теми же именами, но все на одном хосте. Сети:
+
+| Network | Members (single) |
+|---|---|
+| `dwtgbot_internal` | postgres, redis, bot, backup, migrate, **api, worker, cleanup** |
+| `dwtgbot_media` | nginx, **api, worker, cleanup** |
+
+certbot сети не объявляет и попадает в сеть проекта по умолчанию. nginx и
+certbot в `dwtgbot_internal` не входят: у публичного edge нет маршрута к
+Postgres и Redis. Порты публикует только nginx (`80`, `443`).
+
+Изоляция тяжёлой нагрузки worker (ffmpeg) на общем хосте:
+
+| Механизм | worker | Прочее |
+|---|---|---|
+| `mem_limit` / `cpus` | `LIMIT_WORKER_MEM` / `LIMIT_WORKER_CPUS` (2g / 2.0) | `LIMIT_DB_*`, `LIMIT_REDIS_*`, `LIMIT_SMALL_*` |
+| `cpu_shares` | `WORKER_CPU_SHARES` (512) | 1024 (по умолчанию) |
+| `blkio_config.weight` | 300 (литерал: compose не приводит интерполяцию к числу; нужен планировщик BFQ, иначе Docker игнорирует вес) | не задан (вес ядра по умолчанию) |
+| `oom_score_adj` | 500 | postgres −500, redis −300, cleanup 300 |
+
+Имена volume и `container_name` совпадают со split (кроме `dwtgbot_api_nl1`,
+которого в `single` нет), поэтому переход `single → split` сводится к
+переносу volume на другой хост без переименований
+([`24-runbooks.md`](24-runbooks.md) §26).
+
 ---
 
 ## 5. Process model inside containers
@@ -245,7 +300,9 @@ x-app-env: &app-env
 Every application service inherits the per-stack `.env`. NL-1 and NL-2
 each have their **own** env files — they need different `POSTGRES_HOST`
 and `REDIS_HOST` values (NL-2 reaches NL-1 via private IP, not the
-internal docker service name).
+internal docker service name). В `single` одна `.env` на все сервисы;
+worker получает свой `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` через `environment:`
+в `single.override.yml` (он приоритетнее `env_file`).
 
 Image tags are also overridable via env:
 
@@ -333,11 +390,16 @@ production.
 5. **Different UIDs per environment.** Volume permissions break.
 6. **Skipping `tini`.** Slow shutdowns, leaked subprocesses.
 7. **Publishing internal ports** (`ports:` for postgres, redis, api,
-   worker). They don't need it.
-8. **Latest-tag deploys to production.** Pin shas.
-9. **Sharing volumes RW where RO suffices** (e.g. nginx). Always least
-   privilege.
-10. **Mixing build & runtime in a single stage.** Image bloat + larger
+   worker). They don't need it. Единственное исключение — порты данных
+   NL-1 на WireGuard IP в `deploy/nl1/nl1.overlay.yml`.
+8. **Описывать сервис прямо в стеке** (`deploy/{single,nl1,nl2}/docker-compose.yml`)
+   в обход фрагментов `deploy/compose/*`. Стеки начнут расходиться.
+9. **Подключать nginx к `dwtgbot_internal`** в `single`: у публичного edge
+   появится маршрут к данным.
+10. **Latest-tag deploys to production.** Pin shas.
+11. **Sharing volumes RW where RO suffices** (e.g. nginx). Always least
+    privilege.
+12. **Mixing build & runtime in a single stage.** Image bloat + larger
     attack surface.
 
 ---
@@ -354,7 +416,9 @@ production.
 | Different `APP_UID` between Dockerfile and host | "Permission denied" inside container | Stick with 1000 everywhere |
 | Bot container needs ffmpeg (no, it doesn't) | adding it bloats image | Bot truly does not need it; resist the urge |
 | `restart: always` on `migrate` | infinite migration loop | Use `restart: no` |
-| Compose stack on NL-1 mounting `STORAGE_PATH` | wrong host | Storage lives on NL-2 |
+| Compose stack on NL-1 mounting `STORAGE_PATH` | wrong host | Storage lives on NL-2 (в `single` — только в media-сервисах) |
+| `include` not supported / `services.include` error | Compose < 2.24 | Обновить `docker-compose-plugin`; `install.sh` → Install Docker |
+| `blkio_config.weight expected type 'uint16'` | вес задан через `${VAR}` | Оставить литерал в `single.override.yml` |
 
 ---
 

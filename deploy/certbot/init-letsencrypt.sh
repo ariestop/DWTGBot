@@ -6,7 +6,7 @@
 # self-signed dummy cert first so nginx can start, then ask certbot for
 # the real one over HTTP-01, then reload nginx.
 #
-# Usage (from deploy/nl2):
+# Usage (from deploy/single or deploy/nl2):
 #   DOMAIN=media.example.com EMAIL=admin@example.com \
 #     bash ../certbot/init-letsencrypt.sh
 # =====================================================================

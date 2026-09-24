@@ -3,6 +3,7 @@
 # Установка systemd-сервиса автодеплоя.
 #
 # Usage:
+#   sudo bash deploy/scripts/install_autodeploy.sh single
 #   sudo bash deploy/scripts/install_autodeploy.sh nl1
 #   sudo bash deploy/scripts/install_autodeploy.sh nl2
 # =====================================================================
@@ -23,9 +24,12 @@ GHCR_REPO_PREFIX=""
 
 prompt_target_if_needed() {
   if [[ -z "${TARGET}" ]]; then
-    prompt_value TARGET "Целевой стек (nl1/nl2)" "nl1"
+    local default_target
+    default_target="$(detect_stack)"
+    is_valid_stack "${default_target}" || default_target="single"
+    prompt_value TARGET "Целевой стек (single/nl1/nl2)" "${default_target}"
   fi
-  [[ "${TARGET}" == "nl1" || "${TARGET}" == "nl2" ]] || die "Использование: install_autodeploy.sh nl1|nl2"
+  is_valid_stack "${TARGET}" || die "Использование: install_autodeploy.sh single|nl1|nl2"
 }
 
 infer_repo_identity() {

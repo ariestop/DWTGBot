@@ -7,10 +7,13 @@
 #   bash deploy/scripts/restore.sh /path/to/dump.sql.gz  # explicit file
 #
 # Performs a destructive replace of the target database — confirmation required.
+# Runs on the host with Postgres: single (preferred) or NL-1.
 #
-# IMPORTANT: this script also stops/starts the NL-2 worker, so that it
-# does not see an empty/half-loaded database during the restore window.
-# Configure SSH access via env vars (recommended):
+# IMPORTANT: this script also stops/starts the worker (and cleanup), so
+# that it does not see an empty/half-loaded database during the restore
+# window. In the single topology they run locally and are stopped via
+# compose. In split, the NL-2 worker is stopped over SSH — configure via
+# env vars (recommended):
 #   NL2_HOST=ops@nl-2.example.com
 #   NL2_REPO_PATH=/opt/dwtgbot                  (default)
 #   NL2_SSH_OPTS="-o StrictHostKeyChecking=yes" (optional)
@@ -27,12 +30,16 @@ NL2_REPO_PATH="${NL2_REPO_PATH:-/opt/dwtgbot}"
 # shellcheck disable=SC2206
 NL2_SSH_OPTS=( ${NL2_SSH_OPTS:-} )
 
-[[ -f "${DEPLOY_DIR}/nl1/.env" ]] || die "NL-1 .env not found (restore is run on NL-1)"
-# shellcheck disable=SC1091
-source "${DEPLOY_DIR}/nl1/.env"
+STACK="$(find_stack_with control)" \
+  || die "No .env for a stack with Postgres (restore runs on the single or NL-1 host)"
+# shellcheck disable=SC1090
+source "$(stack_env_file "${STACK}")"
+
+run_compose() { compose_stack "${STACK}" "$@"; }
 
 # Track which side-effects to undo on exit.
 NL2_WORKER_STOPPED=0
+LOCAL_WORKER_STOPPED=0
 
 choose_dump() {
   local explicit="${1:-}"
@@ -56,6 +63,33 @@ choose_dump() {
 confirm_or_die() {
   log_warn "About to REPLACE database '${POSTGRES_DB}' with: $(basename "${DUMP}")"
   confirm "Are you absolutely sure?" "N" || die "Aborted by user"
+}
+
+stop_local_worker() {
+  log_step "Stopping worker + cleanup on this host (avoid reads against the half-loaded DB)"
+  run_compose stop worker cleanup
+  LOCAL_WORKER_STOPPED=1
+  log_ok "Local worker + cleanup stopped"
+}
+
+start_local_worker() {
+  if [[ "${LOCAL_WORKER_STOPPED}" -ne 1 ]]; then return 0; fi
+  log_step "Starting worker + cleanup back"
+  if run_compose start worker cleanup; then
+    log_ok "Local worker + cleanup started"
+  else
+    log_error "Failed to start worker/cleanup. Start manually:"
+    log_error "  docker compose -f deploy/${STACK}/docker-compose.yml --env-file deploy/${STACK}/.env start worker cleanup"
+  fi
+}
+
+stop_workers() {
+  if stack_has_media_plane "${STACK}"; then stop_local_worker; else stop_nl2_worker; fi
+}
+
+start_workers() {
+  start_local_worker
+  start_nl2_worker
 }
 
 stop_nl2_worker() {
@@ -99,30 +133,30 @@ start_nl2_worker() {
 # Always try to bring the worker back, even if restore failed.
 on_exit() {
   local code=$?
-  start_nl2_worker || true
+  start_workers || true
   exit "${code}"
 }
 trap on_exit EXIT
 
 restore() {
   log_step "Restoring ${DUMP}"
-  log_info "Stopping bot/api/migrate on NL-1 to release connections"
-  compose_nl1 stop bot api migrate >/dev/null || true
+  log_info "Stopping bot/api/migrate (${STACK}) to release connections"
+  run_compose stop bot api migrate >/dev/null || true
 
   log_info "Dropping/recreating database"
-  compose_nl1 exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  run_compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     psql -U "${POSTGRES_USER}" -d postgres -c \
       "DROP DATABASE IF EXISTS \"${POSTGRES_DB}\" WITH (FORCE);"
-  compose_nl1 exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  run_compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     psql -U "${POSTGRES_USER}" -d postgres -c \
       "CREATE DATABASE \"${POSTGRES_DB}\" OWNER \"${POSTGRES_USER}\";"
 
   log_info "Loading dump"
-  gunzip -c "${DUMP}" | compose_nl1 exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  gunzip -c "${DUMP}" | run_compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --quiet
 
-  log_info "Restarting NL-1 services"
-  compose_nl1 up -d bot api
+  log_info "Restarting ${STACK} services"
+  run_compose up -d bot api
 
   log_ok "Restore finished"
 }
@@ -130,9 +164,9 @@ restore() {
 main() {
   choose_dump "${1:-}"
   confirm_or_die
-  stop_nl2_worker
+  stop_workers
   restore
-  # NL-2 worker is restarted by the EXIT trap.
+  # Workers are restarted by the EXIT trap.
 }
 
 main "$@"

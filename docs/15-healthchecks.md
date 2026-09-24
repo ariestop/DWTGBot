@@ -95,7 +95,9 @@ Sample failure response (`HTTP 503`):
 ## 3. Container HEALTHCHECK matrix
 
 Each Dockerfile / compose service has an opinionated `HEALTHCHECK`. See
-`docker/*.Dockerfile` and `deploy/nl{1,2}/docker-compose.yml`.
+`docker/*.Dockerfile` and `deploy/compose/{control,media}.yml` (healthcheck'и
+общие для всех топологий; колонка «NL-1 / NL-2» ниже в `single` означает
+«тот же хост»).
 
 | Service | Check | Source |
 |---|---|---|
@@ -152,6 +154,12 @@ Result: `bot` does not start until Postgres and Redis are healthy and
 migrations are done. This eliminates an entire class of "first-deploy
 flakes" where the bot connects before the DB is ready.
 
+В `single` `deploy/single/single.override.yml` добавляет такое же условие
+`migrate: service_completed_successfully` для api, worker и cleanup. В split
+порядок обеспечивает деплой (NL-1 с миграциями идёт раньше NL-2), а на одном
+хосте compose поднимает всё сразу, и без этой зависимости worker мог бы
+обратиться к ещё не мигрированной схеме.
+
 ---
 
 ## 5. Worker doesn't expose health — why?
@@ -189,6 +197,12 @@ Where you probe from depends on what you're guarding against:
 Public `https://<server>/readyz` reaches **NL-2's** API container only;
 it confirms NL-2's view of NL-1's DB/Redis. NL-1's own `api` container is
 not exposed publicly — by design.
+
+В `single` api один (`dwtgbot_api`), он подключён к обеим сетям, поэтому
+`/readyz` через nginx проверяет Postgres, Redis и storage сразу.
+`deploy/scripts/healthcheck.sh single` запускает проверки обеих плоскостей
+(control: postgres, redis, bot; media: api, worker, nginx, `/healthz`,
+`/readyz`) за один проход.
 
 ---
 

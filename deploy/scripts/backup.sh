@@ -5,8 +5,8 @@
 # Two run modes:
 #   1) Inside the `backup` container — talks to postgres over the
 #      private docker network using $POSTGRES_HOST, $POSTGRES_USER, etc.
-#   2) On the host (NL-1) — auto-detects compose stack and exec's
-#      `pg_dump` inside the postgres container.
+#   2) On the host (single or NL-1) — auto-detects the compose stack
+#      that runs postgres and exec's `pg_dump` inside its container.
 #
 # Retention: keeps the last $BACKUP_RETENTION_DAYS days of dumps.
 # =====================================================================
@@ -32,12 +32,14 @@ run_in_container_mode() {
 }
 
 run_on_host_mode() {
-  [[ -f "${DEPLOY_DIR}/nl1/.env" ]] || die "NL-1 .env not found"
-  # shellcheck disable=SC1091
-  source "${DEPLOY_DIR}/nl1/.env"
+  local stack
+  stack="$(find_stack_with control)" \
+    || die "No .env found for a stack with Postgres (deploy/single or deploy/nl1)"
+  # shellcheck disable=SC1090
+  source "$(stack_env_file "${stack}")"
   local outfile="${BACKUP_DIR}/dwtgbot_${TS}.sql.gz"
-  log_info "Dumping via compose exec → ${outfile}"
-  compose_nl1 exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  log_info "Dumping via compose exec (${stack}) → ${outfile}"
+  compose_stack "${stack}" exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
     --no-owner --no-privileges --format=plain \
     | gzip -9 >"${outfile}"
@@ -54,7 +56,9 @@ prune_old() {
 # S2 (audit fix): off-site replication.
 #
 # Local backups protect against accidental DELETE; they do NOT protect
-# against losing NL-1. We replicate the latest dump to one of:
+# against losing the host (NL-1, or the only host in the single topology,
+# where off-site replication is mandatory). We replicate the latest dump
+# to one of:
 #
 #   - BACKUP_S3_BUCKET  → ``aws s3 cp`` (requires aws-cli + creds)
 #   - BACKUP_RCLONE_REMOTE → ``rclone copyto`` (any rclone backend)
@@ -113,10 +117,10 @@ main() {
   # missing is a safer signal that we are running on the bare host.
   if has_command pg_dump && [[ -n "${POSTGRES_HOST:-}" ]]; then
     run_in_container_mode
-  elif has_command docker && [[ -f "${DEPLOY_DIR}/nl1/docker-compose.yml" ]]; then
+  elif has_command docker && find_stack_with control >/dev/null; then
     run_on_host_mode
   else
-    die "No PG connection info and no compose stack — set POSTGRES_* env or run on NL-1 host"
+    die "No PG connection info and no compose stack — set POSTGRES_* env or run on the single / NL-1 host"
   fi
   prune_old
 

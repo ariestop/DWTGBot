@@ -11,7 +11,8 @@ on:
         description: "Which server to update"
         type: choice
         required: true
-        options: [nl1, nl2, both]
+        # single = all-in-one host (ADR-0011); both = nl1 then nl2 (split).
+        options: [single, nl1, nl2, both]
         default: both
       ref:
         description: "Git ref to deploy (branch / tag / sha)"
@@ -19,8 +20,10 @@ on:
         required: false
         default: main
 
+# Topology deployed on ``workflow_run`` is selected by the repository
+# variable ``DEPLOY_TOPOLOGY``: ``single`` or ``split`` (default when unset).
 concurrency:
-  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'both' }}
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || (vars.DEPLOY_TOPOLOGY == 'single' && 'single' || 'both') }}
   cancel-in-progress: false
 
 permissions:
@@ -28,10 +31,51 @@ permissions:
   packages: read
 
 jobs:
+  single:
+    if: >-
+      ${{
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+          && vars.DEPLOY_TOPOLOGY == 'single')
+        || (github.event_name == 'workflow_dispatch' && inputs.target == 'single')
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: single
+    steps:
+      - name: Deploy to the single host over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          host: ${{ secrets.SINGLE_HOST }}
+          username: ${{ secrets.SINGLE_SSH_USER }}
+          key: ${{ secrets.SINGLE_SSH_KEY }}
+          port: ${{ secrets.SINGLE_SSH_PORT || 22 }}
+          script_stop: true
+          envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
+          script: |
+            set -Eeuo pipefail
+            cd "${{ secrets.SINGLE_REPO_PATH }}"
+            GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
+            DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
+            git checkout "${DEPLOY_REF}"
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
+            SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+            export IMAGE_TAG="sha-${SHORT_SHA}"
+            REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+            export IMAGE_BOT="ghcr.io/${REPO_LC}-bot:${IMAGE_TAG}"
+            export IMAGE_API="ghcr.io/${REPO_LC}-api:${IMAGE_TAG}"
+            export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
+            export IMAGE_BACKUP="ghcr.io/${REPO_LC}-backup:${IMAGE_TAG}"
+            echo "${GITHUB_TOKEN}" | sudo docker login ghcr.io -u github-actions --password-stdin
+            ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh single
+
   nl1:
     if: >-
       ${{
-        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+          && vars.DEPLOY_TOPOLOGY != 'single')
         || (github.event_name == 'workflow_dispatch' && (inputs.target == 'nl1' || inputs.target == 'both'))
       }}
     runs-on: ubuntu-latest
@@ -83,7 +127,8 @@ jobs:
       ${{
         always()
         && (
-          (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+          (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+            && vars.DEPLOY_TOPOLOGY != 'single')
           || (github.event_name == 'workflow_dispatch' && (inputs.target == 'nl2' || inputs.target == 'both'))
         )
         && (needs.nl1.result == 'success' || needs.nl1.result == 'skipped')

@@ -290,8 +290,9 @@ utility concern, not domain.
 
 The **canonical register of locked decisions** is
 [**ADR-0005 — Locked architectural assumptions**](adr/0005-locked-architectural-assumptions.md).
-It enumerates twelve foundational rows (Python 3.14+ — see ADR-0009; two-server
-architecture, NL-1/NL-2 service composition, provider-based design,
+It enumerates twelve foundational rows (Python 3.14+ — see ADR-0009; topology
+and plane composition — rows 2–4, superseded by
+[ADR-0011](adr/0011-single-server-topology.md): `single` or `split`; provider-based design,
 Redis queue, Postgres SoT, temp links, structured logging, Docker-first,
 GitHub Actions, bash installer) and defines what "locked" means in
 practice (§2.1) and the supersession protocol (§6).
@@ -474,7 +475,7 @@ unchanged.
 - **Files / layers explicitly NOT touched:** (P1 + P3 enforcement)
   - <e.g. `app/bot/handlers/` — this is a use-case-only change>
 - **Migration?** (P10) <No | Yes — `migrations/versions/NNNN_<slug>.py`, deploy order: …>
-- **Env var?** (P4) <No | Yes — `<NAME>` added in: config.py, .env.example, deploy/nl{1,2}/.env.example, compose env block, 13- doc>
+- **Env var?** (P4) <No | Yes — `<NAME>` added in: config.py, .env.example, deploy/{single,nl1,nl2}/.env.example, compose env block, 13- doc>
 - **Tests:** (P4) <new file(s) + which conditions; existing tests expected to stay green>
 - **Docs to update in this PR:** (P4) <list of `docs/*.md` per §13.1>
 - **Queue / worker contract impact?** (P7) <No | Yes — what changes in `_job_id`, retries, status, idempotency, and how it stays compatible>
@@ -857,7 +858,7 @@ end-to-end. The short version:
 
 | You want to… | Edit |
 |---|---|
-| Add a new container service | `deploy/nl1/docker-compose.yml` or `deploy/nl2/docker-compose.yml` |
+| Add a new container service | фрагмент `deploy/compose/control.yml` или `deploy/compose/media.yml` (стеки `deploy/{single,nl1,nl2}` только подключают фрагменты через `include`; различия топологий — в `single.override.yml` / `nl1.overlay.yml`) |
 | Change container env | the relevant compose `environment:` block + `.env` template |
 | Change a build step | the relevant `docker/<image>.Dockerfile` |
 | Change Nginx routing | `deploy/nginx/conf.d/media.conf.template`, `deploy/nginx/nginx.conf`, or `deploy/nginx/snippets/*.conf` |

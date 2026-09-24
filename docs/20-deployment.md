@@ -9,14 +9,23 @@
 > [`24-runbooks.md`](24-runbooks.md) — incident playbooks,
 > [`13-config-and-env.md`](13-config-and-env.md) — full env catalogue.
 
-End-to-end production deployment of DWTGBot to two servers
-(NL-1 control plane, NL-2 media plane). No fluff — bash
-commands, ordered, with the dependencies and data-safety rules
-called out.
+End-to-end production deployment of DWTGBot. Две топологии
+([ADR-0011](adr/0011-single-server-topology.md)):
 
-> 🔒 **Locked decisions** (ADR-0005):
-> - **Two-server topology**: NL-1 (bot + Redis + Postgres + backup);
+- **`single`** — всё на одном сервере, стек `deploy/single`. Рекомендуемый
+  путь установки: **§4a**. Разделы §1–§4 (требования, подготовка хоста,
+  Docker) общие; вместо §5/§6 выполните §4a.
+- **`split`** — two servers (NL-1 control plane, NL-2 media plane): §5 и §6.
+  Переход `single → split` — [`24-runbooks.md`](24-runbooks.md) §26.
+
+No fluff — bash commands, ordered, with the dependencies and data-safety
+rules called out.
+
+> 🔒 **Locked decisions** (ADR-0005, rows 2–4 superseded by ADR-0011):
+> - **Topology**: `single` (control + media plane on one host, split by
+>   Docker networks) or `split` — NL-1 (bot + Redis + Postgres + backup);
 >   NL-2 (worker + Nginx + storage + cleanup + certbot).
+> - **Docker Compose ≥ 2.24.0** (`include` in all three stacks).
 > - **OS**: Ubuntu 24.04 LTS (`noble`).
 > - **Runtime**: Docker + Docker Compose plugin only (no k8s).
 > - **Operator surface**: `deploy/scripts/install.sh` — numbered text menu by default; `--whiptail` (or `INSTALL_TUI_MODE=whiptail`) opts into the full-screen dialog UX. Plain stays default so the menu does not redraw over scrolling shell output (logs, healthcheck results) operators are reading.
@@ -40,6 +49,19 @@ called out.
 | Swap | 1 GiB | 2 GiB |
 | Public IP | not required | **one** (`:80`/`:443`) |
 | DNS A/AAAA | not required | required, points to NL-2 |
+
+**`single`** (один хост):
+
+| Requirement | Минимум | Рекомендуется |
+|---|---|---|
+| vCPU / RAM | 2 vCPU / 4 GiB (уменьшить `LIMIT_*`, см. `deploy/single/.env.example`) | **4 vCPU / 8 GiB** |
+| Disk | 60 GiB | **80+ GiB SSD**; storage лучше вынести на отдельный диск (`/var/lib/docker/volumes`) |
+| Swap | 2 GiB | 2 GiB |
+| Public IP / DNS | один IP, A/AAAA на него | — |
+
+Сумма лимитов по умолчанию в `single`: worker 2 GiB, Postgres 1 GiB,
+Redis 1152 MiB и по 512 MiB у bot, api, backup, cleanup и nginx. Это около
+6.6 GiB, поэтому на 4 GiB лимиты нужно уменьшить.
 
 ### 1.2 Sizing notes
 
@@ -93,6 +115,9 @@ flowchart LR
 | `8080/tcp` | — | localhost only | not exposed | API behind nginx |
 
 **Default-deny** everywhere else. `5432`/`6379` MUST NOT be reachable from the public internet.
+
+`single`: открыты только `22` (админ), `80`, `443`. Порты `5432`/`6379` на
+хосте не публикуются вовсе, приватная сеть (§2.3) не нужна.
 
 ### 2.3 Private network
 
@@ -291,9 +316,94 @@ sudo systemctl restart docker
 
 `live-restore: true` keeps containers running across `docker` daemon restarts.
 
+Проверьте версию Compose: для `include` нужна **≥ 2.24.0**
+(`docker compose version --short`). `install.sh` и `deploy_update.sh`
+останавливаются с ошибкой, если версия ниже.
+
 ---
 
-## §5 — NL-1 deployment (control plane)
+## §4a — Single-server deployment (`single`, recommended)
+
+Один хост выполняет роли NL-1 и NL-2. Сервисы, образы и healthcheck'и те же,
+что в split. Отличается только compose-обвязка
+(`deploy/single/docker-compose.yml` = `control.yml` + `media.yml` +
+`single.override.yml`), см. [`19-docker-architecture.md`](19-docker-architecture.md) §4.
+
+### 4a.1 Подготовка и `.env`
+
+```bash
+cd /opt/dwtgbot
+sudo bash deploy/scripts/install.sh
+#   1)  Install Docker
+#   19) Prepare single server (all-in-one) — второй пункт меню: каталоги
+#       backups/storage (uid 1000) и генерация deploy/single/.env (пароли
+#       Postgres/Redis, API_INTERNAL_TOKEN, SERVER_NAME / PUBLIC_BASE_URL)
+#   5)  Configure firewall → single;  6) Start containers;  12) Obtain SSL cert
+```
+
+Без меню:
+
+```bash
+cp deploy/single/.env.example deploy/single/.env && chmod 0600 deploy/single/.env
+# Сгенерируйте секреты так же, как в §5.1.1, но пишите в deploy/single/.env:
+#   POSTGRES_PASSWORD, DATABASE_URL (@postgres:5432), REDIS_PASSWORD,
+#   REDIS_URL (@redis:6379), API_INTERNAL_TOKEN.
+```
+
+Затем задайте в `deploy/single/.env`:
+
+| Variable | Значение в `single` |
+|---|---|
+| `IMAGE_BOT` / `IMAGE_API` / `IMAGE_WORKER` / `IMAGE_BACKUP` | все четыре, неизменяемые теги `sha-<short>` |
+| `APP_ROLE` | `all` (информационное) |
+| `BOT_TOKEN`, `BOT_ADMIN_IDS` | как в §5.1 |
+| `POSTGRES_HOST` / `REDIS_HOST` | `postgres` / `redis` (имена сервисов) |
+| `SERVER_NAME` / `PUBLIC_BASE_URL` | домен и `https://<домен>` |
+| `API_VALIDATE_STORAGE` / `XACCEL_ENABLED` | `true` / `true` |
+| `STORAGE_MIN_FREE_MB` | **обязательно** (например, `6144`): storage делит диск с Postgres |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `10` (bot, api, cleanup) |
+| `WORKER_DB_POOL_SIZE` / `WORKER_DB_MAX_OVERFLOW` | `10` / `10` (worker; укладывается в `max_connections=100`) |
+| `LIMIT_*`, `WORKER_CPU_SHARES` | опционально, см. комментарии в `.env.example` |
+| `BACKUP_S3_*` или `BACKUP_RCLONE_REMOTE` | **обязательно**: локальный бэкап лежит на том же диске, что и база ([`22-backup-restore.md`](22-backup-restore.md)) |
+
+Синхронизировать `.env` между хостами (§7.2) не нужно: файл один.
+
+### 4a.2 Firewall, образы, запуск
+
+```bash
+sudo bash deploy/scripts/firewall_setup.sh single   # SSH + 80/443; deny 5432/6379
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <user> --password-stdin
+
+cd deploy/single
+docker compose config -q                 # валидирует include + .env
+docker compose pull
+docker compose up -d                     # migrate → bot/api → worker/cleanup → nginx
+```
+
+Порядок запуска задают `depends_on`: postgres и redis healthy → `migrate`
+завершился успешно → bot, api, worker, cleanup → nginx (ждёт healthy api).
+
+### 4a.3 TLS
+
+```bash
+sudo bash deploy/scripts/certbot_init.sh   # находит deploy/single/.env сам
+```
+
+### 4a.4 Проверка
+
+```bash
+bash deploy/scripts/healthcheck.sh single
+curl -fsS https://<домен>/healthz
+docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env ps
+```
+
+Дальнейшие обновления — `sudo bash deploy/scripts/deploy_update.sh single`
+(pre-backup → pull → `migrate` → `up -d` → healthcheck), в CI — задача
+`single` в `deploy.yml` ([`21-cicd.md`](21-cicd.md)).
+
+---
+
+## §5 — NL-1 deployment (control plane, `split`)
 
 NL-1 runs: `postgres`, `redis`, `migrate` (one-shot), `bot`, `api`, `backup`.
 
@@ -358,7 +468,7 @@ Edit `deploy/nl1/.env` (full reference in §7):
 
 ```bash
 # Required values for NL-1 (paths assume repo at /opt/dwtgbot or /opt/DWTGBot)
-sed -i "s|^APP_ROLE=.*|APP_ROLE=all|"                                      deploy/nl1/.env
+sed -i "s|^APP_ROLE=.*|APP_ROLE=bot|"                                      deploy/nl1/.env
 sed -i "s|^APP_ENV=.*|APP_ENV=production|"                                 deploy/nl1/.env
 
 # Telegram
@@ -534,7 +644,7 @@ PG_PASS=...                        # ← from §5.1
 RD_PASS=...                        # ← from §5.1
 API_TOK=...                        # ← from §5.1
 
-sed -i "s|^APP_ROLE=.*|APP_ROLE=media-plane|"                                deploy/nl2/.env
+sed -i "s|^APP_ROLE=.*|APP_ROLE=worker|"                                     deploy/nl2/.env
 sed -i "s|^APP_ENV=.*|APP_ENV=production|"                                   deploy/nl2/.env
 
 # Same Telegram token (so /sendDocument works from worker via Bot API)
@@ -630,7 +740,7 @@ sudo bash deploy/scripts/certbot_init.sh \
 ```
 
 The script:
-1. Reads `SERVER_NAME` / `DOMAIN` and `EMAIL` from `deploy/nl2/.env` (or prompts).
+1. Reads `SERVER_NAME` / `DOMAIN` and `EMAIL` from `deploy/single/.env` or `deploy/nl2/.env` — whichever media-plane stack is configured, `single` first (or prompts).
 2. Creates a short-lived self-signed dummy cert so nginx can start with the
    HTTPS server block from `deploy/nginx/conf.d/media.conf.template`.
 3. Runs certbot in webroot mode (`/var/www/certbot`) against the running nginx.
@@ -638,7 +748,7 @@ The script:
 
 After that, `:80` redirects to `:443`.
 
-> Equivalent: installer option **12) Obtain SSL cert (NL-2)**.
+> Equivalent: installer option **12) Obtain SSL cert (single / NL-2)**.
 
 ### 6.7 Verify NL-2
 
@@ -671,9 +781,13 @@ echo | openssl s_client -connect media.example.com:443 -servername media.example
 
 ### 7.1 Canonical variables
 
+Для `single` берите значения из колонки NL-2 для media-переменных и из
+колонки NL-1 для control-переменных; `POSTGRES_HOST` / `REDIS_HOST` — имена
+сервисов (`postgres` / `redis`). Отличия перечислены в таблице §4a.1.
+
 | Variable | NL-1 | NL-2 | Notes |
 |---|---|---|---|
-| `APP_ROLE` | `control-plane` | `media-plane` | informational |
+| `APP_ROLE` | `bot` | `worker` | informational; enum `bot` / `api` / `worker` / `all` (`all` в `single`) |
 | `APP_ENV` | `production` | `production` |  |
 | `LOG_LEVEL` | `INFO` | `INFO` | `DEBUG` only for active triage |
 | `LOG_JSON` | `true` | `true` | required for `jq` recipes in `31-` |
@@ -730,11 +844,15 @@ These **must** be byte-identical on both hosts (or NL-2 cannot connect):
 
 If you ever rotate any of them, change **NL-1 first**, then NL-2, then redeploy NL-2. Otherwise NL-2 will lose connection to PG/Redis.
 
+В `single` синхронизировать нечего: `.env` одна. При ротации пароля
+Postgres поменяйте его в базе (`ALTER USER`), затем `POSTGRES_PASSWORD` и
+`DATABASE_URL` в `deploy/single/.env`, затем перезапустите стек.
+
 ### 7.3 Secret hygiene
 
 | Rule | Why |
 |---|---|
-| `chmod 0600 deploy/nl1/.env deploy/nl2/.env` | only the owning user reads them |
+| `chmod 0600 deploy/{single,nl1,nl2}/.env` | only the owning user reads them |
 | Don't commit `.env` to git | the repo's `.gitignore` already excludes it; verify before pushing |
 | Don't `echo` secrets in CI logs | use `::add-mask::` in GitHub Actions |
 | Generate with `openssl rand` | `os.urandom`-equivalent entropy |
@@ -743,11 +861,13 @@ If you ever rotate any of them, change **NL-1 first**, then NL-2, then redeploy 
 ### 7.4 Validate before bringing services up
 
 ```bash
-docker compose -f deploy/nl1/docker-compose.yml config -q
+docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env config -q   # single
+docker compose -f deploy/nl1/docker-compose.yml config -q                                   # split
 docker compose -f deploy/nl2/docker-compose.yml config -q
 ```
 
-Both must print nothing on success.
+Each must print nothing on success. CI runs the same check for all three
+stacks against their `.env.example` (`compose-validate` job in `ci.yml`).
 
 ---
 
@@ -767,6 +887,11 @@ flowchart LR
 ```
 
 **Rule:** **NL-1 always comes up first** on any deploy that touches the schema (i.e. migrations must run before any worker process starts using the new code). For pure media-plane changes (e.g. nginx config) you can update NL-2 alone.
+
+В `single` этот порядок обеспечивает compose: api, worker и cleanup
+объявляют `depends_on: migrate: service_completed_successfully`
+(`deploy/single/single.override.yml`), поэтому одного
+`docker compose up -d` достаточно.
 
 ### 8.2 Compose `depends_on` map (what's enforced automatically)
 
@@ -840,7 +965,7 @@ docker compose -f deploy/nl1/docker-compose.yml start bot api
 
 Two non-negotiable rules:
 
-1. **Never run `docker compose down -v` on NL-1.** That deletes named volumes (`postgres_data`, `redis_data`, `backups`). If you really mean to reset, do it on a scratch host.
+1. **Never run `docker compose down -v` on NL-1 or the `single` host.** That deletes named volumes (`postgres_data`, `redis_data`, `backups`, а в `single` ещё и `storage`). If you really mean to reset, do it on a scratch host.
 2. **Never delete files in `STORAGE_PATH` while their `temp_links` rows are still `is_active=true`.** Mark inactive first. The cleanup loop already does this.
 
 ### 8.6 Updates from the TUI (operator path)
@@ -860,9 +985,10 @@ The deploy-related options are intentionally split:
 | **`[17] Rolling restart with current .env`** | Runs `deploy_update.sh <stack>` using the `IMAGE_*` values already present in the environment / `.env`. It does not discover the latest GitHub SHA. | You only want to bounce containers or apply bind-mounted config that is already on disk. |
 | **`[18] Install autodeploy service`** | Installs `dwtgbot-autodeploy.service` + timer and creates `/etc/dwtgbot/autodeploy.env` if missing. | First-time setup on each host. Fill `GITHUB_TOKEN` before the first real run. |
 
-The TUI auto-detects the default stack from which `deploy/{nl1,nl2}/.env`
+The TUI auto-detects the default stack from which `deploy/{single,nl1,nl2}/.env`
 exists on the host. On a normal NL-2 host, prompts should default to
-`Stack [nl2]:`; on NL-1, to `Stack [nl1]:`.
+`Stack [nl2]:`; on NL-1, to `Stack [nl1]:`; on a single host (or a fresh
+host with no `.env` yet), to `Stack [single]:`.
 
 Between autodeploy runs the repository may be in detached HEAD. That is
 expected: `auto_deploy.sh` pins `/opt/DWTGBot` to the same SHA as the
@@ -872,7 +998,10 @@ cleanly.
 ### 8.7 Manual rolling restart primitive
 
 ```bash
-# NL-1 first (so migrations apply before the new worker starts on NL-2)
+# single
+sudo bash deploy/scripts/deploy_update.sh single
+
+# split: NL-1 first (so migrations apply before the new worker starts on NL-2)
 sudo bash deploy/scripts/deploy_update.sh nl1
 # Then NL-2
 sudo bash deploy/scripts/deploy_update.sh nl2
@@ -882,13 +1011,13 @@ sudo bash deploy/scripts/deploy_update.sh nl2
 
 1. If on a normal branch, `git pull --ff-only`; if the host is in detached
    HEAD (autodeploy-pinned), skip pull cleanly.
-2. Validate compose config.
-3. NL-1 only: take a pre-deploy DB backup when Postgres is running.
+2. Validate compose config (and Docker Compose ≥ 2.24.0).
+3. Control-plane stacks (`single`, `nl1`): take a pre-deploy DB backup when Postgres is running.
 4. `docker compose pull` using image tags from the current environment /
    `.env`.
 5. `docker compose up -d` (Compose recreates only changed services).
-6. NL-1 only: run Alembic migrations.
-7. NL-2 only: restart nginx defensively so bind-mounted config and upstream
+6. Control-plane stacks (`single`, `nl1`): run Alembic migrations.
+7. Media-plane stacks (`single`, `nl2`): restart nginx defensively so bind-mounted config and upstream
    resolution are refreshed.
 8. Wait for healthchecks to report green; abort + log if anything stays
    `unhealthy` longer than the timeout.
@@ -903,10 +1032,13 @@ Idempotent and safe to re-run.
 systemd timer на **каждый** хост:
 
 ```bash
-# On NL-1
+# single
+sudo bash deploy/scripts/install_autodeploy.sh single
+
+# split: on NL-1
 sudo bash deploy/scripts/install_autodeploy.sh nl1
 
-# On NL-2
+# split: on NL-2
 sudo bash deploy/scripts/install_autodeploy.sh nl2
 ```
 
@@ -934,6 +1066,9 @@ journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
   от NL-1 (`nl1-autodeploy`), так что миграции всё ещё выигрывают гонку.
 - Сам rollout по-прежнему выполняется через `deploy_update.sh`, то есть
   базовый механизм раскатки на хосте не меняется.
+- `single` (`DEPLOY_TARGET=single`) ни от кого не ждёт: он сам владеет
+  миграциями, тянет все четыре образа и публикует deployment status в
+  environment `single-autodeploy` (`GITHUB_ENVIRONMENT_SINGLE`).
 
 #### 8.8.1 Canonical order for agents and operators
 
@@ -1088,6 +1223,18 @@ If anything fails, jump to [`24-runbooks.md`](24-runbooks.md) and [`31-troublesh
 [ ] L7: `SENTRY_RELEASE=$IMAGE_SHA` exported at deploy time so events correlate with the shipped image
 ```
 
+Для `single` пункты про второй хост, приватную сеть и синхронизацию `.env`
+пропускаются, но добавляются:
+
+```
+[ ] `docker compose version --short` ≥ 2.24.0
+[ ] `deploy/single/.env` заполнен, `chmod 0600`; все четыре IMAGE_* заданы
+[ ] `firewall_setup.sh single` применён; 5432/6379 закрыты (`ss -ltnp | grep -E ':5432|:6379'` пусто)
+[ ] STORAGE_MIN_FREE_MB > 0 (storage и Postgres делят диск)
+[ ] offsite-бэкап настроен и проверен (BACKUP_S3_* или BACKUP_RCLONE_REMOTE) — ОБЯЗАТЕЛЬНО
+[ ] Суммарные LIMIT_* не превышают RAM хоста минус ~1 GiB под ОС
+```
+
 ### 10.2 Deploy
 
 ```
@@ -1149,6 +1296,9 @@ If anything fails, jump to [`24-runbooks.md`](24-runbooks.md) and [`31-troublesh
 | 20 | `XACCEL_ENABLED=true` on NL-1 | the api emits `X-Accel-Redirect` to a non-existent nginx → downloads 502 (or worse, leak the internal path) | keep `XACCEL_ENABLED=false` on NL-1; only NL-2 fronts nginx (see §7.1) |
 | 21 | `ORPHAN_JOB_AGE_SECONDS < 2 × JOB_TIMEOUT_SECONDS` | cleanup worker reaps jobs that are still legitimately running → users get a confusing "failed" message while their file is uploading | raise `ORPHAN_JOB_AGE_SECONDS` or lower `JOB_TIMEOUT_SECONDS` |
 | 22 | `STORAGE_MIN_FREE_MB=0` on NL-2 | worker thrashes on a full disk, retries exhaust, user sees generic timeout | set to `3 × MAX_FILE_SIZE_MB` so S10 backpressure kicks in |
+| 24 | `single` без offsite-бэкапа (`BACKUP_S3_*` / `BACKUP_RCLONE_REMOTE` пусты) | потеря диска = потеря базы **и** всех дампов | настроить offsite до выхода в прод ([`22-backup-restore.md`](22-backup-restore.md)) |
+| 25 | Docker Compose < 2.24 | `include` не распознаётся, `config` падает | обновить `docker-compose-plugin` (installer `[1]`) |
+| 26 | `.env` одновременно в `deploy/single` и `deploy/nl*` на одном хосте | скрипты выбирают `single`, меню показывает `multiple` | оставить `.env` только у реально работающего стека |
 | 23 | `SENTRY_DSN` set but `sentry-sdk` missing at runtime | not possible with `prod.lock` (bundled), but if someone rebuilds the image from `dev.lock` by hand, `configure_sentry` logs a warning and silently returns | always deploy from `prod.lock`; confirm `python -c "import sentry_sdk"` in the image |
 
 ---
@@ -1195,6 +1345,9 @@ curl -fsS https://media.example.com/healthz | jq
 ```
 
 No DB rollback needed if the previous tag's schema matches.
+
+В `single` тот же цикл `sed` выполните по одному файлу
+`deploy/single/.env`, затем `sudo bash deploy/scripts/deploy_update.sh single`.
 
 ### 12.3 Schema rollback (rare; emergency)
 
@@ -1310,7 +1463,7 @@ Honest scope: with two single hosts and Docker Compose, **true zero-downtime is 
 - Multiple bot replicas polling the same Telegram token (Telegram allows only one polling client) — true blue/green for the bot would need webhooks behind a load balancer.
 - Zero-downtime Postgres failover without a managed service / replica.
 
-If you need either, design that in `26-cursor-rules.md` first; it crosses ADR-0005 and changes the topology.
+If you need either, design that in `26-cursor-rules.md` first; it crosses ADR-0005 / ADR-0011 and changes the topology.
 
 ---
 
@@ -1318,6 +1471,9 @@ If you need either, design that in `26-cursor-rules.md` first; it crosses ADR-00
 
 ```bash
 # ── Aliases ───────────────────────────────────────────────
+# single: оба алиаса указывают на один стек, остальные команды не меняются
+#   NL1='docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env'; NL2="$NL1"
+#   и читайте секреты из deploy/single/.env
 NL1='docker compose -f deploy/nl1/docker-compose.yml'
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 RPW=$(grep ^REDIS_PASSWORD deploy/nl1/.env | cut -d= -f2)
@@ -1380,6 +1536,7 @@ du -sh /var/lib/dwtgbot/storage/jobs/* | sort -h | tail
 | **Storage volume corruption** | `UPDATE temp_links SET is_active=false;`  then `cleanup.sh`. Users requeue. |
 | **Bot token compromised** | Rotate via BotFather → update **both** `.env` (NL-1 then NL-2) → `deploy_update.sh nl1` → `deploy_update.sh nl2`. |
 | **Internal API token leaked** | Rotate `API_INTERNAL_TOKEN` in **both** `.env`; redeploy NL-1 then NL-2. |
+| **`single` host lost** | Новый хост → §3 → §4 → §4a (те же значения `.env`) → `restore.sh` из **offsite**-дампа (локальные дампы погибли вместе с диском) → выпустить сертификат → DNS A на новый IP → §9. Старые temp links не восстанавливаются. |
 
 ---
 

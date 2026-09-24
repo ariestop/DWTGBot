@@ -19,18 +19,41 @@ Read `docs/19-docker-architecture.md` and `docs/20-deployment.md`.
 - `COPY --chown=app:app` instead of post-`COPY` `RUN chown`.
 - Declare a `HEALTHCHECK`.
 
+## Compose layout (ADR-0011)
+
+- Services are defined **only** in the fragments
+  `deploy/compose/control.yml` (postgres, redis, migrate, bot, backup) and
+  `deploy/compose/media.yml` (api, worker, cleanup, nginx, certbot).
+- Stacks `deploy/{single,nl1,nl2}/docker-compose.yml` contain only
+  `include` (long syntax: `path` list, `project_directory: .`,
+  `env_file: .env`). Topology deltas live in
+  `deploy/single/single.override.yml` and `deploy/nl1/nl1.overlay.yml`.
+- Requires Docker Compose ≥ 2.24.0. `x-*` anchors do not cross `include`
+  files — each overlay declares its own copies.
+- Интерполированные значения не приводятся к числу там, где compose ждёт
+  integer (например, `blkio_config.weight`) — используйте литерал.
+
 ## Compose conventions
 
 - Apply YAML anchors `*restart`, `*logging`, `*app-env` to every
   long-running service.
 - `depends_on: { condition: service_healthy }` for required deps.
 - `migrate` service is one-shot (`restart: "no"`); other app services
-  use `restart: unless-stopped`.
+  use `restart: unless-stopped`. In `single`, api/worker/cleanup also
+  depend on `migrate: service_completed_successfully`.
 - **No `ports:`** on internal services (postgres, redis, api, worker).
-  Only nginx publishes `80` and `443`.
-- Networks: `dwtgbot_internal` on NL-1, `dwtgbot_media` on NL-2. Cross-
-  host traffic uses the **host's private VLAN**, not docker networking.
-- Volumes named `dwtgbot_*` for clarity in `docker volume ls`.
+  Only nginx publishes `80` and `443`. The single exception is
+  `deploy/nl1/nl1.overlay.yml`, which binds Postgres/Redis to
+  `NL1_PRIVATE_IP` (WireGuard) for NL-2; never in fragments or `single`.
+- Networks: `dwtgbot_internal` (control plane), `dwtgbot_media` (media
+  plane). In split, cross-host traffic uses the **host's private VLAN**,
+  not docker networking. In `single`, api/worker/cleanup join both
+  networks; **nginx must never join `dwtgbot_internal`**.
+- Volumes named `dwtgbot_*` for clarity in `docker volume ls`; names and
+  `container_name` stay identical across stacks so `single → split`
+  needs no data migration.
+- Invariants are enforced by `app/tests/test_deploy_topology.py` and the
+  `compose-validate` CI job.
 
 ## Image tags
 

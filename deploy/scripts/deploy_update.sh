@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # =====================================================================
-# Idempotent in-place update of one stack (NL-1 or NL-2).
+# Idempotent in-place update of one stack (single, NL-1 or NL-2).
 #
 # Usage:
+#   bash deploy/scripts/deploy_update.sh single
 #   bash deploy/scripts/deploy_update.sh nl1
 #   bash deploy/scripts/deploy_update.sh nl2
 #   IMAGE_TAG=sha-abc123 bash deploy/scripts/deploy_update.sh nl1
@@ -10,28 +11,27 @@
 # Steps:
 #   1. git pull (if .git present)
 #   2. validate compose config
-#   3. (NL-1) backup db before applying migrations
+#   3. (control plane: single / NL-1) backup db before applying migrations
 #   4. docker compose pull
 #   5. docker compose up -d (recreates only changed containers)
-#   6. (NL-1) run alembic migrate one-shot
-#   7. healthcheck
-#   8. on failure → print rollback hint
+#   6. (control plane) run alembic migrate one-shot
+#   7. (media plane: single / NL-2) restart nginx
+#   8. healthcheck
+#   9. on failure → print rollback hint
 # =====================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 source "${SCRIPT_DIR}/helpers.sh"
 
 TARGET="${1:-}"
-[[ "${TARGET}" == "nl1" || "${TARGET}" == "nl2" ]] || die "Usage: deploy_update.sh nl1|nl2"
+is_valid_stack "${TARGET}" || die "Usage: deploy_update.sh single|nl1|nl2"
 
-ENV_FILE="${DEPLOY_DIR}/${TARGET}/.env"
+ENV_FILE="$(stack_env_file "${TARGET}")"
 require_env_file "${ENV_FILE}"
 YOUTUBE_COOKIE_PATH="${YOUTUBE_COOKIE_PATH:-/srv/dwtgbot/secrets/cookies-youtube.txt}"
 INSTAGRAM_COOKIE_PATH="${INSTAGRAM_COOKIE_PATH:-/srv/dwtgbot/secrets/cookies-instagram.txt}"
 
-run_compose() {
-  if [[ "${TARGET}" == "nl1" ]]; then compose_nl1 "$@"; else compose_nl2 "$@"; fi
-}
+run_compose() { compose_stack "${TARGET}" "$@"; }
 
 git_pull_if_possible() {
   if [[ "${AUTODEPLOY_SKIP_GIT_PULL:-0}" == "1" ]]; then
@@ -63,11 +63,12 @@ git_pull_if_possible() {
 
 validate_config() {
   log_step "Validating compose config"
+  require_compose_version
   run_compose config -q
 }
 
 pre_backup() {
-  if [[ "${TARGET}" == "nl1" ]]; then
+  if stack_has_control_plane "${TARGET}"; then
     log_step "Pre-deploy backup"
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx dwtgbot_postgres; then
       bash "${SCRIPT_DIR}/backup.sh" || log_warn "Backup failed — continuing under user discretion"
@@ -131,7 +132,7 @@ apply() {
   run_compose up -d --remove-orphans
 }
 
-# On NL-2 the api container gets a new IP every time ``compose up -d``
+# On the media plane the api container gets a new IP every time ``compose up -d``
 # recreates it (image rolled, env changed, ...). The nginx config now
 # uses a variable in ``proxy_pass`` + Docker's embedded DNS so it
 # re-resolves on its own within ``valid=10s`` — but we still bounce
@@ -146,7 +147,7 @@ apply() {
 #      makes nginx-config changes auto-deployable.
 # Cheap (sub-second on a healthy container) and idempotent.
 restart_nginx_if_present() {
-  if [[ "${TARGET}" != "nl2" ]]; then
+  if ! stack_has_media_plane "${TARGET}"; then
     return
   fi
   if run_compose ps --services 2>/dev/null | grep -qx nginx; then
@@ -156,9 +157,9 @@ restart_nginx_if_present() {
 }
 
 run_migrations() {
-  if [[ "${TARGET}" == "nl1" ]]; then
+  if stack_has_control_plane "${TARGET}"; then
     log_step "Running migrations"
-    compose_nl1 run --rm migrate
+    run_compose run --rm migrate
   fi
 }
 
@@ -171,7 +172,7 @@ print_rollback_hint() {
   log_warn "Rollback hint:"
   echo "  Set IMAGE_BOT/IMAGE_API/IMAGE_WORKER to the previous tag in ${ENV_FILE}"
   echo "  Then re-run: bash deploy/scripts/deploy_update.sh ${TARGET}"
-  if [[ "${TARGET}" == "nl1" ]]; then
+  if stack_has_control_plane "${TARGET}"; then
     echo "  If migrations were applied, also restore the latest backup:"
     echo "    bash deploy/scripts/restore.sh"
   fi

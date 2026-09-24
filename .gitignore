@@ -56,6 +56,7 @@ coverage.xml
 !.env.example
 deploy/nl1/.env
 deploy/nl2/.env
+deploy/single/.env
 
 # Runtime / data — anchored so they don't eat real packages like
 # ``app/infrastructure/storage/`` (see ADR-0008 / past CI incident).

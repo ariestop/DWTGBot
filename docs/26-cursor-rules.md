@@ -190,7 +190,7 @@ PR description without reformatting.
 - **Files / layers explicitly NOT touched:** (P1 + P3 enforcement)
   - <e.g. `app/bot/handlers/` — this is a use-case-only change>
 - **Migration?** (P10) <No | Yes — `migrations/versions/NNNN_<slug>.py`, deploy order: …>
-- **Env var?** (P4) <No | Yes — `<NAME>` added in: config.py, .env.example, deploy/nl{1,2}/.env.example, compose env block, 13- doc>
+- **Env var?** (P4) <No | Yes — `<NAME>` added in: config.py, .env.example, deploy/{single,nl1,nl2}/.env.example, compose env block, 13- doc>
 - **Tests:** (P4) <new test file(s) + which conditions; existing tests expected to stay green>
 - **Docs to update in this PR:** (P4) <list of `docs/*.md` per 26- §15>
 - **Queue / worker contract impact?** (P7) <No | Yes — what changes in `_job_id`, retries, status, idempotency>
@@ -305,8 +305,8 @@ review.
 
 > 🔒 **The foundation Cursor must preserve at all times** is enumerated
 > in [**ADR-0005 — Locked architectural assumptions**](adr/0005-locked-architectural-assumptions.md)
-> §2 (twelve rows: Python 3.14+ (ADR-0009), two-server architecture, NL-1/NL-2
-> service composition, provider-based design, Redis queue, Postgres SoT,
+> §2 (twelve rows: Python 3.14+ (ADR-0009), topology + plane composition
+> (rows 2–4, superseded by ADR-0011: `single` | `split`), provider-based design, Redis queue, Postgres SoT,
 > temp links, structured logging, Docker-first, GitHub Actions, bash
 > installer). A change touching any row → **stop, draft a superseding
 > ADR, surface to user**. Do not write the application code first.
@@ -554,8 +554,14 @@ high-risk change and **requires user approval** before merging.
 
 ### 10.1 Compose changes
 
-Any change to `deploy/nl1/docker-compose.yml` or
-`deploy/nl2/docker-compose.yml` must:
+Any change to the compose fragments (`deploy/compose/{control,media}.yml`),
+the topology overlays (`deploy/single/single.override.yml`,
+`deploy/nl1/nl1.overlay.yml`) or the stack entrypoints
+(`deploy/{single,nl1,nl2}/docker-compose.yml`, только `include`) must:
+
+- Keep services in the fragments; stacks never redefine a service.
+- Pass `app/tests/test_deploy_topology.py` and `docker compose config -q`
+  for all three stacks (CI job `compose-validate`).
 
 - Preserve YAML anchors (`x-app-env`, `x-logging`, etc.).
 - Preserve `restart: unless-stopped` on every service.
@@ -1265,9 +1271,9 @@ what is being protected.
 >
 > Корректный путь:
 > 1. Добавить поле в `Settings` (`app/config.py`) с типом и валидацией.
-> 2. Прокинуть env-var через `deploy/nl{1,2}/.env.example` и compose
+> 2. Прокинуть env-var через `deploy/{single,nl1,nl2}/.env.example` и compose
 >    `environment:` block.
-> 3. На сервере положить значение в `deploy/nl{1,2}/.env`
+> 3. На сервере положить значение в `deploy/{single,nl1,nl2}/.env`
 >    (этот файл не коммитится).
 > 4. Документировать в `docs/13-config-and-env.md`.
 >
@@ -1505,7 +1511,7 @@ defended principle in the response. Mid-flight violations? Apply
 - DO NOT mark tests `skip` to make CI green.
 - DO NOT invent architecture silently. Stop and ask.
 - DO NOT change any row of [ADR-0005 §2](adr/0005-locked-architectural-assumptions.md) without first drafting a superseding ADR.
-- DO NOT swap Redis, Postgres, the bash installer, GitHub Actions, Docker Compose, or the two-server topology — each is locked by ADR-0005.
+- DO NOT swap Redis, Postgres, the bash installer, GitHub Actions, Docker Compose, or the topology model (`single` | `split`) — each is locked by ADR-0005 / ADR-0011.
 - DO NOT mount `STORAGE_PATH` into the `bot` service.
 - DO NOT add a stateful service to NL-2 or a public port to NL-1.
 - DO NOT skip the §3.7 verbatim plan template; "informal plans" are not plans.

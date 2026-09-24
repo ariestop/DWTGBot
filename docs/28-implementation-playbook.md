@@ -171,7 +171,7 @@ that supersedes it) — this is the canonical anti-regression list:
 | Per-user concurrency cap is enforced **atomically** via `JobsRepository.create_if_under_cap` (advisory lock + count + insert in one transaction). Never re-introduce a `count_active_for_user(...)` followed by `create(...)`. | `app/application/use_cases/enqueue_download.py`, `app/infrastructure/db/repositories/jobs_repo_impl.py` | `MAX_CONCURRENT_JOBS_PER_USER` exceeded on bursty / double-tap traffic; per-user worker starvation. |
 | Temp-link counter increments **atomically** via `TempLinksRepository.try_register_use` (single `UPDATE ... WHERE ... RETURNING`). Pre-checks (path, file existence) run **before** the atomic call so probes don't burn slots. | `app/api/public/downloads.py`, `app/infrastructure/db/repositories/temp_links_repo_impl.py` | A `max_downloads=1` link served twice; cleanup-race causes 410s to consume the slot anyway. |
 | Nginx access logs **redact** the `/d/<token>` segment via `map $request_uri $safe_request_uri`. `log_format` must use `$safe_request_uri`, never `$request` (which embeds the full URI). | `deploy/nginx/nginx.conf` | A Loki dump or `tail access.log` reveals one hour of bearer tokens. |
-| Compose `image:` references use the fail-fast form `${IMAGE_*:?...}`; `:latest` only on semver tag builds; deploy.yml exports `IMAGE_*=...:sha-<short>`. | `deploy/nl{1,2}/docker-compose.yml`, `.github/workflows/build-images.yml`, `.github/workflows/deploy.yml` | A clean checkout silently deploys whatever was tagged `:latest`; rollbacks are ambiguous; a CI race overwrites a tag. |
+| Compose `image:` references use the fail-fast form `${IMAGE_*:?...}`; `:latest` only on semver tag builds; deploy.yml exports `IMAGE_*=...:sha-<short>`. | `deploy/compose/{control,media}.yml`, `deploy/nl1/nl1.overlay.yml`, `.github/workflows/build-images.yml`, `.github/workflows/deploy.yml` | A clean checkout silently deploys whatever was tagged `:latest`; rollbacks are ambiguous; a CI race overwrites a tag. |
 
 These map onto principles **P7** (queue semantics), **P10** (DB
 ordering), **P11** (security defaults). Touching any of them without
@@ -225,7 +225,7 @@ it, you are not yet in the next step.
 | 8 | **Implement layer-by-layer** | Inside-out: domain → application → infrastructure → entry layer (bot/api/worker) → composition → tests → docs. Save & format after each file. |
 | 9 | **Update tests (P4)** | Tests covering the new behaviour exist and pass. Per-class test obligations from §4 are met. |
 | 10 | **Update docs (P4)** | Every doc affected per §22 is updated in the **same PR**. Event catalogue, exception catalogue, env-var reference all stay in sync. |
-| 11 | **Update config / env (P4)** | If env var added: `app/config.py` + `.env.example` + `deploy/nl{1,2}/.env.example` + relevant compose `environment:` block + `13-config-and-env.md`. |
+| 11 | **Update config / env (P4)** | If env var added: `app/config.py` + `.env.example` + `deploy/{single,nl1,nl2}/.env.example` + relevant compose `environment:` block + `13-config-and-env.md`. |
 | 12 | **Verify deploy impact (P9)** | If `deploy/`, Docker, Compose, Nginx, Certbot, or scripts touched: re-runnability checked, idempotency note in PR, `bash -n` + `shellcheck` clean. |
 | 13 | **Final review** | §25 checklists run, §27 Definition-of-done passes, §19.9 / §19 P1–P11 gate green. PR description matches §3.3 template. |
 
@@ -382,7 +382,7 @@ reproduced here so the playbook is self-contained.
 - **Files / layers explicitly NOT touched:** (P1 + P3)
   - <e.g. `app/bot/handlers/` — this is a use-case-only change>
 - **Migration?** (P10) <No | Yes — `migrations/versions/NNNN_<slug>.py`, deploy order: …>
-- **Env var?** (P4) <No | Yes — `<NAME>` added in: config.py, .env.example, deploy/nl{1,2}/.env.example, compose env block, 13- doc>
+- **Env var?** (P4) <No | Yes — `<NAME>` added in: config.py, .env.example, deploy/{single,nl1,nl2}/.env.example, compose env block, 13- doc>
 - **Tests:** (P4) <new file(s) + which conditions; existing tests expected to stay green>
 - **Docs to update in this PR:** (P4) <list of `docs/*.md` per §22>
 - **Queue / worker contract impact?** (P7) <No | Yes — what changes>
@@ -1515,7 +1515,7 @@ A new env var **must** be added in all of:
 2. `.env.example` — repo-root template.
 3. `deploy/nl1/.env.example` and/or `deploy/nl2/.env.example` — per
    plane.
-4. The matching `deploy/nl{1,2}/docker-compose.yml`'s
+4. The matching compose fragment's (`deploy/compose/{control,media}.yml`)
    `environment:` block, so the container actually receives it.
 5. `docs/13-config-and-env.md` — variable reference, default,
    purpose, where consumed.
@@ -1697,7 +1697,7 @@ liveness — without breaking compose / orchestrator probes.
 |---|---|
 | `app/api/health.py` (or per-component) | `/healthz` and `/readyz` logic |
 | `app/workers/health.py` (or similar) | Worker self-report |
-| `deploy/nl{1,2}/docker-compose.yml` | `healthcheck:` block per service |
+| `deploy/compose/{control,media}.yml` | `healthcheck:` block per service |
 | `docs/15-healthchecks.md` | Probe catalogue |
 
 ### 17.3 Step-by-step procedure
@@ -1768,8 +1768,9 @@ passthrough.
 | File / area | Change |
 |---|---|
 | `docker/<image>.Dockerfile` | Build steps; base image; deps |
-| `deploy/nl1/docker-compose.yml` and/or `deploy/nl2/docker-compose.yml` | Service definitions |
-| `deploy/nl{1,2}/.env.example` | If env added/changed |
+| `deploy/compose/control.yml` and/or `deploy/compose/media.yml` | Service definitions (стеки `deploy/{single,nl1,nl2}` только `include`) |
+| `deploy/single/single.override.yml`, `deploy/nl1/nl1.overlay.yml` | Различия топологий (сети, порты, зависимости) |
+| `deploy/{single,nl1,nl2}/.env.example` | If env added/changed |
 | `.github/workflows/build-images.yml` | Build matrix if image changed |
 | `docs/19-docker-architecture.md` | Image tag policy + service catalogue |
 | `docs/20-deployment.md` | Walkthrough if procedure changed |
@@ -1803,8 +1804,8 @@ Any compose change must:
 
 ### 18.5 Validation
 
-- `docker compose -f deploy/nl{1,2}/docker-compose.yml config` is
-  valid.
+- `docker compose config -q` is valid in each of `deploy/{single,nl1,nl2}`
+  (CI job `compose-validate`), and `app/tests/test_deploy_topology.py` passes.
 - All services reach `healthy`.
 - A re-run of `docker compose up -d` is a no-op.
 - `19-docker-architecture.md` and `20-deployment.md` updated.
@@ -2200,7 +2201,7 @@ walk this table and ask "did the author update each row?".
 | **Exception class (`AppError` subclass)** | Use case raising it, handler mapping it, tests, `16-error-handling.md` |
 | **Log event name / fields** | Code emitting it, `14-logging-observability.md` event catalogue |
 | **Healthcheck** | Code emitting it, compose `healthcheck:`, `15-healthchecks.md` |
-| **Env var / Settings field** | `app/config.py`, `.env.example`, `deploy/nl{1,2}/.env.example`, compose env block, `13-config-and-env.md`, install script if secret |
+| **Env var / Settings field** | `app/config.py`, `.env.example`, `deploy/{single,nl1,nl2}/.env.example`, compose env block, `13-config-and-env.md`, install script if secret |
 | **Dockerfile** | Image-tag policy in `19-docker-architecture.md`, build workflow |
 | **Compose service** | Per-stack docs in `19-` and `20-`, healthcheck if applicable, env block consistency |
 | **Nginx route** | `10-temp-links-and-delivery.md`, security headers per `17-`, rate-limit per `17-` |
@@ -2551,7 +2552,7 @@ Concrete examples calibrate intuition for "is this PR too wide?".
 
 - Class G.
 - Files MODIFY: `app/config.py` (default), `.env.example` /
-  `deploy/nl{1,2}/.env.example` (commented default),
+  `deploy/{single,nl1,nl2}/.env.example` (commented default),
   `docs/10-temp-links-and-delivery.md`,
   `docs/13-config-and-env.md`.
 - Files NOT touched: token format, public route, Nginx, repo.
@@ -3126,7 +3127,7 @@ FEATURE_X_ENABLED=false
 FEATURE_X_ENABLED=false
 ```
 
-**4. `deploy/nl{1,2}/docker-compose.yml` — service `environment:`:**
+**4. `deploy/compose/{control,media}.yml` — service `environment:`:**
 
 ```yaml
 services:

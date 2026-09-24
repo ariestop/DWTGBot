@@ -1,0 +1,69 @@
+# =====================================================================
+# Single-host overlay on top of deploy/compose/{control,media}.yml.
+# Merged via ``include.path`` in deploy/single/docker-compose.yml.
+#
+# Invariants (enforced by app/tests/test_deploy_topology.py):
+#   * no ``ports:`` on postgres/redis;
+#   * nginx is NOT attached to dwtgbot_internal.
+# =====================================================================
+
+services:
+
+  postgres:
+    # Last in line for the OOM killer: losing the source of truth is
+    # the worst outcome on a shared host.
+    oom_score_adj: -500
+
+  redis:
+    # arq queue keys have no TTL — keep Redis alive over media workloads.
+    oom_score_adj: -300
+
+  api:
+    networks:
+      - dwtgbot_internal
+      - dwtgbot_media
+    # In split, NL-1 is deployed (and migrated) before NL-2. On one host
+    # the order must be explicit: nothing touches the schema before
+    # ``migrate`` finished.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    networks:
+      - dwtgbot_internal
+      - dwtgbot_media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # ffmpeg / yt-dlp isolation: half the default CPU weight (1024) and a
+    # low block-IO weight, so under contention the bot and Postgres win.
+    # The hard caps (LIMIT_WORKER_*) still apply on top of the weights.
+    # blkio weight needs the BFQ scheduler; on other schedulers Docker
+    # logs a warning and ignores it.
+    # (Compose does not coerce an interpolated blkio weight to an
+    # integer, so the weight is a literal.)
+    cpu_shares: ${WORKER_CPU_SHARES:-512}
+    blkio_config:
+      weight: 300
+    oom_score_adj: 500
+    # All services share one .env here; the worker needs a bigger pool
+    # than bot/api, and Postgres' default max_connections is 100.
+    environment:
+      DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-10}
+
+  cleanup:
+    networks:
+      - dwtgbot_internal
+      - dwtgbot_media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    oom_score_adj: 300

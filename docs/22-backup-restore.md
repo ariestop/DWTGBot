@@ -25,6 +25,13 @@ emergency checklist. Bash commands, ordered, no fluff.
 >   `DROP/CREATE DB`, loads dump, restarts).
 > - **Retention**: `BACKUP_RETENTION_DAYS` (default 14 days),
 >   pruned by `find -mtime`.
+> - **`single` (ADR-0011): offsite-копия обязательна.** Дамп, база и
+>   storage лежат на одном диске. `BACKUP_S3_*` или
+>   `BACKUP_RCLONE_REMOTE` должен быть задан до выхода в прод (§4.3).
+
+Скрипты работают с любым стеком, в котором есть control plane: `backup.sh`
+и `restore.sh` сами выбирают `deploy/single/.env` (приоритет) или
+`deploy/nl1/.env`. Ниже «NL-1» в `single` означает «единственный хост».
 
 ---
 
@@ -35,7 +42,7 @@ emergency checklist. Bash commands, ordered, no fluff.
 | Class | Object | Location | Backed up by | RPO | RTO |
 |---|---|---|---|---|---|
 | **Critical** | `dwtgbot` Postgres database | NL-1 `postgres_data` volume | `backup.sh` (automatic) | `BACKUP_INTERVAL_SECONDS` (default 24 h) | minutes (run `restore.sh`) |
-| **Critical** | `.env` files (NL-1, NL-2) | hosts: `/opt/dwtgbot/deploy/{nl1,nl2}/.env` | operator (secrets manager) | when changed | seconds |
+| **Critical** | `.env` files (NL-1, NL-2 или один в `single`) | hosts: `/opt/dwtgbot/deploy/{single,nl1,nl2}/.env` | operator (secrets manager) | when changed | seconds |
 | Important | TLS certs | NL-2 `letsencrypt_conf` volume | regenerable via certbot | n/a | minutes |
 | Important | App config in repo (compose, nginx, scripts) | git | git itself | n/a | seconds |
 | Optional | Storage volume (in-flight media + temp links) | NL-2 `/var/lib/dwtgbot/storage` | operator (rsync / snapshot) | as scheduled | depends on size |
@@ -71,7 +78,7 @@ emergency checklist. Bash commands, ordered, no fluff.
 flowchart TD
   Start[backup.sh] --> Q{POSTGRES_HOST set\nand != "postgres"?}
   Q -- yes --> A[run_in_container_mode\npg_dump over network]
-  Q -- no  --> B{docker found and\ndeploy/nl1/docker-compose.yml exists?}
+  Q -- no  --> B{docker found and\ndeploy/single/.env or deploy/nl1/.env exists?}
   B -- yes --> C[run_on_host_mode\ncompose exec postgres pg_dump]
   B -- no  --> D[die: missing inputs]
   A --> P[prune_old]
@@ -82,7 +89,7 @@ flowchart TD
 | Mode | When used | How it talks to PG |
 |---|---|---|
 | `run_in_container_mode` | Inside the `backup` container (compose) | `pg_dump -h $POSTGRES_HOST -p ${POSTGRES_PORT:-5432} -U ... -d ...` over the docker network |
-| `run_on_host_mode` | Operator running on NL-1 host directly | `compose exec -T postgres pg_dump ...` |
+| `run_on_host_mode` | Operator running on the NL-1 or `single` host directly | `compose_stack <single\|nl1> exec -T postgres pg_dump ...` |
 
 ### 2.2 Dump command
 
@@ -201,6 +208,12 @@ This is mounted into the `backup` container at `/var/backups/dwtgbot`. The actua
 
 What you get out of the box: **one copy, on the same host as the database**. That is **not enough** — a host fire ends both. You must add at least an off-host copy.
 
+В `single` риск выше: на том же диске лежат ещё storage и все
+контейнеры, а заполнение диска медиафайлами может помешать записи дампа.
+Поэтому в `single` offsite — **требование**, а не рекомендация: без
+`BACKUP_S3_*` / `BACKUP_RCLONE_REMOTE` чеклист `20-deployment.md` §10.1 не
+пройден.
+
 ### 4.3 Off-host copy options
 
 | Option | Setup effort | Safety |
@@ -219,7 +232,7 @@ Debian package) and `rclone` are bundled in `docker/backup.Dockerfile`
 so the path is non-no-op out of the box.
 
 ```dotenv
-# deploy/nl1/.env — pick exactly one
+# deploy/nl1/.env (или deploy/single/.env) — pick exactly one
 BACKUP_S3_BUCKET=my-dwtgbot-backups          # creds: instance profile or env
 BACKUP_S3_PREFIX=dwtgbot                     # object-key prefix
 # OR
@@ -505,6 +518,11 @@ Key properties:
 > export NL2_SSH_OPTS="-o StrictHostKeyChecking=yes"   # optional, for hardened SSH
 > ```
 > If `NL2_HOST` is empty the script falls back to an explicit `[y/N]` prompt that requires you to confirm the worker is already stopped.
+
+**`single`.** SSH не нужен: `restore.sh` находит `deploy/single/.env`,
+останавливает локальные `worker` и `cleanup` через `compose_stack single stop`
+до DROP, а `EXIT` trap запускает их обратно. `NL2_HOST` игнорируется.
+Команда та же: `sudo bash deploy/scripts/restore.sh [dump.sql.gz]`.
 
 ### 9.2 Standard restore — interactive picker
 

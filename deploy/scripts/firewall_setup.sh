@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # =====================================================================
-# Configure ufw firewall for NL-1 or NL-2.
+# Configure ufw firewall for single, NL-1 or NL-2.
+#
+# single (one host, ADR-0011):
+#   - allow 22/tcp, 80/tcp, 443/tcp
+#   - DENY 5432/tcp and 6379/tcp (defence in depth: the single stack
+#     publishes no host ports for Postgres/Redis in the first place)
 #
 # NL-1 (control plane):
 #   - allow 22/tcp from anywhere (consider restricting to admin IPs)
@@ -12,6 +17,7 @@
 #   - allow 80/tcp and 443/tcp from anywhere
 #
 # Usage:
+#   sudo                          bash deploy/scripts/firewall_setup.sh single
 #   sudo PRIVATE_NET=10.10.0.0/24 bash deploy/scripts/firewall_setup.sh nl1
 #   sudo                          bash deploy/scripts/firewall_setup.sh nl2
 # =====================================================================
@@ -19,11 +25,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 source "${SCRIPT_DIR}/helpers.sh"
 
+TARGET="${1:-}"
+is_valid_stack "${TARGET}" || die "Usage: firewall_setup.sh single|nl1|nl2"
+
 require_root
 require_command ufw
-
-TARGET="${1:-}"
-[[ "${TARGET}" == "nl1" || "${TARGET}" == "nl2" ]] || die "Usage: firewall_setup.sh nl1|nl2"
 
 log_step "Configuring ufw for ${TARGET}"
 ufw default deny incoming
@@ -39,7 +45,12 @@ if [[ "${TARGET}" == "nl1" ]]; then
   ufw allow from "${PRIVATE_NET}" to any port 6379 proto tcp comment "redis-private"
 fi
 
-if [[ "${TARGET}" == "nl2" ]]; then
+if [[ "${TARGET}" == "single" ]]; then
+  ufw deny 5432/tcp comment "postgres-public-deny"
+  ufw deny 6379/tcp comment "redis-public-deny"
+fi
+
+if stack_has_media_plane "${TARGET}"; then
   ufw allow 80/tcp  comment "http"
   ufw allow 443/tcp comment "https"
 fi

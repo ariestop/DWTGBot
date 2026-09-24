@@ -82,7 +82,9 @@ Each layer also has a topic doc in `docs/`:
 ## 3. Container view (runtime)
 
 The system runs as a set of containers split across two servers connected by a
-private network (e.g. WireGuard).
+private network (e.g. WireGuard) — топология `split`. Та же схема сервисов
+может работать на одном хосте — топология `single`
+([ADR-0011](adr/0011-single-server-topology.md)); она описана в §3.1.
 
 ```mermaid
 flowchart LR
@@ -138,6 +140,58 @@ Notes:
   files through the bot's event loop.
 - **Public traffic → nginx (NL-2)**: only ports 80/443 are open. `:80` exists
   only for ACME challenges; everything else redirects to `:443`.
+
+### 3.1 Single-host variant (`single`)
+
+В `single` все сервисы из схемы выше работают на одном хосте
+(`deploy/single`), а границу между плоскостями проводят сети Docker:
+
+```mermaid
+flowchart LR
+    subgraph HOST["single host (public :80/:443 only)"]
+        subgraph INT["dwtgbot_internal"]
+            BOT["bot"]
+            PG[("postgres")]
+            RD[("redis")]
+            BK["backup"]
+            MIG["migrate (one-shot)"]
+        end
+        subgraph MED["dwtgbot_media"]
+            NGX["nginx"]
+        end
+        API["api"]
+        WK["worker"]
+        CLN["cleanup"]
+        STORAGE[("storage")]
+    end
+
+    API --- INT
+    API --- MED
+    WK --- INT
+    WK --- MED
+    CLN --- INT
+    CLN --- MED
+    NGX -- :8080 --> API
+    NGX -. X-Accel-Redirect .-> STORAGE
+    WK --> STORAGE
+```
+
+Отличия от `split`:
+
+| Аспект | `split` | `single` |
+|---|---|---|
+| Доступ к Postgres/Redis | порты на WireGuard IP NL-1 | порты не публикуются, только `dwtgbot_internal` |
+| Сети nginx | `dwtgbot_media` | `dwtgbot_media` (к данным маршрута нет) |
+| Сети api / worker / cleanup | `dwtgbot_media` + WireGuard | `dwtgbot_internal` + `dwtgbot_media` |
+| Порядок миграций | NL-1 деплоится первым | `depends_on: migrate` у api / worker / cleanup |
+| Изоляция нагрузки | отдельный хост | `cpu_shares`, `blkio_config.weight`, `oom_score_adj`, лимиты `LIMIT_*` |
+| Пул БД worker | собственный `.env` NL-2 | `WORKER_DB_POOL_SIZE` / `WORKER_DB_MAX_OVERFLOW` |
+
+Blast radius в `single` общий: ошибка worker, которая исчерпает диск или
+память хоста, задевает и bot, и Postgres. Для этого на одном хосте
+обязательны `STORAGE_MIN_FREE_MB` и offsite-бэкапы. Когда эти меры
+перестают помогать, пора переходить на `split` (пороги —
+[`37-load-and-capacity.md`](37-load-and-capacity.md) §8.0).
 
 For the deeper Docker layout and volumes see [`19-docker-architecture.md`](19-docker-architecture.md).
 
@@ -304,16 +358,18 @@ depend on protocols/ABCs, not concretions.
 This section consolidates the *why*. Full reasoning lives in the ADRs.
 
 > 🔒 **Canonical lock register:** [ADR-0005 — Locked architectural assumptions](adr/0005-locked-architectural-assumptions.md)
-> §2 enumerates the twelve foundational decisions. The table below maps
+> §2 enumerates the twelve foundational decisions (rows 2–4 superseded by
+> [ADR-0011](adr/0011-single-server-topology.md)). The table below maps
 > each architectural principle to its ADR(s); cells pointing to ADR-0005
 > reference the relevant section there.
 
 | Decision | Why we did it | ADR |
 |---|---|---|
 | Hexagonal layering | Testability with fakes; allow swapping infra | (foundational principle; see this doc §§1–4) |
-| Two-server topology | Blast radius isolation, security, scaling | [ADR-0001](adr/0001-two-server-topology.md) + [ADR-0005 §3.2](adr/0005-locked-architectural-assumptions.md) |
-| NL-1 service composition | Stateful + non-public co-located; minimal firewall surface | [ADR-0005 §3.3](adr/0005-locked-architectural-assumptions.md) |
-| NL-2 service composition | Media-traffic-heavy + public; isolated from control plane | [ADR-0005 §3.4](adr/0005-locked-architectural-assumptions.md) |
+| Topology `single` \| `split` from shared compose fragments | Дешёвый старт на одном хосте; путь роста без миграции данных | [ADR-0011](adr/0011-single-server-topology.md) (supersedes [ADR-0005 §3.2–§3.4](adr/0005-locked-architectural-assumptions.md)) |
+| Two-server topology (`split`) | Blast radius isolation, security, scaling | [ADR-0001](adr/0001-two-server-topology.md) (amended by ADR-0011) |
+| Control-plane composition (NL-1 in split) | Stateful + non-public co-located; minimal firewall surface | `deploy/compose/control.yml`, [ADR-0011](adr/0011-single-server-topology.md) |
+| Media-plane composition (NL-2 in split) | Media-traffic-heavy + public; isolated from control plane | `deploy/compose/media.yml`, [ADR-0011](adr/0011-single-server-topology.md) |
 | Python 3.14+ | Ecosystem fit (yt-dlp, telegram, fastapi); typing maturity; PEP 749 / 750 / 779 / JIT (see [ADR-0009](adr/0009-python-314-runtime.md)) | [ADR-0005 §3.1](adr/0005-locked-architectural-assumptions.md), [ADR-0009](adr/0009-python-314-runtime.md) |
 | Bot framework `python-telegram-bot` | Async, mature, well-maintained | [ADR-0002](adr/0002-python-telegram-bot.md) |
 | Redis queue (arq) | Already needed for state; one infra component fewer | [ADR-0005 §3.6](adr/0005-locked-architectural-assumptions.md) |

@@ -46,7 +46,24 @@ via an ADR before writing code.
 
 ---
 
-## 3. Why two servers (NL-1 / NL-2)
+## 3. Topologies: `single` and `split` (NL-1 / NL-2)
+
+Проект поддерживает две топологии ([ADR-0011](adr/0011-single-server-topology.md)).
+Код приложения и образы в них одинаковые, отличается только compose-обвязка:
+
+| Топология | Хосты | Стеки | Когда |
+|---|---|---|---|
+| **`single`** | 1 | `deploy/single` = control + media на одном хосте | старт и малый масштаб (рекомендуемый путь установки) |
+| **`split`** | 2 (WireGuard) | `deploy/nl1` + `deploy/nl2` | рост нагрузки или требования к изоляции |
+
+Переход `single → split` проходит без миграции данных: имена volume и контейнеров
+совпадают (runbook — [`24-runbooks.md`](24-runbooks.md) §26,
+пороги — [`37-load-and-capacity.md`](37-load-and-capacity.md) §8.0).
+В `single` плоскости control и media разделены сетями Docker, а не хостами:
+nginx не подключён к сети с Postgres и Redis, а порты данных не публикуются.
+
+Ниже описано, что даёт `split`. На одном хосте теряется изоляция blast radius,
+а изоляция сетей сохраняется.
 
 Cleanly separating the **control plane** (stateful, bot-facing) from the
 **media plane** (stateless, traffic-heavy) yields three concrete wins:
@@ -63,7 +80,9 @@ Cleanly separating the **control plane** (stateful, bot-facing) from the
 | **NL-1** | bot + postgres + redis + backups | none (only Telegram outbound) | yes |
 | **NL-2** | worker + nginx + certbot + cleanup + storage | 80, 443 | files yes, DB no |
 
-See [ADR-0001](adr/0001-two-server-topology.md) for the full rationale and [ADR-0005](adr/0005-locked-architectural-assumptions.md) §3.2–§3.4 for the lock.
+В `single` те же сервисы работают на одном хосте, публичные порты — только 80 и 443.
+
+See [ADR-0001](adr/0001-two-server-topology.md) for the split rationale and [ADR-0011](adr/0011-single-server-topology.md) for the single topology (it supersedes [ADR-0005](adr/0005-locked-architectural-assumptions.md) rows 2–4).
 
 ### 3.1 System topology (one-screen mental map)
 
@@ -116,8 +135,8 @@ flowchart LR
 
 Three things to internalise from this diagram:
 
-1. **Postgres and Redis live on NL-1 and never appear on the public side.** They are reachable from NL-2 only over the WireGuard private subnet.
-2. **The bot never touches the storage volume.** Disk lives on NL-2. The bot delegates by enqueueing.
+1. **Postgres and Redis live on NL-1 and never appear on the public side.** They are reachable from NL-2 only over the WireGuard private subnet. В `single` они вообще не публикуют порты и доступны только в сети `dwtgbot_internal`.
+2. **The bot never touches the storage volume.** Disk lives on NL-2 (в `single` — на том же хосте, но volume в контейнер bot не монтируется). The bot delegates by enqueueing.
 3. **Files leave the system through exactly two doors**: Telegram upload (small) or Nginx `X-Accel-Redirect` (large). There is no third path.
 
 ---
@@ -232,7 +251,8 @@ For full incident playbooks see [`24-runbooks.md`](24-runbooks.md).
 - **Nginx `X-Accel-Redirect`** keeps file-serving in `nginx`, while keeping
   authentication in Python — best of both worlds.
 - **Two-server topology + WireGuard** means the only way into Postgres/Redis
-  is through the private network, period.
+  is through the private network, period. В `single` ту же гарантию дают
+  внутренняя сеть Docker и отсутствие опубликованных портов данных.
 
 For the long version: [`02-architecture.md`](02-architecture.md) and the
 ADRs.
@@ -293,8 +313,8 @@ Tick these off in order. Each item is doable in 10–30 minutes; the whole thing
 
 **Run the system locally** (optional but strongly recommended):
 - [ ] Copy `.env.example` to `.env` and fill `BOT_TOKEN` (use a sandbox bot from BotFather).
-- [ ] `docker compose -f deploy/nl1/docker-compose.yml up -d` brings up bot + postgres + redis.
-- [ ] `docker compose -f deploy/nl2/docker-compose.yml up -d` brings up worker + nginx.
+- [ ] `cp deploy/single/.env.example deploy/single/.env`, заполнить значения, затем `make single-up` поднимает весь стек (bot, postgres, redis, api, worker, nginx) на одной машине.
+- [ ] (Опционально, split) `docker compose -f deploy/nl1/docker-compose.yml up -d` и `docker compose -f deploy/nl2/docker-compose.yml up -d`.
 - [ ] DM your sandbox bot a YouTube short — receive a file in chat.
 - [ ] Open the worker logs (`docker compose logs -f worker`) and find the `job_done` event for that download.
 

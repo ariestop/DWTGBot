@@ -71,7 +71,7 @@ Copy [`0000-template.md`](0000-template.md) and fill it in.
 
 | ID | Title | Status |
 |---|---|---|
-| [0001](0001-two-server-topology.md) | Two-server topology (control plane / media plane) | Accepted |
+| [0001](0001-two-server-topology.md) | Two-server topology (control plane / media plane) | Accepted, amended by 0011 |
 | [0002](0002-python-telegram-bot.md) | `python-telegram-bot` as the bot framework | Accepted |
 | [0003](0003-ruff-format-no-black.md) | `ruff format` (no `black` directly) | Accepted |
 | [0004](0004-temp-links-via-nginx-x-accel.md) | Temp links delivered via Nginx `X-Accel-Redirect` | Accepted |
@@ -81,6 +81,7 @@ Copy [`0000-template.md`](0000-template.md) and fill it in.
 | [0008](0008-audit-top5-fixes.md) | Audit Top-5 fixes — retry semantics, atomic per-user cap, log redaction, immutable image tags, atomic temp-link counter | Accepted |
 | [0009](0009-python-314-runtime.md) | Raise the language floor to Python 3.14 (supersedes ADR-0005 row 1) | Accepted |
 | [0010](0010-instant-download-ux.md) | Instant-download UX and progress side-channel (single-message flow, Redis Pub/Sub progress) | Proposed |
+| [0011](0011-single-server-topology.md) | Однсерверная топология `single` рядом с `split` (supersedes ADR-0005 rows 2–4, amends ADR-0001) | Proposed |
 
 > 🔒 **Start here when in doubt:**
 > [ADR-0005](0005-locked-architectural-assumptions.md) is the canonical

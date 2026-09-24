@@ -16,7 +16,7 @@ you're about to outgrow it. This document is the back-of-the-envelope
 math, the load-test recipes, and the scale-up runbook.
 
 > 🔒 **Locked invariants** (P11):
-> - **Two-server topology is fixed** ([`adr/0005`](adr/0005-locked-architectural-assumptions.md)). "Add capacity" means scale up NL-2 first; only consider sharding NL-2 with an ADR.
+> - **Topology is `single` or `split`** ([`adr/0011`](adr/0011-single-server-topology.md), заменяет строки 2–4 [`adr/0005`](adr/0005-locked-architectural-assumptions.md)). Первый шаг роста — `single → split` (§8.0, без ADR); дальше "add capacity" means scale up NL-2 first; only consider sharding NL-2 with an ADR.
 > - **No autoscaler is shipped by default.** Capacity changes are deliberate, operator-driven, and ADR-tracked when they cross a threshold.
 > - **The queue is single-Redis** (P5). "Add a queue shard" is an ADR-grade decision.
 > - **Capacity decisions must align with SLO budgets** ([`35-`](35-metrics-and-slo.md) §9). Adding load that burns the budget is the same as missing the SLO.
@@ -219,6 +219,13 @@ your bottleneck. **Don't preemptively shard.**
 Total budget today: ≤ 20. Postgres `max_connections` defaults to 100.
 **Plenty of headroom.** B5 SLO at 60 % triggers a ticket — a small
 indicator that someone added a leaked connection somewhere.
+
+**`single`**: все пулы смотрят в один Postgres. Верхняя граница
+(`pool_size + max_overflow` на процесс): bot 5 + 10, api 5 + 10,
+cleanup 5 + 10, worker `WORKER_DB_POOL_SIZE` + `WORKER_DB_MAX_OVERFLOW`
+(10 + 10), backup и `psql` — единицы. Итого ≈ 65 < 100, запас есть даже
+в худшем случае. Увеличивая `WORKER_DB_*`, держите сумму ниже
+`max_connections` × 0.6 (порог B5).
 
 ### 4.2 When DB *does* become the bottleneck
 
@@ -465,6 +472,29 @@ See [`23-`](23-cleanup-retention.md) §6. Most relevant for capacity:
 When the small profile no longer fits, take steps in this order. Each
 step is reversible until the next is taken.
 
+### 8.0 Step 0 — single → split (ADR-0011, ADR не нужен)
+
+Относится только к топологии `single`. До переезда сначала попробуйте
+вертикальный рост того же хоста (больше CPU/RAM/диска, подстройка
+`LIMIT_WORKER_*` и `WORKER_CONCURRENCY`) — это дешевле. Переезжайте на
+`split`, когда выполняется **любой** из триггеров и вертикальный рост
+его не снимает:
+
+| Триггер | Сигнал | Почему это про `single` |
+|---|---|---|
+| Бот тормозит под нагрузкой worker | A1 ([`35-`](35-metrics-and-slo.md)) падает ниже 99 % в часы пик, при этом B4 > 0.85 | ffmpeg и бот делят CPU; `cpu_shares` сглаживает, но не изолирует |
+| Storage вытесняет БД и бэкапы | B6 > 0.70 устойчиво на общем диске | в `single` storage, Postgres и бэкапы на одном диске ([24-runbooks.md](24-runbooks.md) §12) |
+| Исходящий трафик у лимита тарифа | egress по §3.1 > 80 % лимита провайдера | в `split` трафик temp links уходит с отдельного хоста |
+| Очередь не успевает | B3 нарушен или A4/A5 выше SLO неделю подряд при B4 > 0.85 | нужен выделенный worker-хост |
+| OOM kills | `docker inspect` показывает `OOMKilled=true` у worker или postgres более одного раза в неделю | лимиты памяти в сумме не помещаются в хост |
+| Повторяющиеся инциденты disk full | ≥ 2 срабатываний [24-runbooks.md](24-runbooks.md) §12 за месяц | blast radius общего диска |
+| Нужен второй worker-хост | планируется §8.4 | §8.4 предполагает `split` как стартовую точку |
+
+Процедура — [24-runbooks.md](24-runbooks.md) §26: текущий хост
+становится NL-1 (данные control plane остаются в тех же volume), новый
+хост — NL-2. Ожидаемый простой media plane — 15–30 минут. Шаг обратим
+до удаления media-volume на NL-1 ([24-runbooks.md](24-runbooks.md) §26.5).
+
 ### 8.1 Step 1 — vertical NL-2 (no ADR needed)
 
 | What | Why |
@@ -500,8 +530,9 @@ architecture invariant changes.
 | Decide: shared `STORAGE_PATH` (NFS/object) or per-host with delivery routing? | Each option has trade-offs |
 | Decide: same egress IP or different? Per-platform routing? | §3.4 |
 
-This crosses [`adr/0005`](adr/0005-locked-architectural-assumptions.md)'s
-"two servers, NL-1 / NL-2" assumption. **Mandatory ADR**, mandatory
+This crosses the "`single` or `split` (NL-1 / NL-2)" topology assumption
+([`adr/0011`](adr/0011-single-server-topology.md), superseding rows 2–4 of
+[`adr/0005`](adr/0005-locked-architectural-assumptions.md)). **Mandatory ADR**, mandatory
 update to [`02-`](02-architecture.md), [`09-`](09-queue-and-workers.md),
 [`11-`](11-storage-strategy.md). Don't take this step without one.
 

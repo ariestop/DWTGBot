@@ -43,7 +43,7 @@ page; everything technical lives here.
 
 ### 4. Operations
 - [`19-docker-architecture.md`](19-docker-architecture.md) — multi-stage, non-root
-- [`20-deployment.md`](20-deployment.md) — NL-1 + NL-2 walkthrough
+- [`20-deployment.md`](20-deployment.md) — установка `single` (один хост) и `split` (NL-1 + NL-2)
 - [`21-cicd.md`](21-cicd.md) — GitHub Actions
 - [`22-backup-restore.md`](22-backup-restore.md) — pg_dump, retention, DR
 - [`23-cleanup-retention.md`](23-cleanup-retention.md) — temp links, files, cache
@@ -70,12 +70,13 @@ page; everything technical lives here.
 
 ### 8. Architectural decisions
 - [`adr/`](adr/README.md) — Architectural Decision Records (process + index)
-  - [ADR-0001 — Two-server topology](adr/0001-two-server-topology.md)
+  - [ADR-0001 — Two-server topology](adr/0001-two-server-topology.md) (amended by ADR-0011)
   - [ADR-0002 — `python-telegram-bot`](adr/0002-python-telegram-bot.md)
   - [ADR-0003 — `ruff format` (no `black`)](adr/0003-ruff-format-no-black.md)
   - [ADR-0004 — Temp links via Nginx `X-Accel-Redirect`](adr/0004-temp-links-via-nginx-x-accel.md)
   - 🔒 [**ADR-0005 — Locked architectural assumptions** (canonical 12-row register)](adr/0005-locked-architectural-assumptions.md)
   - [ADR-0006 — In-process Prometheus exporter for rate-limit metrics](adr/0006-in-process-rate-limit-metrics-exporter.md)
+  - [ADR-0011 — Single-server topology (`single` рядом со `split`)](adr/0011-single-server-topology.md)
 
 ---
 
@@ -102,6 +103,7 @@ page; everything technical lives here.
 | Define / change an SLO target | `35`, `adr/` |
 | Tune the bot's rate limits | `36`, `13` |
 | Plan a capacity / scaling change | `37`, `02`, `09`, `11` |
+| Выбрать топологию / перейти с `single` на `split` | `adr/0011`, `20`, `24` §26, `37` §8.0 |
 | As an AI agent — make any change | `25`, `26`, `27`, then topic-specific |
 
 ---

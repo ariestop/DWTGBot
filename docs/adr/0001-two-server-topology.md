@@ -1,9 +1,14 @@
 # ADR-0001 — Two-server topology (control plane / media plane)
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [ADR-0011](0011-single-server-topology.md)
 - **Date:** 2025-01-XX
 - **Deciders:** project owner
 - **Tags:** topology, deployment, security, isolation
+
+> ADR-0011 добавляет вторую поддерживаемую топологию `single` (все
+> сервисы на одном хосте). Всё, что описано ниже, остаётся в силе как
+> описание топологии `split` и целевого состояния после роста. Отказ от
+> однсерверного варианта из §4.1 пересмотрен в ADR-0011 с мерами защиты.
 
 ---
 
@@ -99,6 +104,11 @@ Everything on one server.
 - **Rejected.** Public Nginx and the database co-resident violate
   the principle of least exposure. Heavy ffmpeg / yt-dlp workloads
   would degrade bot responsiveness.
+- **Reconsidered in [ADR-0011](0011-single-server-topology.md):**
+  допустимо для малого масштаба при условиях — у Postgres/Redis нет
+  портов на хосте, nginx в отдельной сети без маршрута к данным,
+  cgroup-веса для worker, обязательные `STORAGE_MIN_FREE_MB` и offsite
+  бэкапов.
 
 ### 4.2 Three or more hosts (separate worker, separate nginx)
 - **Rejected for now.** Adds operational complexity without a
@@ -145,3 +155,4 @@ Everything on one server.
 | Date | Status | Note |
 |---|---|---|
 | 2025-01-XX | Accepted | Initial topology, locked at project inception. |
+| 2026-09-24 | Amended | [ADR-0011](0011-single-server-topology.md): `single` added as a supported topology; this ADR now describes `split`. |

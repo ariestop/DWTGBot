@@ -65,7 +65,25 @@ flowchart LR
 | Containers → host | None | bind mounts only; non-root user inside containers |
 
 These are enforced by `deploy/scripts/firewall_setup.sh` (`ufw` rules)
-plus the absence of `ports:` declarations in the compose stacks.
+plus the absence of `ports:` declarations in the compose stacks (кроме
+nginx `80/443` и портов данных NL-1 на WireGuard IP в `nl1.overlay.yml`).
+
+**Топология `single`** ([ADR-0011](adr/0011-single-server-topology.md)):
+границы NL-2 → NL-1 нет, её роль выполняют сети Docker на одном хосте.
+
+| Boundary (single) | Who can cross | What's allowed |
+|---|---|---|
+| Internet → host | Anyone | только `:80` / `:443` (nginx) |
+| nginx → api | nginx | `dwtgbot_media`, `api:8080` |
+| nginx → Postgres / Redis | No one | nginx не подключён к `dwtgbot_internal` |
+| api / worker / cleanup → Postgres / Redis | эти контейнеры | `dwtgbot_internal` |
+| Host network → 5432 / 6379 | No one | порты не публикуются; `ufw deny` как второй рубеж |
+
+Цена `single` — общий хост: RCE в worker (парсер yt-dlp или ffmpeg) даёт
+атакующему соседство с Postgres на уровне ядра, а не только сети. Меры:
+non-root, отсутствие `--privileged` / `cap_add`, закреплённые версии, и
+переход на `split`, когда модель угроз этого требует.
+`app/tests/test_deploy_topology.py` проверяет сетевые инварианты в CI.
 
 ---
 
@@ -96,8 +114,9 @@ plus the absence of `ports:` declarations in the compose stacks.
 
 ### NL-1 (control plane)
 
-- **No public ports.** `docker-compose.yml` declares `ports:` for nothing
-  on NL-1.
+- **No public ports.** `deploy/nl1/nl1.overlay.yml` publishes only
+  Postgres `5432` and Redis `6379`, and only on `NL1_PRIVATE_IP` (WireGuard
+  interface); nothing listens on the public interface.
 - **`postgres` and `redis` containers** join `dwtgbot_internal` bridge
   network only.
 - **Host firewall** (`ufw`):
@@ -116,6 +135,13 @@ plus the absence of `ports:` declarations in the compose stacks.
   - allow `80`, `443` from anywhere,
   - default deny inbound,
   - egress unrestricted (worker needs to reach the world).
+
+### single (один хост)
+
+- **Public ports**: `80/tcp`, `443/tcp` (nginx). Nothing else.
+- **Postgres / Redis** не публикуют портов; доступны только в `dwtgbot_internal`.
+- **Host firewall** (`firewall_setup.sh single`): SSH, `80`, `443` разрешены;
+  `5432` и `6379` явно запрещены; default deny inbound.
 
 `deploy/scripts/firewall_setup.sh` codifies all of the above. **Run it
 during install and after any host re-image.**
@@ -268,6 +294,11 @@ model.
 | Instagram cookies | host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (mode `0640`), bind-mounted RO into NL-1 `bot` and NL-2 `worker`; path tracked in `INSTAGRAM_COOKIES_FILE` env | refresh when worker logs `instagram_cookiefile_missing` or users report `MediaPrivateError`; re-upload to **both** hosts and restart bot+worker |
 | GHCR token | GitHub Actions secret | rotate per CI policy |
 | SSH keys | host `~/.ssh/authorized_keys` | rotate per access policy |
+
+В `single` все секреты из таблицы лежат в одном файле `deploy/single/.env`
+(mode `0600`), а cookies — в одном каталоге `/srv/dwtgbot/secrets` на
+единственном хосте. «Обновить на **обоих** хостах» здесь означает
+«обновить один раз и перезапустить bot и worker».
 
 Rules:
 - Secrets ARE NOT in git (`.gitignore` covers `.env` and key files).

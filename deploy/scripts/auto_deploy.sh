@@ -5,8 +5,10 @@
 # Скрипт проверяет последний commit в GitHub, дожидается успешных
 # `ci.yml` и `build-images.yml`, убеждается в доступности immutable
 # образов `sha-<short>` и запускает существующий deploy_update.sh.
-# Для NL-2 добавлена межсерверная координация: деплой разрешён только
-# после успешного deployment status от NL-1 для того же SHA.
+# Цели: single (один хост, ADR-0011), nl1, nl2. Для NL-2 добавлена
+# межсерверная координация: деплой разрешён только после успешного
+# deployment status от NL-1 для того же SHA. single сам владеет
+# миграциями и ни от кого не ждёт.
 # =====================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
@@ -23,6 +25,7 @@ CI_WORKFLOW_FILE="${CI_WORKFLOW_FILE:-ci.yml}"
 BUILD_WORKFLOW_FILE="${BUILD_WORKFLOW_FILE:-build-images.yml}"
 GITHUB_ENVIRONMENT_NL1="${GITHUB_ENVIRONMENT_NL1:-nl1-autodeploy}"
 GITHUB_ENVIRONMENT_NL2="${GITHUB_ENVIRONMENT_NL2:-nl2-autodeploy}"
+GITHUB_ENVIRONMENT_SINGLE="${GITHUB_ENVIRONMENT_SINGLE:-single-autodeploy}"
 REPO_PATH="${REPO_PATH:-${PROJECT_ROOT}}"
 AUTODEPLOY_STATE_DIR="${AUTODEPLOY_STATE_DIR:-/var/lib/dwtgbot/autodeploy}"
 AUTODEPLOY_DRY_RUN="${AUTODEPLOY_DRY_RUN:-0}"
@@ -173,18 +176,18 @@ prepare_image_env() {
   export IMAGE_API="${GHCR_REPO_PREFIX}-api:${image_tag}"
   export IMAGE_WORKER="${GHCR_REPO_PREFIX}-worker:${image_tag}"
 
-  if [[ "${TARGET}" == "nl1" ]]; then
+  if stack_has_control_plane "${TARGET}"; then
     export IMAGE_BOT="${GHCR_REPO_PREFIX}-bot:${image_tag}"
     export IMAGE_BACKUP="${GHCR_REPO_PREFIX}-backup:${image_tag}"
   fi
 }
 
 required_images_for_target() {
-  if [[ "${TARGET}" == "nl1" ]]; then
-    printf '%s\n' "${IMAGE_BOT}" "${IMAGE_API}" "${IMAGE_BACKUP}"
-  else
-    printf '%s\n' "${IMAGE_API}" "${IMAGE_WORKER}"
-  fi
+  case "${TARGET}" in
+    single) printf '%s\n' "${IMAGE_BOT}" "${IMAGE_API}" "${IMAGE_WORKER}" "${IMAGE_BACKUP}" ;;
+    nl1)    printf '%s\n' "${IMAGE_BOT}" "${IMAGE_API}" "${IMAGE_BACKUP}" ;;
+    *)      printf '%s\n' "${IMAGE_API}" "${IMAGE_WORKER}" ;;
+  esac
 }
 
 preflight_images() {
@@ -238,11 +241,11 @@ checkout_candidate_sha() {
 }
 
 deployment_environment_for_target() {
-  if [[ "${TARGET}" == "nl1" ]]; then
-    printf '%s' "${GITHUB_ENVIRONMENT_NL1}"
-  else
-    printf '%s' "${GITHUB_ENVIRONMENT_NL2}"
-  fi
+  case "${TARGET}" in
+    single) printf '%s' "${GITHUB_ENVIRONMENT_SINGLE}" ;;
+    nl1)    printf '%s' "${GITHUB_ENVIRONMENT_NL1}" ;;
+    *)      printf '%s' "${GITHUB_ENVIRONMENT_NL2}" ;;
+  esac
 }
 
 create_deployment() {
@@ -321,13 +324,7 @@ wait_for_nl1_success_gate() {
   return 1
 }
 
-compose_for_target() {
-  if [[ "${TARGET}" == "nl1" ]]; then
-    compose_nl1 "$@"
-  else
-    compose_nl2 "$@"
-  fi
-}
+compose_for_target() { compose_stack "${TARGET}" "$@"; }
 
 dump_stack_state() {
   log_warn "Печатаю состояние стека ${TARGET} после ошибки"
@@ -354,7 +351,7 @@ on_autodeploy_error() {
 }
 
 validate_inputs() {
-  [[ "${TARGET}" == "nl1" || "${TARGET}" == "nl2" ]] || die "DEPLOY_TARGET должен быть nl1 или nl2"
+  is_valid_stack "${TARGET}" || die "DEPLOY_TARGET должен быть single, nl1 или nl2"
   require_env_var GITHUB_OWNER
   require_env_var GITHUB_REPO
   require_env_var GITHUB_TOKEN
@@ -419,7 +416,9 @@ main() {
     exit 0
   fi
 
-  if [[ "${TARGET}" == "nl1" ]]; then
+  # Статус деплоя публикует стек, который владеет миграциями:
+  # nl1 (gate для nl2) или single.
+  if stack_has_control_plane "${TARGET}"; then
     ensure_deployment_started
   fi
 

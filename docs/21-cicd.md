@@ -24,6 +24,9 @@ manual fallback for when CI is unavailable.
 >   human operators normally use `deploy/scripts/install.sh` (TUI) option
 >   `[16] Update to latest main`, which triggers host-side autodeploy.
 > - **Order**: NL-1 always before NL-2 (`needs: [nl1]` in `deploy.yml`).
+> - **Topology selector** (ADR-0011): repo variable `DEPLOY_TOPOLOGY` =
+>   `single` | `split` (unset = `split`) решает, какие задачи `deploy.yml`
+>   запускаются на `workflow_run`: `single` или `nl1` → `nl2`.
 
 ---
 
@@ -42,8 +45,10 @@ flowchart LR
     ManualDeploy[workflow_dispatch] --> DEP
   end
 
+  DEP -- SSH (DEPLOY_TOPOLOGY=single) --> SGL[single: deploy_update.sh single]
   DEP -- SSH --> NL1[NL-1: deploy_update.sh nl1]
   DEP -- SSH (after NL-1) --> NL2[NL-2: deploy_update.sh nl2]
+  SGL -- docker compose pull --> GHCR
   T1[NL-1 timer] --> AD1[NL-1: auto_deploy.sh]
   T2[NL-2 timer] --> AD2[NL-2: auto_deploy.sh]
   AD1 --> NL1
@@ -65,7 +70,7 @@ flowchart LR
 |---|---|---|---|
 | Verify | `ci.yml` | every push + PR | green / red status checks |
 | Publish | `build-images.yml` | successful `ci.yml` on `main` + `v*.*.*` tag + manual | tagged images in GHCR |
-| Roll out (automatic) | `deploy.yml` | successful `build-images.yml` on `main` | running new images on NL-1, then NL-2 |
+| Roll out (automatic) | `deploy.yml` | successful `build-images.yml` on `main` | running new images on the single host (`DEPLOY_TOPOLOGY=single`) or on NL-1, then NL-2 |
 | Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | selected ref/target deployed over SSH |
 | Roll out (automatic) | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
 
@@ -92,8 +97,8 @@ Rolling restart with current .env` вызывает низкоуровневый
 |---|---|---|---|---|
 | `.github/workflows/ci.yml` | `push`, `pull_request` to `main`/`develop` | `ci-${{ github.ref }}`, `cancel-in-progress: true` | `contents: read` | Lint, type-check, unit + integration tests, scanners, shellcheck |
 | `.github/workflows/build-images.yml` | successful `CI` run on `main`, tags `v*.*.*`, `workflow_dispatch` | `build-images-${{ github.event.workflow_run.head_sha || github.ref }}` | `contents: read`, `packages: write` | Build & push 4 images to GHCR |
-| `.github/workflows/deploy.yml` | successful `Build & push images` run on `main`, `workflow_dispatch` (target + ref) | `deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'both' }}`, `cancel-in-progress: false` | `contents: read`, `packages: read` | SSH into NL-1 then NL-2, run `deploy_update.sh` |
-| `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | systemd timer on each host | `flock` lock per target (`nl1` / `nl2`) | GitHub token on host (`Actions: read`, `Contents: read`, `Deployments: read/write`) | Wait for green `ci.yml` + `build-images.yml`, then run host-side deploy |
+| `.github/workflows/deploy.yml` | successful `Build & push images` run on `main`, `workflow_dispatch` (target + ref) | `deploy-<target>` (manual) or `deploy-single` / `deploy-both` by `DEPLOY_TOPOLOGY`, `cancel-in-progress: false` | `contents: read`, `packages: read` | SSH into the single host, or NL-1 then NL-2, run `deploy_update.sh` |
+| `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | systemd timer on each host | `flock` lock per target (`single` / `nl1` / `nl2`) | GitHub token on host (`Actions: read`, `Contents: read`, `Deployments: read/write`) | Wait for green `ci.yml` + `build-images.yml`, then run host-side deploy |
 
 **Concurrency contract:**
 - CI cancels stale runs on the same branch (PR rebase friendly).
@@ -188,6 +193,15 @@ services:
 
 - Only `deploy/scripts/*.sh` is scanned (production-critical bash).
 - Treats `warning` and above as failures.
+
+### 3.5a `compose-validate` — Compose-стеки (ADR-0011)
+
+- Проверяет, что `docker compose version` ≥ 2.24.0 (нужно для `include`).
+- Для каждого стека `single`, `nl1`, `nl2` копирует `.env.example` в `.env`
+  и выполняет `docker compose config -q` из каталога стека.
+- Инварианты топологий (какие сервисы публикуют порты, сети nginx, теги
+  образов, имена volume и контейнеров) проверяет unit-тест
+  `app/tests/test_deploy_topology.py` в задаче `tests`.
 
 ### 3.6 `trivy` / `gitleaks` — security scanners
 
@@ -310,7 +324,7 @@ on:
     inputs:
       target:
         type: choice
-        options: [nl1, nl2, both]
+        options: [single, nl1, nl2, both]
         default: both
       ref:
         type: string
@@ -319,9 +333,16 @@ on:
 
 Automatic `main` deploy starts only when `Build & push images` completes
 successfully for `main`. It deploys the exact `head_sha` from that build run.
+Какие задачи при этом запускаются, решает repo variable `DEPLOY_TOPOLOGY`
+(**Settings → Secrets and variables → Actions → Variables**):
+
+| `DEPLOY_TOPOLOGY` | Задачи на `workflow_run` |
+|---|---|
+| `single` | `single` |
+| `split` или не задана | `nl1` → `nl2` |
 
 Manual dispatch remains available for targeted operator actions. Operator picks:
-- **target**: `nl1` (control plane only), `nl2` (media plane only), `both` (default — full release).
+- **target**: `single` (one-host stack), `nl1` (control plane only), `nl2` (media plane only), `both` (default — full split release). Ручной запуск `DEPLOY_TOPOLOGY` не учитывает.
 - **ref**: branch / tag / sha to check out on the host (`main` by default).
 
 ### 5.2 Two jobs, ordered
@@ -344,6 +365,11 @@ jobs:
 
 - On schema-changing PRs, NL-1 runs `migrate alembic upgrade head` first; only then does NL-2's worker (which uses the new schema) start.
 - If NL-1 fails, NL-2 is **not** attempted.
+
+Задача `single` (`environment: single`) независима от `nl1`/`nl2`: она
+экспортирует все четыре `IMAGE_*` и вызывает `deploy_update.sh single`.
+Порядок «миграции до worker» на одном хосте обеспечивает
+`depends_on: migrate` в `deploy/single/single.override.yml`.
 
 ### 5.3 Per-job step
 
@@ -389,6 +415,9 @@ Both jobs reference `environment: nl1` / `environment: nl2`. Configure each in *
 | Deployment branches | `main` and `v*` only | `main` and `v*` only |
 | Environment secrets | `NL1_*` | `NL2_*` |
 
+Для `single` создайте environment `single` с теми же настройками защиты и
+секретами `SINGLE_*` (§7.2).
+
 Required reviewers convert "manual deploy" into "manual deploy with explicit approval" — protects against accidental dispatch.
 
 ### 5.5 Concurrency
@@ -399,7 +428,7 @@ concurrency:
   cancel-in-progress: false
 ```
 
-- Automatic deploys use the `both` group and queue behind any running full deploy.
+- Automatic deploys use the `both` group (или `single` при `DEPLOY_TOPOLOGY=single`) and queue behind any running full deploy.
 - Two simultaneous `both` deploys queue (don't overlap).
 - Manual `nl1`-only and `nl2`-only deploys can still run concurrently — that's useful for targeted recovery, but avoid doing it during normal release flow.
 
@@ -415,7 +444,7 @@ concurrency:
 flowchart LR
   S[Start] --> A[git fetch + checkout ref]
   A --> B[docker compose pull]
-  B --> M{stack == nl1?}
+  B --> M{stack == single or nl1?}
   M -- yes --> MI[docker compose run --rm migrate alembic upgrade head]
   M -- no  --> NS[skip migrate]
   MI --> U[docker compose up -d]
@@ -431,7 +460,7 @@ flowchart LR
 | 1 | `git fetch --all --tags` | yes | network → exit 1, no host change |
 | 2 | `git checkout <ref>` + `pull --ff-only` (best-effort) | yes | conflict → exit 1, working tree unchanged |
 | 3 | `docker compose -f deploy/<stack>/docker-compose.yml pull` | yes | manifest unknown → exit 1, no container change |
-| 4 | NL-1 only: `docker compose run --rm migrate alembic upgrade head` | yes (forward-only; idempotent if at HEAD) | bad migration → exit 1, **DB partially migrated** if mid-flight (see §11.4) |
+| 4 | Control-plane stacks only (`single`, `nl1`): `docker compose run --rm migrate alembic upgrade head` | yes (forward-only; idempotent if at HEAD) | bad migration → exit 1, **DB partially migrated** if mid-flight (see §11.4) |
 | 5 | `docker compose up -d` | yes (Compose recreates only changed services) | bad image / config → exit 1 with the offending service named |
 | 6 | Wait for healthchecks (poll up to T seconds) | yes | timeout → exit 1, abnormal services left running but `unhealthy` |
 | 7 | `bash deploy/scripts/healthcheck.sh` | yes | exit 1 if any probe fails |
@@ -449,7 +478,7 @@ on detached HEAD.
 - Never deletes volumes (`-v`).
 - Never `git reset --hard`.
 - Never edits `.env` (image tags must be updated **before** dispatching a deploy — see §10.3 of `20-`).
-- Never bypasses `migrate` on NL-1.
+- Never bypasses `migrate` on NL-1 or `single`.
 
 ### 6.3 ASSUME_YES contract
 
@@ -481,6 +510,13 @@ All secrets live in **GitHub → Settings → Secrets and variables**. Use **Env
 | `NL2_SSH_PORT` | env `nl2` | same | |
 | `NL2_SSH_KEY` | env `nl2` | same | |
 | `NL2_REPO_PATH` | env `nl2` | same | |
+| `SINGLE_HOST` | env `single` | `deploy.yml` job `single` | hostname or IP |
+| `SINGLE_SSH_USER` | env `single` | same | non-root admin user |
+| `SINGLE_SSH_PORT` | env `single` | same (defaults to `22`) | |
+| `SINGLE_SSH_KEY` | env `single` | same | OpenSSH private key |
+| `SINGLE_REPO_PATH` | env `single` | same | absolute path (e.g. `/opt/dwtgbot`) |
+
+Repository **variable** (не secret): `DEPLOY_TOPOLOGY` = `single` | `split`.
 
 > **Not** in CI: `BOT_TOKEN`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `API_INTERNAL_TOKEN` — these live **only** on the hosts (`deploy/<host>/.env`). The pipeline never sees them.
 
@@ -578,7 +614,7 @@ Live edits drift; the next deploy reverts them silently.
 ### 9.4 Gates and approvals
 
 - **Required reviewers** on `nl1` / `nl2` environments (§5.4).
-- **Branch protection** on `main`: required CI checks (`lint`, `typecheck`, `tests`, `integration-tests`, `shell-lint`, `trivy`, `gitleaks`).
+- **Branch protection** on `main`: required CI checks (`lint`, `typecheck`, `tests`, `integration-tests`, `shell-lint`, `compose-validate`, `trivy`, `gitleaks`).
 - **CODEOWNERS** for `deploy/`, `migrations/`, `.github/workflows/` directing review to ops.
 - **Required signed commits** (recommended).
 

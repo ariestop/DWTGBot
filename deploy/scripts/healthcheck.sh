@@ -2,9 +2,10 @@
 # =====================================================================
 # Healthcheck — verifies tooling, env, containers and service endpoints.
 # Usage:
-#   bash deploy/scripts/healthcheck.sh         # auto-detect stack
-#   bash deploy/scripts/healthcheck.sh nl1     # only NL-1
-#   bash deploy/scripts/healthcheck.sh nl2     # only NL-2
+#   bash deploy/scripts/healthcheck.sh          # every stack with an .env here
+#   bash deploy/scripts/healthcheck.sh single   # only the single-host stack
+#   bash deploy/scripts/healthcheck.sh nl1      # only NL-1
+#   bash deploy/scripts/healthcheck.sh nl2      # only NL-2
 # =====================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
@@ -23,7 +24,7 @@ check() {
   fi
 }
 
-# ``compose_nl1`` / ``compose_nl2`` are shell functions — they are *not*
+# ``compose_stack`` / ``compose_nl1`` / ``compose_nl2`` are shell functions — they are *not*
 # visible inside ``bash -c '...'``, so probes must use ``docker exec`` or
 # call the wrapper in the current shell (see git history).
 _nl1_curl_healthz() {
@@ -98,39 +99,59 @@ check "docker present"          has_command docker
 check "docker compose present"  bash -c 'docker compose version >/dev/null 2>&1'
 check "curl present"            has_command curl
 
-if [[ "${TARGET}" == "auto" || "${TARGET}" == "nl1" ]]; then
-  if [[ -f "${DEPLOY_DIR}/nl1/.env" ]]; then
-    log_step "NL-1 stack"
-    NL1_API_PORT="$(grep -E '^API_PORT=' "${DEPLOY_DIR}/nl1/.env" 2>/dev/null | head -1 | cut -d= -f2-)"
-    NL1_API_PORT="$(_sanitize_env_value "${NL1_API_PORT}")"
-    NL1_API_PORT="${NL1_API_PORT:-8080}"
-    check "compose config valid"     compose_nl1 config -q
-    # Prefer Docker health status; fall back to running (no healthcheck).
-    check "postgres healthy"         bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_postgres 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
-    check "redis healthy"            bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_redis 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
-    check "bot running"              _nl1_bot_running
-    check "internal /healthz"        _nl1_curl_healthz "${NL1_API_PORT}"
-  else
-    log_warn "NL-1 .env not found, skipping NL-1 checks"
-  fi
+_api_port_of() {
+  local port
+  port="$(grep -E '^API_PORT=' "$(stack_env_file "$1")" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  port="$(_sanitize_env_value "${port}")"
+  printf '%s' "${port:-8080}"
+}
+
+# Control-plane probes (single / NL-1).
+_check_control_plane() {
+  # Prefer Docker health status; fall back to running (no healthcheck).
+  check "postgres healthy"         bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_postgres 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
+  check "redis healthy"            bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_redis 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
+  check "bot running"              _nl1_bot_running
+}
+
+# Media-plane probes (single / NL-2). Container name is ``dwtgbot_api``
+# in both stacks.
+_check_media_plane() {
+  local port="$1"
+  check "api running"              bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_api 2>/dev/null | grep -qx running'
+  check "worker running"           bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_worker 2>/dev/null | grep -qx running'
+  check "nginx running"            bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_nginx 2>/dev/null | grep -qx running'
+  check "internal /healthz"        _nl2_curl_healthz "${port}"
+  check "internal /readyz"         _nl2_curl_readyz "${port}"
+  check "nginx /healthz"           bash -c 'docker exec dwtgbot_nginx wget -qO- http://127.0.0.1/healthz | grep -q ok'
+}
+
+if [[ "${TARGET}" != "auto" ]]; then
+  is_valid_stack "${TARGET}" || die "Usage: healthcheck.sh [single|nl1|nl2]"
 fi
 
-if [[ "${TARGET}" == "auto" || "${TARGET}" == "nl2" ]]; then
-  if [[ -f "${DEPLOY_DIR}/nl2/.env" ]]; then
-    log_step "NL-2 stack"
-    NL2_API_PORT="$(grep -E '^API_PORT=' "${DEPLOY_DIR}/nl2/.env" 2>/dev/null | head -1 | cut -d= -f2-)"
-    NL2_API_PORT="$(_sanitize_env_value "${NL2_API_PORT}")"
-    NL2_API_PORT="${NL2_API_PORT:-8080}"
-    check "compose config valid"     compose_nl2 config -q
-    check "api running"              bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_api 2>/dev/null | grep -qx running'
-    check "worker running"           bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_worker 2>/dev/null | grep -qx running'
-    check "nginx running"            bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_nginx 2>/dev/null | grep -qx running'
-    check "internal /healthz"        _nl2_curl_healthz "${NL2_API_PORT}"
-    check "internal /readyz"         _nl2_curl_readyz "${NL2_API_PORT}"
-    check "nginx /healthz"           bash -c 'docker exec dwtgbot_nginx wget -qO- http://127.0.0.1/healthz | grep -q ok'
-  else
-    log_warn "NL-2 .env not found, skipping NL-2 checks"
+for STACK in "${STACKS[@]}"; do
+  [[ "${TARGET}" == "auto" || "${TARGET}" == "${STACK}" ]] || continue
+  if [[ ! -f "$(stack_env_file "${STACK}")" ]]; then
+    [[ "${TARGET}" == "auto" ]] || log_warn "${STACK} .env not found, skipping ${STACK} checks"
+    continue
   fi
+  log_step "${STACK} stack"
+  API_PORT_VALUE="$(_api_port_of "${STACK}")"
+  check "compose config valid"     compose_stack "${STACK}" config -q
+  if stack_has_control_plane "${STACK}"; then
+    _check_control_plane
+  fi
+  if [[ "${STACK}" == "nl1" ]]; then
+    check "internal /healthz"      _nl1_curl_healthz "${API_PORT_VALUE}"
+  fi
+  if stack_has_media_plane "${STACK}"; then
+    _check_media_plane "${API_PORT_VALUE}"
+  fi
+done
+
+if [[ "${TARGET}" == "auto" && "$(detect_stack)" == "none" ]]; then
+  log_warn "No .env found in deploy/single, deploy/nl1 or deploy/nl2 — only toolchain checked"
 fi
 
 if [[ "${FAIL}" -gt 0 ]]; then

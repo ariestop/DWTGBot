@@ -187,6 +187,9 @@ This is **not a contract**; it's a snapshot of likely directions.
 - Wire dashboards & burn-rate alert rules from
   [`35-metrics-and-slo.md`](35-metrics-and-slo.md) §6 / §8 against the
   freshly live metric inventory.
+- ✅ Однохостовая топология `single` рядом со `split`
+  ([ADR-0011](adr/0011-single-server-topology.md)). Переход на `split`
+  выполняется по порогам из [`37-load-and-capacity.md`](37-load-and-capacity.md) §8.0.
 
 ### 2.2 Mid-term (3–9 months)
 
@@ -224,6 +227,9 @@ proposal goes here:
    locked. Other libraries (`aiogram`, raw Bot API) are not on the
    roadmap.
 7. **Drop JSON logs** — the ops story depends on it.
+8. **Третья топология или стек в обход фрагментов** `deploy/compose/*`
+   (например, «single, но без nginx»). Любой новый стек собирается из
+   тех же фрагментов и требует ADR, который дополняет ADR-0011.
 
 ---
 
