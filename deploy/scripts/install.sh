@@ -122,6 +122,7 @@ opt_prepare_nl1() {
   else
     log_ok ".env already present"
   fi
+  _offer_instagram_cookies
 }
 
 opt_prepare_nl2() {
@@ -135,6 +136,7 @@ opt_prepare_nl2() {
   else
     log_ok ".env already present"
   fi
+  _offer_instagram_cookies
 }
 
 # Single host (ADR-0011): backups + storage dirs on the same box, one .env.
@@ -146,9 +148,7 @@ opt_prepare_single() {
   sudo chown -R 1000:1000 /var/lib/dwtgbot
   if [[ -f "$(stack_env_file single)" ]]; then
     log_ok ".env already present"
-    return
-  fi
-  if confirm "Generate deploy/single/.env with random DB/Redis/API secrets?" "Y"; then
+  elif confirm "Generate deploy/single/.env with random DB/Redis/API secrets?" "Y"; then
     _create_single_env
   else
     log_info "Creating deploy/single/.env from example"
@@ -156,6 +156,29 @@ opt_prepare_single() {
     chmod 0600 "$(stack_env_file single)"
     log_warn "Edit $(stack_env_file single) with real secrets before starting."
   fi
+  _offer_instagram_cookies
+}
+
+# Instagram shows a login wall to server IPs even for public posts, so a
+# fresh host is asked for cookies once; later changes go through [20].
+_offer_instagram_cookies() {
+  if sudo test -f /srv/dwtgbot/secrets/cookies-instagram.txt; then
+    log_ok "Instagram cookies present (replace via [20])"
+    return
+  fi
+  log_warn "Without Instagram cookies the bot cannot download from Instagram."
+  if confirm "Configure Instagram cookies now? (docs/20-deployment.md §4a.5)" "Y"; then
+    sudo bash "${SCRIPT_DIR}/cookies_setup.sh" instagram \
+      || log_warn "Cookies not installed — retry later via menu [20]"
+  else
+    log_info "Skipped. Configure later via menu [20]."
+  fi
+}
+
+opt_cookies() {
+  local provider
+  prompt_value provider "Provider (instagram/youtube)" "instagram"
+  sudo bash "${SCRIPT_DIR}/cookies_setup.sh" "${provider}"
 }
 
 # _create_single_env — deploy/single/.env.example with generated secrets
@@ -328,6 +351,7 @@ MENU_ITEMS=(
   "2"  "Prepare server NL-1 (split)"
   "3"  "Prepare server NL-2 (split)"
   "4"  "Create .env from template"
+  "20" "Configure cookies (Instagram / YouTube)"
   "5"  "Configure firewall"
   "6"  "Start containers"
   "7"  "Stop containers"
@@ -366,6 +390,7 @@ run_action() {
     17) opt_deploy_update ;;
     18) opt_install_autodeploy ;;
     19) opt_prepare_single ;;
+    20) opt_cookies ;;
     0)  exit 0 ;;
     *)  log_warn "Unknown choice: $1" ;;
   esac

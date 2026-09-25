@@ -102,7 +102,7 @@ non-root, отсутствие `--privileged` / `cap_add`, закреплённ�
 | **Container escape** | yt-dlp parser exploit | non-root `app:1000`, minimal base image, no `--privileged` |
 | **Supply chain (yt-dlp/ffmpeg)** | malicious dependency update | pinned versions, GHCR image digests, manual yt-dlp bumps |
 | **Malicious URL → SSRF / RCE** | yt-dlp following redirects to internal / metadata hosts | yt-dlp is constrained by `allowed_extractors` + `match_filter` host allowlist; optional `HTTPS_PROXY_URL` adds outbound ACL on NL-2 |
-| **Cookie / session leak** | Instagram cookies in logs | bind-mounted RO at `/srv/dwtgbot/secrets/cookies-instagram.txt`, never logged; only the file path is emitted, file content stays inside yt-dlp |
+| **Cookie / session leak** | Instagram cookies in logs | bind-mounted at `/srv/dwtgbot/secrets/cookies-instagram.txt` (`root:1000 0660`), never logged; only the file path is emitted, file content stays inside yt-dlp; `cookies_setup.sh` reads secrets without echo and never logs them |
 | **Replay of expired link** | resharing public URL | TTL + counter; `is_active=false` after exhaustion |
 | **TLS downgrade / no TLS** | MITM | TLS 1.2+ only; HSTS `max-age=63072000; preload` |
 | **CSRF on temp links** | n/a | links are GET-only, idempotent (counter aside); no auth state to confuse |
@@ -290,8 +290,8 @@ model.
 | `REDIS_PASSWORD` | same | rotate in `redis-server` config + envs; restart |
 | `API_INTERNAL_TOKEN` | `.env` on NL-1 + NL-2 | random 32 bytes; rotate per quarter |
 | Let's Encrypt private key | `letsencrypt_conf` volume on NL-2 | auto-rotated by certbot |
-| YouTube cookies | host file `/srv/dwtgbot/secrets/cookies-youtube.txt` (mode `0640`), bind-mounted RO into NL-1 `bot` and NL-2 `worker`; path tracked in `YOUTUBE_COOKIES_FILE` env | refresh when worker logs `youtube_cookiefile_missing` or age/auth-gated YouTube videos fail with `MediaPrivateError`; re-upload to **both** hosts and restart bot+worker |
-| Instagram cookies | host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (mode `0640`), bind-mounted RO into NL-1 `bot` and NL-2 `worker`; path tracked in `INSTAGRAM_COOKIES_FILE` env | refresh when worker logs `instagram_cookiefile_missing` or users report `MediaPrivateError`; re-upload to **both** hosts and restart bot+worker |
+| YouTube cookies | host file `/srv/dwtgbot/secrets/cookies-youtube.txt` (`root:1000 0660`, dir `0750`), bind-mounted RW into `bot` and `worker` (yt-dlp saves refreshed cookies); path tracked in `YOUTUBE_COOKIES_FILE` env | refresh when worker logs `youtube_cookiefile_missing` or age/auth-gated YouTube videos fail with `MediaPrivateError`; `cookies_setup.sh youtube` on every host running bot/worker ([`20-deployment.md`](20-deployment.md) §4a.5) |
+| Instagram cookies | host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (`root:1000 0660`, dir `0750`), bind-mounted RW into `bot` and `worker`; path tracked in `INSTAGRAM_COOKIES_FILE` env | refresh when worker logs `instagram_cookiefile_missing` or users report `MediaPrivateError`; `cookies_setup.sh instagram` on every host running bot/worker ([`20-deployment.md`](20-deployment.md) §4a.5) |
 | GHCR token | GitHub Actions secret | rotate per CI policy |
 | SSH keys | host `~/.ssh/authorized_keys` | rotate per access policy |
 

@@ -12,6 +12,19 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Added — `cookies_setup.sh` and cookies step in the installer
+
+`deploy/scripts/cookies_setup.sh instagram|youtube` installs a Netscape
+cookies file from a path, from a terminal paste, or (Instagram) from
+`sessionid` / `ds_user_id` / `csrftoken` typed in; validates it, writes
+`/srv/dwtgbot/secrets/cookies-<provider>.txt` as `root:1000 0660`, sets
+`*_COOKIES_FILE` in the host's `.env` files and recreates running
+bot/worker. `install.sh` offers it on "Prepare server" when no Instagram
+cookies exist and as menu item `[20]`. `deploy_update.sh` now also puts
+`/srv/dwtgbot/secrets` in group 1000 — with `root:root 0750` the
+containers (uid 1000) could not read the files. Docs no longer
+recommend `root:root 0640` or `restart` after editing `.env`.
+
 ### Fixed — `lock-check` no longer fails on upstream releases
 
 `make lock-check` resolved from an empty tmpdir, so any new release of a

@@ -547,26 +547,19 @@ docker exec dwtgbot_worker yt-dlp -j --no-warnings 'https://www.youtube.com/watc
    auth-gated posts use the same shape) → rotate the cookie file on
    **both** hosts:
    ```bash
-   # Export Netscape cookies.txt from a logged-in browser session.
+   # Export Netscape cookies.txt from a logged-in browser session
+   # (how: 20-deployment.md §4a.5). single: one host; split: NL-1 and NL-2.
    PLATFORM=youtube   # or: instagram
-   for HOST in nl1 nl2; do
-     scp "cookies-${PLATFORM}.txt" "$HOST:/tmp/"
-     ssh "$HOST" 'sudo install -o root -g root -m 0640 \
-       /tmp/cookies-'"${PLATFORM}"'.txt \
-       /srv/dwtgbot/secrets/cookies-'"${PLATFORM}"'.txt && \
-       rm /tmp/cookies-'"${PLATFORM}"'.txt'
-   done
-   # Restart the containers that read the file.
-   ssh nl1 'cd <NL1_REPO_PATH>/deploy/nl1 && sudo docker compose restart bot'
-   ssh nl2 'cd <NL2_REPO_PATH>/deploy/nl2 && sudo docker compose restart worker'
+   scp "cookies-${PLATFORM}.txt" "<host>:/tmp/"
+   ssh "<host>" "cd /opt/dwtgbot && sudo COOKIES_SRC=/tmp/cookies-${PLATFORM}.txt \
+     bash deploy/scripts/cookies_setup.sh ${PLATFORM} && rm -f /tmp/cookies-${PLATFORM}.txt"
    ```
-   The paths are canonical (`/srv/dwtgbot/secrets/cookies-youtube.txt` and
-   `/srv/dwtgbot/secrets/cookies-instagram.txt`, mode `0640`) because both
-   compose stacks bind-mount
-   `/srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro` into bot/worker.
-   `YOUTUBE_COOKIES_FILE` / `INSTAGRAM_COOKIES_FILE` in the `.env` files
-   point at exactly those paths and are auto-synced by
-   `deploy_update.sh::ensure_cookie_env`.
+   `cookies_setup.sh` validates the file, installs it at
+   `/srv/dwtgbot/secrets/cookies-<platform>.txt` (`root:1000`, mode `0660`
+   — yt-dlp writes refreshed cookies back), sets
+   `YOUTUBE_COOKIES_FILE` / `INSTAGRAM_COOKIES_FILE` in the host's `.env`
+   files and recreates the running bot/worker. Interactive alternative:
+   `install.sh` → `[20]`.
    Confirm the worker actually picked it up:
    ```bash
    docker exec dwtgbot_worker test -f "/srv/dwtgbot/secrets/cookies-${PLATFORM}.txt" && echo OK

@@ -128,6 +128,17 @@ require_env_file() {
   [[ -f "${path}" ]] || die "Missing env file: ${path}"
 }
 
+# set_env_value FILE KEY VALUE — replace KEY=... or append it. VALUE must
+# not contain ``|`` (sed delimiter); used for paths only.
+set_env_value() {
+  local file="$1" key="$2" value="$3"
+  if grep -q "^${key}=" "${file}"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "${file}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" >>"${file}"
+  fi
+}
+
 # ---------- stacks / topology (ADR-0011) ----------
 # Three compose stacks, built from deploy/compose/{control,media}.yml:
 #   single — everything on one host (control + media plane)

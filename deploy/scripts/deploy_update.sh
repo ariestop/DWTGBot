@@ -87,11 +87,7 @@ ensure_cookie_env() {
     log_warn "Cannot modify ${ENV_FILE}; skipping ${env_name} sync"
     return
   fi
-  if grep -q "^${env_name}=" "${ENV_FILE}"; then
-    sed -i "s|^${env_name}=.*|${env_name}=${cookie_path}|" "${ENV_FILE}"
-  else
-    printf '%s=%s\n' "${env_name}" "${cookie_path}" >>"${ENV_FILE}"
-  fi
+  set_env_value "${ENV_FILE}" "${env_name}" "${cookie_path}"
 }
 
 # Ensure the host directory backing the bind-mount exists with safe perms,
@@ -105,6 +101,9 @@ ensure_secrets_dir() {
   if [[ ! -d "${secrets_dir}" ]]; then
     mkdir -p "${secrets_dir}"
   fi
+  # bot/worker run as uid/gid 1000: without the group they cannot enter
+  # the directory at all.
+  chgrp 1000 "${secrets_dir}" 2>/dev/null || true
   chmod 0750 "${secrets_dir}" 2>/dev/null || true
   if [[ "$(dirname "${YOUTUBE_COOKIE_PATH}")" != "${secrets_dir}" ]]; then
     mkdir -p "$(dirname "${YOUTUBE_COOKIE_PATH}")"

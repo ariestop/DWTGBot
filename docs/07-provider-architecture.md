@@ -226,8 +226,9 @@ the provider does **not** unlink files.
 - **Hosts**: `*.instagram.com`.
 - **Options**: type-based — Video / Image (single) / Carousel (gallery).
 - **Auth**: respects `INSTAGRAM_COOKIES_FILE` (canonical path
-  `/srv/dwtgbot/secrets/cookies-instagram.txt`, bind-mounted RO into both
-  bot and worker). Required in practice for most public posts because
+  `/srv/dwtgbot/secrets/cookies-instagram.txt`, bind-mounted into both
+  bot and worker; installed with `deploy/scripts/cookies_setup.sh`, see
+  [`20-deployment.md`](20-deployment.md) §4a.5). Required in practice for most public posts because
   Instagram now serves the login wall to non-residential egress IPs.
   Missing file → provider logs `instagram_cookiefile_missing` and falls
   through to anonymous fetch (which usually surfaces `MediaPrivateError`

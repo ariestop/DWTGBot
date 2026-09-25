@@ -155,11 +155,18 @@ make worker
 2. **Склонируйте репозиторий** в `/opt/dwtgbot` и запустите
    `sudo bash deploy/scripts/install.sh`. В меню по порядку: `[1]` установка
    Docker (нужен Compose ≥ 2.24) → `[19]` **Prepare single server** (каталоги +
-   генерация `deploy/single/.env`) → `[5]` firewall → `[6]` start containers → `[12]`
-   SSL-сертификат.
-3. **Настройте offsite-бэкапы** (`BACKUP_S3_*`). В `single` бэкап лежит на том
+   генерация `deploy/single/.env` + cookies Instagram) → `[5]` firewall → `[6]`
+   start containers → `[12]` SSL-сертификат.
+3. **Cookies Instagram** (без них Instagram не скачивается). Установщик спросит
+   их на шаге `[19]`; заменить позже — пункт `[20]` или
+   `sudo bash deploy/scripts/cookies_setup.sh instagram`. Коротко: войдите в
+   отдельный аккаунт Instagram в браузере, выгрузите cookies расширением
+   «Get cookies.txt LOCALLY» (формат Netscape) и укажите файл скрипту — либо
+   введите `sessionid`, `ds_user_id`, `csrftoken` из DevTools. Подробно:
+   [`docs/20-deployment.md`](docs/20-deployment.md) §4a.5.
+4. **Настройте offsite-бэкапы** (`BACKUP_S3_*`). В `single` бэкап лежит на том
    же диске, что и база, поэтому offsite обязателен.
-4. **Проверьте состояние**: `bash deploy/scripts/healthcheck.sh single`.
+5. **Проверьте состояние**: `bash deploy/scripts/healthcheck.sh single`.
 
 ### Два сервера (`split`)
 
@@ -259,6 +266,7 @@ make worker
 | `firewall_setup.sh single\|nl1\|nl2` | Правила `ufw`; NL-1 требует `PRIVATE_NET` для Postgres/Redis, в single 5432/6379 закрыты |
 | `cleanup.sh` | Удаляет старые `STORAGE_TMP_PATH/*`, запускает one-shot pass `cleanup_worker` |
 | `certbot_init.sh` | Bootstrap Let's Encrypt certificate на хосте media plane (single или NL-2) |
+| `cookies_setup.sh instagram\|youtube` | Установка cookies провайдера (файл / вставка / `sessionid` вручную) в `/srv/dwtgbot/secrets`, путь в `.env`, пересоздание bot/worker |
 | `healthcheck.sh single\|nl1\|nl2` | Статусы сервисов + HTTP probes |
 
 Задайте `ASSUME_YES=1`, чтобы отключить интерактивные prompts в automation.

@@ -356,6 +356,7 @@ deploy/
 │   ├── deploy_update.sh
 │   ├── firewall_setup.sh
 │   ├── cleanup.sh
+│   ├── cookies_setup.sh        # Provider cookies → /srv/dwtgbot/secrets
 │   └── certbot_init.sh
 └── templates/
     └── env.template

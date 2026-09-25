@@ -337,8 +337,10 @@ sudo bash deploy/scripts/install.sh
 #   1)  Install Docker
 #   19) Prepare single server (all-in-one) — второй пункт меню: каталоги
 #       backups/storage (uid 1000) и генерация deploy/single/.env (пароли
-#       Postgres/Redis, API_INTERNAL_TOKEN, SERVER_NAME / PUBLIC_BASE_URL)
+#       Postgres/Redis, API_INTERNAL_TOKEN, SERVER_NAME / PUBLIC_BASE_URL);
+#       в конце предложит cookies Instagram (§4a.5)
 #   5)  Configure firewall → single;  6) Start containers;  12) Obtain SSL cert
+#   20) Configure cookies (Instagram / YouTube) — замена cookies позже
 ```
 
 Без меню:
@@ -400,6 +402,70 @@ docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env
 Дальнейшие обновления — `sudo bash deploy/scripts/deploy_update.sh single`
 (pre-backup → pull → `migrate` → `up -d` → healthcheck), в CI — задача
 `single` в `deploy.yml` ([`21-cicd.md`](21-cicd.md)).
+
+### 4a.5 Cookies Instagram / YouTube
+
+Instagram показывает серверным IP стену логина даже для публичных постов:
+без cookies бот отвечает *«Контент приватный или требует авторизации»*.
+YouTube иногда требует то же (*«Sign in to confirm you're not a bot»*,
+возрастные ограничения). Решение — файл `cookies.txt` в формате Netscape из
+браузера, где выполнен вход. Раздел одинаков для `single` и `split`; в
+`split` файл нужен на **обоих** хостах (bot на NL-1 анализирует ссылку,
+worker на NL-2 скачивает).
+
+**1. Получить cookies.** Заведите для бота отдельный аккаунт: Instagram
+может ограничить аккаунт за автоматические запросы. Войдите в него на
+`instagram.com` в обычном браузере и выберите один из способов:
+
+- *Файл целиком (надёжнее).* Расширение «Get cookies.txt LOCALLY»
+  (Chrome / Edge / Firefox) на вкладке `instagram.com` → **Export** →
+  формат Netscape → `cookies-instagram.txt`.
+- *Три значения вручную (только Instagram).* DevTools (F12) →
+  Application (Firefox: Storage) → Cookies → `https://www.instagram.com` →
+  скопируйте значения `sessionid`, `ds_user_id`, `csrftoken`. Скрипт сам
+  соберёт из них файл.
+
+Не нажимайте «Выйти» в этом браузере — выход аннулирует сессию и cookies.
+Закройте вкладку. Файл даёт полный доступ к аккаунту: не пересылайте его и
+не коммитьте.
+
+**2. Установить на сервер.**
+
+```bash
+# (для способа «файл») с вашего компьютера:
+scp cookies-instagram.txt root@<server>:/tmp/
+
+# на сервере — или пункт [20] в install.sh:
+sudo bash deploy/scripts/cookies_setup.sh instagram     # или youtube
+#   1) путь к файлу (по умолчанию /tmp/cookies-<provider>.txt)
+#   2) вставить содержимое файла в терминал, завершить строкой END
+#   3) ввести sessionid / ds_user_id / csrftoken (только instagram)
+# без вопросов: sudo COOKIES_SRC=/tmp/cookies-instagram.txt bash deploy/scripts/cookies_setup.sh instagram
+rm -f /tmp/cookies-instagram.txt
+```
+
+Скрипт проверяет формат (строки из 7 полей через Tab, домен провайдера,
+для Instagram — наличие `sessionid`), кладёт файл в
+`/srv/dwtgbot/secrets/cookies-<provider>.txt` с правами `root:1000 0660`,
+прописывает `INSTAGRAM_COOKIES_FILE` / `YOUTUBE_COOKIES_FILE` во все
+`deploy/*/.env` хоста и пересоздаёт запущенные bot/worker.
+
+Права важны: bot и worker работают под uid/gid 1000, каталог
+`/srv/dwtgbot/secrets` должен быть `root:1000 0750`, а файл —
+**доступен на запись** группе: yt-dlp сохраняет в него обновлённые cookies.
+После ручной правки `.env` нужен `docker compose up -d bot worker`:
+`restart` не перечитывает `.env`.
+
+**3. Проверить.** Отправьте боту ссылку на пост или reels, затем:
+
+```bash
+docker exec dwtgbot_worker ls -l /srv/dwtgbot/secrets/
+docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env \
+  logs --since 10m bot worker | grep -i cookiefile_missing || echo "no warnings"
+```
+
+Cookies живут недели-месяцы. Когда Instagram снова начнёт отвечать «требует
+авторизации», повторите шаги 1–2 ([`24-runbooks.md`](24-runbooks.md) §5.4).
 
 ---
 
@@ -499,39 +565,24 @@ Instagram now serves the login wall to most non-residential egress IPs even
 for public posts. Without a cookie file the worker raises
 `MediaPrivateError` and users see *"Контент приватный или требует
 авторизации"*. The fix is a Netscape `cookies.txt` exported from a
-logged-in browser session. Both `deploy/nl1/docker-compose.yml` (bot) and
-`deploy/nl2/docker-compose.yml` (worker) bind-mount
-`/srv/dwtgbot/secrets:/srv/dwtgbot/secrets:ro`, so the canonical path is
-`/srv/dwtgbot/secrets/cookies-instagram.txt` on **both** hosts.
+logged-in browser session. The bot (`control.yml`) and the worker
+(`media.yml`) bind-mount `/srv/dwtgbot/secrets:/srv/dwtgbot/secrets` (RW),
+so the canonical path is `/srv/dwtgbot/secrets/cookies-instagram.txt` on
+**both** hosts.
+
+Полная инструкция (как получить cookies, права, проверка) — §4a.5. Для
+split выполните её на каждом хосте:
 
 ```bash
-# 1. Export cookies.txt from an Instagram-logged-in browser
-#    (e.g. "Get cookies.txt LOCALLY" extension, Netscape format).
-
-# 2. Upload to BOTH hosts (NL-1 needs it for extract_info, NL-2 for download).
-for HOST in nl1 nl2; do
-  scp cookies-instagram.txt "$HOST:/tmp/"
-  ssh "$HOST" 'sudo install -o root -g root -m 0640 \
-    /tmp/cookies-instagram.txt \
-    /srv/dwtgbot/secrets/cookies-instagram.txt && \
-    rm /tmp/cookies-instagram.txt'
-done
-
-# 3. INSTAGRAM_COOKIES_FILE in deploy/{nl1,nl2}/.env is auto-set by
-#    deploy/scripts/deploy_update.sh::ensure_instagram_cookie_env on every
-#    deploy. If you skip the deploy, set it manually:
-sudo sed -i 's|^INSTAGRAM_COOKIES_FILE=.*|INSTAGRAM_COOKIES_FILE=/srv/dwtgbot/secrets/cookies-instagram.txt|' \
-  deploy/nl1/.env deploy/nl2/.env
-
-# 4. Restart the affected containers.
-sudo docker compose -f deploy/nl1/docker-compose.yml restart bot       # on NL-1
-sudo docker compose -f deploy/nl2/docker-compose.yml restart worker    # on NL-2
+# на NL-1 и на NL-2 (файл заранее скопирован в /tmp/ через scp)
+sudo COOKIES_SRC=/tmp/cookies-instagram.txt bash deploy/scripts/cookies_setup.sh instagram
+rm -f /tmp/cookies-instagram.txt
 ```
 
 Operational notes:
 
 - `deploy_update.sh` runs `ensure_secrets_dir` early; it creates
-  `/srv/dwtgbot/secrets` (mode `0750`) and warns if the cookies file is
+  `/srv/dwtgbot/secrets` (`root:1000`, mode `0750`) and warns if the cookies file is
   absent — but it never **creates** the file (we never want a secret to
   appear out of thin air on the host).
 - Missing file is graceful: the provider logs
