@@ -39,6 +39,15 @@ Component responsibilities:
 
 ## 2. The `YtDlpRunner`
 
+Код разделён на четыре модуля в `app/infrastructure/downloader/`:
+
+| Модуль | Ответственность |
+|---|---|
+| `ytdlp_runner.py` | `YtDlpRunner` — асинхронный фасад: `to_thread`, circuit breaker, таймаут загрузки, общий `_guarded` для всех вызовов |
+| `ytdlp_opts.py` | чистые сборщики опций (`extract_opts` / `probe_opts` / `download_opts`), `apply_source_guards`, `apply_proxy`, `host_of`, хук прогресса (`ProgressEvent` TypedDict) |
+| `ytdlp_results.py` | `classify_error`, `looks_like_throttle`, `extract_known_size` |
+| `mobile_compat.py` | пост-обработка MP4 для мобильного Telegram через ffprobe/ffmpeg (§5) |
+
 ```python
 class YtDlpRunner:
     async def extract_info(self, url: str, *,
@@ -47,7 +56,11 @@ class YtDlpRunner:
                        target_dir: Path,
                        postprocessors: list[dict] | None = None,
                        merge_output_format: str | None = None,
-                       extra_opts: dict | None = None) -> list[Path]: ...
+                       extra_opts: dict | None = None,
+                       force_transcode: bool = False,
+                       on_progress: Callable[[float], None] | None = None) -> list[Path]: ...
+    async def probe_size(self, url: str, *, format_spec: str,
+                         extra_opts: dict | None = None) -> int | None: ...
 ```
 
 ### `extract_info`
@@ -56,7 +69,7 @@ class YtDlpRunner:
   YouTube / Instagram `cookiefile`) while preserving shared guards
   (`allowed_extractors`, `match_filter`) and proxy wiring.
 - Runs `ydl.sanitize_info(...)` so what we cache is JSON-safe.
-- All exceptions normalised through `_classify(...)`.
+- All exceptions normalised through `classify_error(...)` (`ytdlp_results.py`).
 
 ### `download`
 - Hard-coded options:
@@ -66,23 +79,30 @@ class YtDlpRunner:
   - `concurrent_fragment_downloads = 4` — better throughput on HLS/DASH.
   - `socket_timeout = 30 s`, `retries = 2`, `fragment_retries = 2` —
     short retries; the *job* is retried by arq for bigger failures.
-  - `ffmpeg_location = settings.FFMPEG_BIN` — explicit binary path.
+  - `ffmpeg_location = shutil.which(settings.FFMPEG_BIN)` — absolute path;
+    yt-dlp rejects a bare name. Omitted (yt-dlp auto-discovers) when the
+    binary is not on `PATH`.
+- Bounded by `DOWNLOAD_TIMEOUT_SECONDS` → `DownloadTimeoutError`.
+- MP4-family outputs go through `mobile_compat.make_mobile_compatible` (§5).
 - Returns sorted list of files inside `target_dir`.
 
 ### Error classification
 
-`_classify` maps yt-dlp's `DownloadError` to our hierarchy:
+`classify_error` (`ytdlp_results.py`) maps yt-dlp's `DownloadError` to our hierarchy:
 
 | Substring in error message | Mapped exception |
 |---|---|
-| "private" / "login required" | `MediaPrivateError` |
+| "private" / "login required" / "sign in to confirm" / "use --cookies" | `MediaPrivateError` |
 | "not found" / "does not exist" / "removed" / "404" | `MediaNotFoundError` |
 | "unsupported url" | `ProviderError` |
 | anything else | `DownloadError` |
 
 Anything not a `YtDlpDownloadError` (e.g. `RuntimeError`, parser bugs) is
-re-raised as `ProviderError("yt-dlp failure: ...")` after a full
-`_logger.exception(...)`.
+re-raised after a full `_logger.exception(...)`: as
+`ProviderError("yt-dlp failure: ...")` from `extract_info`, as
+`DownloadError` from `probe_size` / `download`. Throttle-shaped messages
+(`HTTP Error 429`, "too many requests", "rate limit") also count towards
+the per-host circuit breaker (`looks_like_throttle`).
 
 ---
 
@@ -134,12 +154,29 @@ to access auth-required posts. See [`13-config-and-env.md`](13-config-and-env.md
 
 ## 5. ffmpeg call paths
 
-We invoke ffmpeg **only** through yt-dlp:
+Через yt-dlp:
 - `merge_output_format="mp4"` triggers ffmpeg's `mux` phase.
 - `FFmpegExtractAudio` postprocessor triggers transcode.
 
-We do **not** spawn `ffmpeg` ourselves elsewhere (e.g. for thumbnails,
-resizing, or watermarking) — that simplifies failure modes and audit.
+Напрямую — только пост-обработка в `mobile_compat.py`, после успешной
+загрузки и только для `.mp4` / `.mov` / `.m4v`. Мобильные клиенты Telegram
+декодируют аппаратно и замораживают видеодорожку для VP9, HEVC, не-AAC
+звука и не-yuv420p:
+
+1. `probe_codecs` — `ffprobe` читает кодеки первых видео- и аудиопотоков.
+2. `needs_transcode` — чистое решение: H.264 + AAC + yuv420p (или
+   неизвестные значения) → быстрый remux `-c copy -movflags +faststart`
+   (таймаут 120 с); иначе — транскод в H.264 high@4.1 + AAC 48 кГц,
+   ≤ 30 fps (таймаут 600 с). `force_transcode=True` (Instagram) всегда
+   выбирает транскод.
+3. Вывод пишется в `<name>.remux.tmp.<ext>` и атомарно заменяет исходник.
+   Любая ошибка ffmpeg, таймаут или пустой вывод оставляют исходный файл
+   нетронутым (события `faststart_remux_failed` / `mobile_transcode_failed`).
+
+Без `ffprobe` выбирается remux. Тесты: `app/tests/test_mobile_compat.py`
+(ffprobe/ffmpeg подменены фейком).
+
+Других прямых вызовов ffmpeg (миниатюры, ресайз, водяные знаки) нет.
 
 If you need to add a direct ffmpeg call:
 1. Use `asyncio.create_subprocess_exec(self._settings.FFMPEG_BIN, ...)`.

@@ -113,7 +113,7 @@ at fixed phase boundaries:
 
 - `DOWNLOADING` 0 → 70 % — driven by yt-dlp `progress_hooks`
   (hook runs in a yt-dlp worker thread, uses a sync Redis client).
-- `PROCESSING` 70 → 95 % — driven by `_ensure_mobile_compatible`
+- `PROCESSING` 70 → 95 % — driven by `mobile_compat.ensure_mobile_compatible`
   (start / end, plus wall-clock extrapolation between).
 - `UPLOADING` 95 → 100 % — driven around `DeliveryService.deliver`.
 
@@ -349,8 +349,8 @@ and a graceful "no longer available" alert is adequate.
     `app/infrastructure/providers/instagram.py`,
     `app/infrastructure/providers/base.py`
   - `app/infrastructure/downloader/ytdlp_runner.py`
-    (`_ensure_mobile_compatible`, `download`, `progress_hooks` hook
-    point is new)
+    (`download`, `progress_hooks` hook point is new; the mobile-compat
+    step now lives in `mobile_compat.py`)
   - `app/infrastructure/cache/` (new reporter)
   - `app/bot/services/` (new progress updater)
   - `app/composition.py`

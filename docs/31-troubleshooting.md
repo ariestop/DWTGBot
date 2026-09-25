@@ -779,8 +779,8 @@ Cure path: §6 of `24-`.
   `HTTP Error 429`, `HTTP Error 403`, `Login required`,
   `This video is no longer available`, `Private video`
 
-**Origin**: `app/infrastructure/downloader/ytdlp_runner.py`,
-called from a provider's `get_info` or `download`.
+**Origin**: `app/infrastructure/downloader/ytdlp_runner.py`
+(mapping in `ytdlp_results.classify_error`), called from a provider's `get_info` or `download`.
 
 **Confirmation**:
 
