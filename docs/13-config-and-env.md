@@ -80,6 +80,9 @@ Grouped by concern. **Bold** = required, no safe default.
 | `DB_MAX_OVERFLOW` | int ≥0 | `10` | Extra connections created beyond `DB_POOL_SIZE` before clients block on `DB_POOL_TIMEOUT_S` |
 | `DB_POOL_TIMEOUT_S` | int ≥1 | `30` | How long a caller waits for a free connection before `TimeoutError` |
 | `DB_POOL_RECYCLE_S` | int ≥60 | `1800` | Recycle stale connections; safer than Postgres `idle_in_transaction_session_timeout` races |
+| `DB_STATEMENT_TIMEOUT_S` | int 1..300 | `30` | Клиентский `command_timeout` asyncpg на каждый запрос: зависший запрос обрывается, а не держит соединение пула |
+| `DB_CONNECT_TIMEOUT_S` | int 1..120 | `10` | Таймаут установки соединения asyncpg; недоступный Postgres (например, упал WireGuard в `split`) даёт быструю ошибку |
+| `DB_IDLE_IN_TX_TIMEOUT_MS` | int 1000..3600000 | `60000` | Серверный `idle_in_transaction_session_timeout`: Postgres закрывает сессию, забытую внутри открытой транзакции |
 
 > The async URL is `postgresql+asyncpg://...`; a sync version
 > (`+psycopg`) is derived for Alembic.
@@ -163,10 +166,31 @@ Grouped by concern. **Bold** = required, no safe default.
 | Variable | Type | Default | Notes |
 |---|---|---|---|
 | `FFMPEG_BIN` | str | `ffmpeg` | Resolved via `PATH` |
+| `FFPROBE_BIN` | str | `ffprobe` | Resolved via `PATH`; используется для проверки кодеков перед mobile-compat remux |
 | `YTDLP_BIN` | str | `yt-dlp` | We use the Python lib; var is for diagnostics |
 | `HTTPS_PROXY_URL` | str | empty | S9 audit fix: outbound proxy injected into `yt-dlp` opts for both `extract_info` and `download`. Empty = direct. Format `http://user:pass@host:port` or `socks5h://host:port`. Lets you egress through a regional proxy without leaking creds into process env. |
 | `YOUTUBE_COOKIES_FILE` | path-like str | empty | Optional Netscape cookies file for YouTube age/auth-gated Shorts and videos. Passed to yt-dlp as `cookiefile` on metadata probe, size probe, and download calls. Keep the same value on NL-1 and NL-2 because NL-1 does `extract_info` while NL-2 performs the actual download. The compose stacks bind-mount `/srv/dwtgbot/secrets:/srv/dwtgbot/secrets` (RW — yt-dlp saves refreshed cookies) into the bot and worker containers, so the canonical path is `/srv/dwtgbot/secrets/cookies-youtube.txt`. Install it with `deploy/scripts/cookies_setup.sh youtube` (`root:1000`, mode `0660`; see [`20-deployment.md`](20-deployment.md) §4a.5). If the path is set but the file is missing, the provider logs `youtube_cookiefile_missing` and proceeds without auth. |
 | `INSTAGRAM_COOKIES_FILE` | path-like str | empty | Optional Netscape cookies file for Instagram auth-required content. Passed to yt-dlp as `cookiefile` on metadata probe and download calls. Keep the same value on NL-1 and NL-2 because NL-1 does `extract_info` while NL-2 performs the actual download. The compose stacks bind-mount `/srv/dwtgbot/secrets:/srv/dwtgbot/secrets` (RW) into the bot and worker containers, so the canonical path is `/srv/dwtgbot/secrets/cookies-instagram.txt`. Install it with `deploy/scripts/cookies_setup.sh instagram` (`root:1000`, mode `0660`; the installer offers it on a fresh host, see [`20-deployment.md`](20-deployment.md) §4a.5) — `deploy_update.sh` ensures the directory exists but never creates the cookies file itself. If the path is set but the file is missing the providers log a warning and proceed without auth. |
+
+### Instant download и live progress (ADR-0010)
+
+Все переменные читают и `bot`, и `worker`, поэтому в `split` значения на
+NL-1 и NL-2 должны совпадать.
+
+| Variable | Type | Default | Notes |
+|---|---|---|---|
+| `INSTANT_DOWNLOAD_ENABLED` | bool | `true` | Главный переключатель: `true` — ссылка сразу ставится в очередь с live-прогрессом; `false` — прежний выбор качества. Флаг используется для отката (ADR-0010 §2.1) |
+| `BRAND_FOOTER` | str | `Спасибо за использование нашего бота @dwtgbot` | Добавляется после подписи к медиа через пустую строку. Пустая строка отключает футер |
+| `CANCEL_FLAG_TTL_SEC` | int 60..7200 | `1800` | TTL флага `cancel:{job_id}`. Должен превышать `JOB_TIMEOUT_SECONDS`, чтобы отмена успела сработать на последней границе фаз |
+| `POST_TEXT_TTL_SEC` | int 600..604800 | `86400` | Время жизни `post_text:{job_id}` в Redis — текста для кнопки «Текст поста» (ADR-0010 §2.3) |
+| `POST_TEXT_MIN_CHARS` | int 1..1000 | `10` | Минимальная длина описания, при которой сохраняется текст и показывается кнопка |
+| `POST_TEXT_MAX_CHARS` | int 100..100000 | `10000` | Верхняя граница `MediaInfo.description`; провайдеры обязаны обрезать до неё |
+| `PROGRESS_TTL_SEC` | int 60..3600 | `600` | TTL хэша `progress:{job_id}` |
+| `PROGRESS_META_TTL_SEC` | int 60..7200 | `1800` | TTL `progress_meta:{job_id}` (chat_id, message_id, started_at) для восстановления после рестарта бота. Должен превышать `PROGRESS_TTL_SEC` |
+| `PROGRESS_REDRAW_INTERVAL_SEC` | float 0.1..30.0 | `2.0` | Минимальный интервал между обновлениями прогресса одного job, если стадия не сменилась и процент вырос меньше `PROGRESS_DEBOUNCE_PERCENT`. Терминальные стадии проходят всегда |
+| `PROGRESS_DEBOUNCE_PERCENT` | int 0..50 | `3` | Порог прироста процента для debounce (см. выше) |
+| `PROGRESS_STALE_WARN_SEC` | int 5..600 | `90` | Через столько секунд без событий подпись меняется на «соединение потеряно». Должен быть заметно меньше `PROGRESS_META_TTL_SEC` |
+| `PROGRESS_STALE_DROP_SEC` | int 30..3600 | `300` | Через столько секунд без событий placeholder удаляется. Должен превышать `PROGRESS_STALE_WARN_SEC` |
 
 ### Circuit breaker — yt-dlp upstream (`docs/34-error-taxonomy.md`, L5 audit fix)
 
