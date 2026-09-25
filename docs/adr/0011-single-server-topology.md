@@ -1,6 +1,6 @@
-# ADR-0011 — Однсерверная топология `single` рядом с `split` (NL-1 + NL-2)
+# ADR-0011 — Односерверная топология `single` рядом с `split` (NL-1 + NL-2)
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-25)
 - **Date:** 2026-09-24
 - **Deciders:** project owner
 - **Tags:** topology, deployment, security, cost, compose
@@ -14,7 +14,7 @@
 [ADR-0001](0001-two-server-topology.md) и строки 2–4
 [ADR-0005](0005-locked-architectural-assumptions.md) требуют ровно два
 хоста: NL-1 (control plane) и NL-2 (media plane), связанные WireGuard.
-Однсерверный вариант был явно отклонён (ADR-0001 §4.1): публичный nginx
+Односерверный вариант был явно отклонён (ADR-0001 §4.1): публичный nginx
 рядом с БД нарушает принцип минимальной экспозиции, а ffmpeg мешает
 отзывчивости бота.
 
