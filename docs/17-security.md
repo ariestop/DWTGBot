@@ -421,8 +421,8 @@ universe.
 | Mounted `letsencrypt` as RW into nginx | risk of accidental cert overwrite | We mount `:ro` into nginx; certbot is the only writer |
 | Built worker as root | container can write outside the volume | Build with `USER app`; verify with `docker exec` |
 | Updated yt-dlp without releasing | yt-dlp pulls untrusted plugins on the fly | Never `pip install -U` in a container; the exact version is in `requirements/*.lock`, bumped by `yt-dlp-update.yml` (or `make lock-bump PKG=yt-dlp`) and shipped as a new image |
-| Set `cookiefile` to a globally-readable path | other system users can read it | `chmod 600`, `chown app:app`; never world-readable |
-| Uploaded `cookiefile` to only one host | extract_info on NL-1 succeeds, download on NL-2 (or vice-versa) falls back anonymous and Instagram returns login-required | Cookies must live on **both** NL-1 (bot does `extract_info`) and NL-2 (worker does the actual download); paths bind-mounted RO into both |
+| Set `cookiefile` to a globally-readable path | other system users can read it | `root:1000 0660`, каталог `0750`; never world-readable |
+| Uploaded `cookiefile` to only one host | extract_info on NL-1 succeeds, download on NL-2 (or vice-versa) falls back anonymous and Instagram returns login-required | Cookies must live on **both** NL-1 (bot does `extract_info`) and NL-2 (worker does the actual download); paths bind-mounted RW into both (в `single` — один хост и один файл) |
 | Allowed `0.0.0.0` on the SSH `AllowUsers` | brute-force lockouts | Restrict via firewall + key-only auth |
 
 ---
