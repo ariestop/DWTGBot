@@ -12,9 +12,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from telegram import InputFile
+from telegram import InlineKeyboardMarkup, InputFile
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 
+from app.application.ports.media_sender import InlineButton, InlineKeyboard
 from app.config import get_settings
 from app.infrastructure.telegram import sender as sender_mod
 from app.infrastructure.telegram.sender import TelegramSender
@@ -126,6 +128,56 @@ async def test_send_audio_and_document_return_file_ids(bot: _FakeBot, media_file
     assert await sender.send_audio(1, media_file) == "aud-1"
     assert await sender.send_document(1, media_file) == "doc-1"
     assert [method for method, _ in bot.calls] == ["send_audio", "send_document"]
+
+
+async def test_keyboard_dto_is_mapped_to_telegram_markup(bot: _FakeBot) -> None:
+    keyboard = InlineKeyboard(
+        rows=(
+            (InlineButton("📥 Скачать", url="https://tmp.example/abc"),),
+            (InlineButton("Текст", callback_data="pt|42"),),
+        )
+    )
+    sender = TelegramSender(get_settings())
+
+    await sender.send_text(1, "hi", reply_markup=keyboard)
+
+    markup = bot.calls[0][1]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    (download,), (post_text,) = markup.inline_keyboard
+    assert (download.text, download.url, download.callback_data) == (
+        "📥 Скачать",
+        "https://tmp.example/abc",
+        None,
+    )
+    assert (post_text.text, post_text.url, post_text.callback_data) == ("Текст", None, "pt|42")
+
+
+async def test_missing_keyboard_is_sent_as_none(bot: _FakeBot) -> None:
+    sender = TelegramSender(get_settings())
+
+    await sender.send_text(1, "hi")
+
+    assert bot.calls[0][1]["reply_markup"] is None
+
+
+def test_upload_retry_errors_cover_all_telegram_errors() -> None:
+    assert TelegramSender.upload_retry_errors == (TelegramError,)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{}, {"url": "https://x", "callback_data": "pt|1"}],
+)
+def test_inline_button_requires_exactly_one_action(kwargs: dict[str, str]) -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        InlineButton("label", **kwargs)
+
+
+def test_with_row_on_top_prepends_row() -> None:
+    base = InlineKeyboard(rows=((InlineButton("b", callback_data="b"),),))
+    top = (InlineButton("a", url="https://a"),)
+
+    assert base.with_row_on_top(top).rows == (top, *base.rows)
 
 
 async def test_probe_video_without_ffprobe_returns_unknown_meta(
