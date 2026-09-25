@@ -20,7 +20,7 @@ Limitations (MVP):
   Once the worker reaches ``PROCESSING`` (ffmpeg) the job will run to
   completion — the user gets the video despite having tapped cancel.
   That is documented as the MVP trade-off in ``docs/tasks/
-  instant-download-ux.md`` Edge case E6 / Risk R9.
+  archive/instant-download-ux.md`` Edge case E6 / Risk R9.
 * Double-tap: the Telegram client shows a tiny spinner and sends the
   same callback twice. The second one finds no matching state; we
   still answer politely so the spinner stops.

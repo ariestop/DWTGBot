@@ -24,7 +24,7 @@ def test_caption_without_footer_matches_legacy_shape() -> None:
 
 def test_caption_with_footer_appends_with_blank_line() -> None:
     # Visible blank line between the metadata and the brand footer —
-    # matches the spec in docs/tasks/instant-download-ux.md §3.
+    # matches the spec in docs/tasks/archive/instant-download-ux.md §3.
     caption = _caption(_result(), 1024, footer="Спасибо за использование нашего бота @dwtgbot")
     assert caption.endswith("\n\nСпасибо за использование нашего бота @dwtgbot")
     assert "<b>Demo</b>" in caption

@@ -395,8 +395,10 @@ flowchart LR
 - [ ] If derived, expose via `@property` (no caller-side recomputation).
 - [ ] Update `.env.example` (root) **and** the per-stack examples
       (`deploy/single/.env.example`, `deploy/nl1/.env.example`,
-      `deploy/nl2/.env.example`).
-- [ ] Document in this file under the right group.
+      `deploy/nl2/.env.example`). Допустима закомментированная строка
+      `# KEY=default`, если пример полагается на значение по умолчанию.
+- [ ] Document in this file under the right group. Оба пункта проверяет
+      `app/tests/test_env_examples_sync.py`.
 - [ ] If it controls runtime behaviour, add a `validate_runtime` check
       (especially for "must be set in production").
 - [ ] Add a unit test in `app/tests/test_config.py` (defaults + edge

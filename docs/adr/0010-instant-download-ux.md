@@ -354,7 +354,7 @@ and a graceful "no longer available" alert is adequate.
   - `app/infrastructure/cache/` (new reporter)
   - `app/bot/services/` (new progress updater)
   - `app/composition.py`
-- Docs: `docs/tasks/instant-download-ux.md` (this ADR's
+- Docs: `docs/tasks/archive/instant-download-ux.md` (this ADR's
   implementation spec), `docs/02-architecture.md`,
   `docs/06-bot-flow.md`, `docs/09-queue-and-workers.md`.
 - Prior fixes relevant to behaviour: mobile-Telegram transcode

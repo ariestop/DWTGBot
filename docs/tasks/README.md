@@ -1,6 +1,6 @@
 # Tasks — порядок реализации
 
-Единый master-индекс для всех активных engineering-задач. **Фазы выполняются строго по порядку**: сначала фичи (ценность для пользователя), потом аудит-фиксы (техдолг).
+Единый master-индекс для всех активных engineering-задач. Спецификации закрытых фаз лежат в [`archive/`](archive/) как история; их чекбоксы после релиза не обновлялись. **Фазы выполняются строго по порядку**: сначала фичи (ценность для пользователя), потом аудит-фиксы (техдолг).
 
 Правило: очередная фаза **не стартует**, пока предыдущая не доведена до "released to production + stable ≥ 24 ч".
 
@@ -8,7 +8,7 @@
 
 ## Phase 1 — Фичи (released)
 
-**Файл:** [`instant-download-ux.md`](instant-download-ux.md)
+**Файл (архив):** [`archive/instant-download-ux.md`](archive/instant-download-ux.md)
 **ADR:** [`docs/adr/0010-instant-download-ux.md`](../adr/0010-instant-download-ux.md)
 **Статус:** все 6 PR'ов замёржены в `main` и в проде. `INSTANT_DOWNLOAD_ENABLED=true` глобально, с per-platform opt-out для YouTube (picker остаётся, см. `c626019`). Post-release stabilisation: `96a9e8d` (IG wording), `6bd7bae` (live progress на picker-ветке YT), `958b028` (drop queue id из caption), `58e9e09` / `f703b05` (YT size cascade).
 **Бизнес-цель:** снизить число тапов до медиа с 2 до 0, сделать ожидание осязаемым.
@@ -30,7 +30,7 @@
 
 ## Phase 2 — Аудит-фиксы (released)
 
-**Файл:** [`audit-fixes-2026-04.md`](audit-fixes-2026-04.md)
+**Файл (архив):** [`archive/audit-fixes-2026-04.md`](archive/audit-fixes-2026-04.md)
 **Источник:** аудит от 2026-04-20 (Staff Architect + Sr. Backend + DevOps + SRE + Security + QA).
 **Статус:** ✅ закрыт. Sprint 2.1 (`1a4e7cd` / `608d548` / `ccbef49` — A1–A15), Sprint 2.2–2.4 (`0b2dc1a` / `e23e0f9` — A16–A29) замёржены и развёрнуты на NL-1/NL-2. Post-rollout hotfix: **A30 healthchecks** (worker/cleanup `pgrep`-free probes + `/readyz` token в `healthcheck.sh`) — PR #3, merged as `769ee05`, выкачен.
 **Бизнес-цель:** закрыть TOP-10 критических проблем, без которых публичный запуск небезопасен.
