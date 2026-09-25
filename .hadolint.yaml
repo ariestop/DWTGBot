@@ -1,0 +1,6 @@
+failure-threshold: warning
+ignored:
+  # Debian mirrors drop superseded package versions, so exact apt pins
+  # break rebuilds; reproducibility comes from the patch-pinned base
+  # image and hash-pinned Python lockfiles instead.
+  - DL3008

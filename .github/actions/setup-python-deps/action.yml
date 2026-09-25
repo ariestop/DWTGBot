@@ -1,0 +1,23 @@
+name: Set up Python and locked dev dependencies
+description: >-
+  Installs Python and the hash-pinned requirements/dev.lock, the same
+  resolution the Docker images get from requirements/prod.lock.
+
+inputs:
+  python-version:
+    description: Python version for actions/setup-python
+    required: false
+    default: "3.14"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: requirements/dev.lock
+
+    - name: Install locked dev dependencies
+      shell: bash
+      run: pip install --require-hashes -r requirements/dev.lock
