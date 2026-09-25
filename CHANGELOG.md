@@ -12,6 +12,24 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — large-file temp links break playback and "expire" after one tap
+
+Every request to `/d/{token}` spent a `downloads_count` slot, including
+the Range requests a video player or download manager sends while
+seeking or resuming one file. A 5-use link was exhausted during the
+first playback: the next Range request got 410, the file was left
+truncated, and a second tap reported "Link expired or exhausted". Now
+only a `GET` reading from byte 0 spends a slot; Range continuations and
+`HEAD` are served while the link is active and unexpired. Exhaustion no
+longer sets `is_active=false`, so cleanup keeps the file until the TTL
+ends. See `docs/10-temp-links-and-delivery.md` §4.1.
+
+### Changed — temp-link TTL defaults to 1 hour
+
+`TEMP_LINK_TTL_SECONDS` default and examples: `86400` → `3600`;
+`TEMP_LINK_MAX_DOWNLOADS` stays `5`. Existing deployments keep the value
+from their `.env` until it is edited.
+
 ### Fixed — YouTube downloads failing with HTTP 403
 
 yt-dlp without a JavaScript runtime cannot solve YouTube's JS challenge:

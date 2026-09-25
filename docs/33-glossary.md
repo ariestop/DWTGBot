@@ -190,9 +190,9 @@ retries.
 **Inactive link.**
 A row in `temp_links` with `is_active = false`. The token no longer
 resolves (Nginx returns `410 Gone` via the FastAPI router). Set by:
-(a) the cleanup worker when `expires_at` is in the past, (b) the
-delivery service when `downloads_count` reaches `max_downloads`, or
-(c) an operator during a privacy / abuse incident. The **row** stays
+(a) the cleanup worker when `expires_at` is in the past, or (b) an
+operator during a privacy / abuse incident. Reaching `max_downloads`
+does not deactivate the row — it only refuses new downloads. The **row** stays
 forever (audit); the **file** it pointed at is removed by the next
 cleanup cycle. See [`23-cleanup-retention.md`](23-cleanup-retention.md)
 §4 and [`34-data-retention-and-privacy.md`](34-data-retention-and-privacy.md)

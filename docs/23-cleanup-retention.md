@@ -111,11 +111,15 @@ Pseudocode of the gate (executed by the API serving `/links/<token>`):
 
 ```python
 if link.expires_at <= now() or link.downloads_count >= link.max_downloads:
-    return 410        # gone — cleanup will reap shortly
+    return 410        # no new download
 return X-Accel-Redirect(link.file_path)
 ```
 
-`is_active = false` exists as a third explicit kill switch (operators can mass-deactivate without changing TTL, e.g. during an incident).
+Range continuations and `HEAD` of a download that already started are
+exempt from the counter check (not from TTL or `is_active`) — see
+[`10-temp-links-and-delivery.md`](10-temp-links-and-delivery.md) §4.1.
+
+`is_active = false` exists as a third explicit kill switch (operators can mass-deactivate without changing TTL, e.g. during an incident). Exhaustion alone does **not** set it: an exhausted link keeps its file until `expires_at`, so the last download can finish. Cleanup therefore deletes files of expired or revoked links only.
 
 ### 3.2 Media cache — provider info caching
 

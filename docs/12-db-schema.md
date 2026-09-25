@@ -147,7 +147,7 @@ Constraints:
 | `expires_at` | `timestamptz` | UTC; indexed for cleanup |
 | `max_downloads` | `int default 1` | CHECK >= 1 |
 | `downloads_count` | `int default 0` | CHECK >= 0 |
-| `is_active` | `bool default true` | indexed; flipped to false on exhaustion / expiry |
+| `is_active` | `bool default true` | indexed; flipped to false on expiry or operator revoke (not on exhaustion) |
 | `created_at`, `updated_at` | `timestamptz default now()` | |
 
 Indexes & constraints:
@@ -303,7 +303,7 @@ silently drop the guarantee. See ADR-0008 for the rationale.
 | Operation | Primitive | Where | What it guarantees |
 |---|---|---|---|
 | Per-user job cap (`MAX_CONCURRENT_JOBS_PER_USER`) | `pg_advisory_xact_lock(user_id)` inside the same transaction as the count + insert | `JobsRepository.create_if_under_cap` (impl: `app/infrastructure/db/repositories/jobs_repo_impl.py`) | Two concurrent enqueues for the **same** user are serialised; no TOCTOU between `count(active)` and `INSERT`. Lock is freed on COMMIT/ROLLBACK automatically — no bookkeeping. |
-| Temp-link single-use counter (`max_downloads`) | Single statement: `UPDATE temp_links SET downloads_count = downloads_count + 1, is_active = CASE WHEN ... END WHERE token = :t AND is_active AND expires_at > now AND downloads_count < max_downloads RETURNING *` | `TempLinksRepository.try_register_use` (impl: `app/infrastructure/db/repositories/temp_links_repo_impl.py`) | Two concurrent `/d/<token>` requests for a `max_downloads=1` link cannot both increment past the cap; the second observes "no row matched" and returns `None`. |
+| Temp-link single-use counter (`max_downloads`) | Single statement: `UPDATE temp_links SET downloads_count = downloads_count + 1 WHERE token = :t AND is_active AND expires_at > now AND downloads_count < max_downloads RETURNING *` | `TempLinksRepository.try_register_use` (impl: `app/infrastructure/db/repositories/temp_links_repo_impl.py`) | Two concurrent `/d/<token>` requests for a `max_downloads=1` link cannot both increment past the cap; the second observes "no row matched" and returns `None`. |
 
 > **Hard rule:** any new "check then write" pattern on `download_jobs`
 > or `temp_links` must use one of these primitives — *not* an
