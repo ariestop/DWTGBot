@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from app.application.ports.progress_reporter import NoopProgressReporter
 from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.composition import build_api, build_cleanup, build_worker
 from app.config import get_settings
-from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.cache.redis_progress_reporter import RedisProgressReporter
 from app.infrastructure.storage.local_storage import LocalStorage
 from app.infrastructure.telegram.sender import TelegramSender

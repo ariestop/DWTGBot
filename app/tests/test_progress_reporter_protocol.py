@@ -19,9 +19,8 @@ import inspect
 
 import pytest
 
-from app.application.ports.progress_reporter import ProgressReporter
+from app.application.ports.progress_reporter import NoopProgressReporter, ProgressReporter
 from app.domain.enums import ProgressStage
-from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 
 
 def test_noop_matches_protocol_shape() -> None:

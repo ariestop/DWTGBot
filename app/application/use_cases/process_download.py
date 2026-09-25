@@ -7,7 +7,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.application.ports.progress_reporter import ProgressReporter
+from app.application.ports.media_sender import MediaSender
+from app.application.ports.media_storage import MediaStorage
+from app.application.ports.progress_reporter import NoopProgressReporter, ProgressReporter
 from app.application.services.delivery_service import DeliveryService
 from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
@@ -27,9 +29,6 @@ from app.exceptions import (
     SizeUnknownError,
     StorageError,
 )
-from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
-from app.infrastructure.storage.local_storage import LocalStorage
-from app.infrastructure.telegram.sender import TelegramSender
 from app.logging_config import get_logger
 from app.utils.correlation import bind_context
 
@@ -48,9 +47,9 @@ class ProcessDownloadUseCase:
         *,
         jobs_repo: JobsRepository,
         providers: ProviderRegistry,
-        storage: LocalStorage,
+        storage: MediaStorage,
         delivery: DeliveryService,
-        sender: TelegramSender,
+        sender: MediaSender,
         settings: Settings,
         metrics: JobMetrics | None = None,
         progress_reporter: ProgressReporter | None = None,
@@ -124,7 +123,7 @@ class ProcessDownloadUseCase:
             # ``storage`` is allowed to be ``None`` in unit tests that
             # only exercise the retry/error machinery (test_retry_semantics).
             # Production wiring in ``composition.build_worker`` always
-            # injects a real ``LocalStorage``.
+            # injects a real storage.
             if self._storage is not None:
                 try:
                     self._storage.assert_free_space()

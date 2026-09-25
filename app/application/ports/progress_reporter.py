@@ -16,9 +16,9 @@ This module defines the port. Concrete implementations:
 * ``app.infrastructure.cache.redis_progress_reporter.RedisProgressReporter``
   (added in PR 3 of the instant-download feature set) — writes to a
   Redis hash and publishes a pubsub event.
-* ``app.infrastructure.cache.noop_progress_reporter.NoopProgressReporter``
-  — silent sink used in tests and when
-  ``Settings.INSTANT_DOWNLOAD_ENABLED=false``.
+* :class:`NoopProgressReporter` (this module) — silent sink used in
+  tests and when ``Settings.INSTANT_DOWNLOAD_ENABLED=false``. It lives
+  next to the port because it has no I/O and use cases fall back to it.
 
 Semantics
 ---------
@@ -112,3 +112,40 @@ class ProgressReporter(Protocol):
         independently raises :class:`JobCancelledError` at the next
         phase boundary and reconciles the job row.
         """
+
+
+class NoopProgressReporter(ProgressReporter):
+    """Drop-all implementation: every call returns immediately.
+
+    Stateless and safe to share across the whole process.
+    """
+
+    __slots__ = ()
+
+    async def start(
+        self,
+        *,
+        job_id: int,
+        chat_id: int,
+        message_id: int,
+        thumbnail_url: str | None,
+    ) -> None:
+        return None
+
+    async def update(
+        self,
+        *,
+        job_id: int,
+        percent: float,
+        stage: ProgressStage,
+    ) -> None:
+        return None
+
+    async def finish(self, *, job_id: int) -> None:
+        return None
+
+    async def fail(self, *, job_id: int, reason: str) -> None:
+        return None
+
+    async def cancel(self, *, job_id: int) -> None:
+        return None

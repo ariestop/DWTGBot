@@ -16,17 +16,14 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import TelegramError
-
+from app.application.ports.media_sender import InlineButton, InlineKeyboard, MediaSender
+from app.application.ports.media_storage import MediaStorage
 from app.application.services.post_text_store import PostTextStore
 from app.application.services.temp_link_service import TempLinkService
 from app.config import Settings
 from app.domain.entities.media_info import DownloadResult
 from app.domain.enums import DeliveryMethod, MediaKind
 from app.exceptions import FileTooLargeError
-from app.infrastructure.storage.local_storage import LocalStorage
-from app.infrastructure.telegram.sender import TelegramSender
 from app.logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -81,8 +78,8 @@ class DeliveryService:
         self,
         *,
         settings: Settings,
-        sender: TelegramSender,
-        storage: LocalStorage,
+        sender: MediaSender,
+        storage: MediaStorage,
         temp_links: TempLinkService,
         post_text_store: PostTextStore | None = None,
     ) -> None:
@@ -177,7 +174,7 @@ class DeliveryService:
         job_id: int,
         chat_id: int,
         file: Path,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> DeliveryOutcome:
         size = file.stat().st_size
         if size > self._settings.max_file_size_bytes:
@@ -224,14 +221,13 @@ class DeliveryService:
             message_lines.append(_escape(footer))
         message = "\n".join(message_lines)
 
-        download_button = InlineKeyboardButton("📥 Скачать", url=url)
+        # The download button is the primary call-to-action, so it goes on
+        # top; pre-existing rows (the "Получить текст поста" button) stay.
+        download_row = (InlineButton("📥 Скачать", url=url),)
         if reply_markup is None:
-            link_markup = InlineKeyboardMarkup([[download_button]])
+            link_markup = InlineKeyboard(rows=(download_row,))
         else:
-            # Prepend a fresh row with the download button so it is the
-            # primary call-to-action; preserve any pre-existing rows
-            # (e.g. the "Получить текст поста" callback button).
-            link_markup = InlineKeyboardMarkup([[download_button], *reply_markup.inline_keyboard])
+            link_markup = reply_markup.with_row_on_top(download_row)
 
         await self._sender.send_text(
             chat_id,
@@ -255,7 +251,7 @@ class DeliveryService:
         *,
         kind: MediaKind,
         caption: str | None,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         if kind is MediaKind.VIDEO:
             return await self._sender.send_video(chat_id, file, caption, reply_markup=reply_markup)
@@ -274,7 +270,7 @@ class DeliveryService:
         size: int,
         kind: MediaKind,
         caption: str | None,
-        reply_markup: InlineKeyboardMarkup | None,
+        reply_markup: InlineKeyboard | None,
     ) -> str | None:
         """Direct Telegram upload with a short retry budget.
 
@@ -289,7 +285,7 @@ class DeliveryService:
         switching to a link on a file the user expected inline.
         """
         attempts = max(1, _UPLOAD_RETRY_ATTEMPTS)
-        last_exc: TelegramError | None = None
+        last_exc: BaseException | None = None
         for attempt in range(1, attempts + 1):
             try:
                 return await self._upload_one(
@@ -299,7 +295,7 @@ class DeliveryService:
                     caption=caption,
                     reply_markup=reply_markup,
                 )
-            except TelegramError as exc:
+            except self._sender.upload_retry_errors as exc:
                 last_exc = exc
                 if attempt >= attempts:
                     _logger.warning(
@@ -327,7 +323,7 @@ class DeliveryService:
         assert last_exc is not None  # pragma: no cover
         raise last_exc  # pragma: no cover
 
-    async def _post_text_markup(self, *, job_id: int) -> InlineKeyboardMarkup | None:
+    async def _post_text_markup(self, *, job_id: int) -> InlineKeyboard | None:
         """Return the "Получить текст поста" keyboard iff the key
         exists. Any failure (no store wired, Redis outage) maps to
         ``None`` so delivery proceeds without a button — losing the
@@ -342,11 +338,11 @@ class DeliveryService:
             return None
         if not present:
             return None
-        button = InlineKeyboardButton(
+        button = InlineButton(
             _POST_TEXT_BUTTON_LABEL,
             callback_data=_post_text_callback_data(job_id),
         )
-        return InlineKeyboardMarkup([[button]])
+        return InlineKeyboard(rows=((button,),))
 
 
 def _caption(result: DownloadResult, size_bytes: int, *, footer: str = "") -> str:
