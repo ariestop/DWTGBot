@@ -111,7 +111,7 @@
 | Bot | `bot/` | handlers, callbacks, keyboards, middleware для `python-telegram-bot` |
 | API | `api/` | FastAPI: внутренние health endpoints + публичные temp-link routes |
 | Workers | `workers/` | Долгоживущие процессы cleanup + backup |
-| Composition | `composition.py` | Dependency wiring (composition root) |
+| Composition | `app/composition/` | Dependency wiring (composition root) |
 
 ---
 
@@ -344,7 +344,7 @@ app/
   domain/                Pure entities, enums, repository interfaces
   infrastructure/        DB, cache, queue, providers, downloader, storage, telegram
   workers/               cleanup_worker, backup_worker
-  composition.py         Composition root (DI wiring)
+  composition/           Composition root (DI wiring, one module per process)
   config.py              pydantic-settings
   logging_config.py      structlog setup
   exceptions.py          AppError hierarchy

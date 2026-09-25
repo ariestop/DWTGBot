@@ -99,12 +99,12 @@ class ProviderRegistry(Protocol):
 ```
 
 Implemented by `DefaultProviderRegistry([yt, ig])` in
-`app/infrastructure/providers/registry.py`. Wired in `composition.py`
-inside `_build_provider_registry`. Adding a provider = appending it to the
+`app/infrastructure/providers/registry.py`. Wired in `app/composition/`
+inside `build_provider_registry`. Adding a provider = appending it to the
 list and updating the wiring.
 
 ```python
-def _build_provider_registry(settings, storage) -> ProviderRegistry:
+def build_provider_registry(settings, storage) -> ProviderRegistry:
     ytdlp = YtDlpRunner(settings)
     yt = YouTubeProvider(settings=settings, ytdlp=ytdlp, storage=storage)
     ig = InstagramProvider(settings=settings, ytdlp=ytdlp, storage=storage)
@@ -261,7 +261,7 @@ The minimum touchpoints (full discussion in `30-`):
 | 2 | Alembic migration | extend the Postgres `platform` ENUM |
 | 3 | `app/utils/url.py:detect_platform` | URL → Platform routing |
 | 4 | `app/infrastructure/providers/<name>.py` | implement `BaseProvider` |
-| 5 | `app/composition.py:_build_provider_registry` | register the instance |
+| 5 | `app/composition/:build_provider_registry` | register the instance |
 | 6 | tests (URL detection, `build_options`, integration with marker) | safety |
 | 7 | docs (`07-` §7, `00-`, `30-` Appendix, `README.md`) | discoverability |
 | 8 | optional: cookies / rate-limit settings in `13-config-and-env.md` | platform-specific |

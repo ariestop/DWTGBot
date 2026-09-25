@@ -38,7 +38,7 @@ flowchart TB
     Infra -.implements.-> Domain
     App --> Domain
 
-    Composition["composition.py<br/>(composition root)"] -. wires .-> Bot
+    Composition["app/composition/<br/>(composition root)"] -. wires .-> Bot
     Composition -. wires .-> API
     Composition -. wires .-> Workers
     Composition -. wires .-> Infra
@@ -47,7 +47,7 @@ flowchart TB
 **Reading the diagram:**
 - Solid arrows = "depends on" (imports allowed).
 - Dashed arrows = "implements / wires".
-- The **composition root** (`app/composition.py`) is the *only* module that
+- The **composition root** (`app/composition/`) is the *only* module that
   knows about both inner and outer layers. It instantiates concrete
   infrastructure and injects it into use cases.
 
@@ -61,11 +61,11 @@ For the precise import-allowed matrix see [`03-project-structure.md`](03-project
 |---|---|---|---|
 | **Domain** | `app/domain/` | Pure dataclass entities, enums, repository ABCs, business invariants | Importing infrastructure, importing application; no I/O |
 | **Application** | `app/application/` | Use cases, service protocols (`Provider`, `QueueProducer`, `RequestStateStore`), ports (`MediaSender`, `MediaStorage`, `ProgressReporter` — ADR-0012), DTOs | Importing infrastructure or third-party SDKs (enforced by `app/tests/test_layering.py`); instantiating concrete repos |
-| **Infrastructure** | `app/infrastructure/` | DB (SQLAlchemy), Redis, arq, yt-dlp/ffmpeg runners, providers, storage, Telegram client | Containing business logic; bypassing `app/composition.py` |
+| **Infrastructure** | `app/infrastructure/` | DB (SQLAlchemy), Redis, arq, yt-dlp/ffmpeg runners, providers, storage, Telegram client | Containing business logic; bypassing `app/composition/` |
 | **Bot (adapter)** | `app/bot/` | python-telegram-bot handlers, callbacks, keyboards, middleware | Containing business logic; calling infrastructure directly |
 | **API (adapter)** | `app/api/` | FastAPI routers, lifecycle, internal/public endpoints | Containing business logic; bypassing use cases |
 | **Workers (adapter)** | `app/workers/` | Long-running loops (cleanup, backup) | Containing business logic; running outside the composition lifecycle |
-| **Composition** | `app/composition.py` | The single composition root | Knowing UI/handler details |
+| **Composition** | `app/composition/` | The single composition root | Knowing UI/handler details |
 | **Entrypoints** | `app/main_bot.py`, `main_api.py`, `main_worker.py` | Process startup, signal handling, calling composition | Holding any logic |
 
 Each layer also has a topic doc in `docs/`:
@@ -318,13 +318,13 @@ End-to-end narrative version: [`05-data-flow.md`](05-data-flow.md).
 
 ## 7. Composition root pattern
 
-`app/composition.py` is the **only** module that imports both inner and
+`app/composition/` is the **only** module that imports both inner and
 outer layers. It builds three "compositions":
 
 ```mermaid
 flowchart TB
     cfg["Settings (pydantic)"] --> CR
-    subgraph CR["composition.py"]
+    subgraph CR["app/composition/"]
         bb["build_bot()"]
         bw["build_worker()"]
         ba["build_api()"]
@@ -381,7 +381,7 @@ This section consolidates the *why*. Full reasoning lives in the ADRs.
 | GitHub Actions CI/CD | Co-located with code, free tier, single auth surface | [ADR-0005 §3.11](adr/0005-locked-architectural-assumptions.md) |
 | Bash TUI installer | Bash present everywhere; right size for the operator flow | [ADR-0005 §3.12](adr/0005-locked-architectural-assumptions.md) |
 | `ruff format` (no `black`) | Single tool; faster on this codebase | [ADR-0003](adr/0003-ruff-format-no-black.md) |
-| Composition root | Single wiring location, easy to fake | (foundational principle; see `app/composition.py`) |
+| Composition root | Single wiring location, easy to fake | (foundational principle; see `app/composition/`) |
 | Worker holds its own `telegram.Bot` | Bypass bot event loop for large uploads | (implied; see `09`, `10`) |
 | Nginx `X-Accel-Redirect` | Auth in Python, bytes in nginx | [ADR-0004](adr/0004-temp-links-via-nginx-x-accel.md) |
 | `pydantic-settings` fail-fast | Catch misconfig before traffic | (implied; see `13`) |
@@ -396,7 +396,7 @@ merge.
 1. **Importing `app.infrastructure.*` from `app.domain.*` or `app.application.*`.**
    Breaks the layering and kills test isolation.
 2. **Bypassing the composition root.** No module other than
-   `app/composition.py`, `app/main_*.py`, and `app/bot/application.py`'s factory
+   `app/composition/`, `app/main_*.py`, and `app/bot/application.py`'s factory
    should instantiate concrete infrastructure (e.g. `RedisRequestStateStore()`).
    Use the protocol type, accept it via constructor injection.
 3. **Calling `Provider`s from bot handlers directly.** Always go through a
@@ -425,7 +425,7 @@ Where you are *expected* to plug in:
 |---|---|---|
 | New media platform | `app/infrastructure/providers/<name>.py` + register in `DefaultProviderRegistry` | [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md) |
 | New bot command | `app/bot/handlers/commands.py` + register in `app/bot/application.py` | [`28-implementation-playbook.md`](28-implementation-playbook.md) |
-| New use case | `app/application/use_cases/<name>.py` + wire in `composition.py` | [`28-implementation-playbook.md`](28-implementation-playbook.md) |
+| New use case | `app/application/use_cases/<name>.py` + wire in `app/composition/` | [`28-implementation-playbook.md`](28-implementation-playbook.md) |
 | New healthcheck | `app/api/internal/health.py` (extend `readyz`) | [`15-healthchecks.md`](15-healthchecks.md) |
 | New env variable | `app/config.py` (`Settings`) + `.env.example` + `13-config-and-env.md` | [`13`](13-config-and-env.md), [`27`](27-coding-standards.md) |
 | New DB table / column | New Alembic migration + new ORM model + new repo | [`12-db-schema.md`](12-db-schema.md), [`28`](28-implementation-playbook.md) |

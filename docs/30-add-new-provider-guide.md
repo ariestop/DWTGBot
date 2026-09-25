@@ -451,7 +451,7 @@ This is the **gate before any file edit**. Cross-ref §5.1 of
       strings (≤ 12).
 - [ ] **`Platform` enum addition planned** — including the
       `ALTER TYPE ... ADD VALUE` migration shape (P10).
-- [ ] **Registry wiring planned** — entry in `composition.py`.
+- [ ] **Registry wiring planned** — entry in `app/composition/`.
 - [ ] **Failure modes enumerated** — geo block, private content,
       DRM, age gate, deleted, rate-limited.
 - [ ] **Logging events named** — `<platform>_get_info_started`,
@@ -1768,7 +1768,7 @@ Provider deploys must be idempotent (P9):
 - ❌ ENUM addition without migration. **P10.**
 - ❌ Editing a previously-shipped migration. **P10.**
 - ❌ Cookies baked into image. **P11.**
-- ❌ Provider added but not registered in `composition.py`. **P2.**
+- ❌ Provider added but not registered in `app/composition/`. **P2.**
 
 ---
 
@@ -1783,7 +1783,7 @@ cheapest cure.
 | 1 | Started coding without `yt-dlp -j` inspection | Crashes on missing dict key | Run `yt-dlp -j`; record fixture; use `.get()` | P8 |
 | 2 | Added `if platform == Platform.NEW` in a use case | Branch outside provider | Move logic into the provider | P5, P6, P8 |
 | 3 | Skipped the alembic migration for the new ENUM | DB rejects inserts: `invalid input value for enum platform` | Add `ALTER TYPE … ADD VALUE IF NOT EXISTS` migration | P10 |
-| 4 | Forgot to register provider in `composition.py` | Bot replies "Platform not supported" | Add entry to `_build_provider_registry` | P2 |
+| 4 | Forgot to register provider in `app/composition/` | Bot replies "Platform not supported" | Add entry to `build_provider_registry` | P2 |
 | 5 | `entry["field"]` direct access | KeyError on a mildly different yt-dlp output | `entry.get(field, default)` | P8 |
 | 6 | Trusted yt-dlp's types | TypeError on numeric vs string | Explicit `str(...)`, `float(...)`, `int(...)` casts | P8 |
 | 7 | Renamed a `DownloadOption.key` "for clarity" | In-flight callbacks for the old key fail | Revert; add new key alongside if needed | P8 |
@@ -1850,12 +1850,12 @@ in [Appendix B.1](#b1--baseprovider-implementation-skeleton).
 
 ### Step 6 — Wire into the registry
 
-`app/composition.py`:
+`app/composition/`:
 
 ```python
 from app.infrastructure.providers.tiktok import TikTokProvider
 
-def _build_provider_registry(settings, storage):
+def build_provider_registry(settings, storage):
     ytdlp = YtDlpRunner(settings)
     yt = YouTubeProvider(settings=settings, ytdlp=ytdlp, storage=storage)
     ig = InstagramProvider(settings=settings, ytdlp=ytdlp, storage=storage)
@@ -1911,7 +1911,7 @@ PLAT_PASCAL=TikTok
 | 4 | `pytest -x -q -k "${PLAT_LOWER}" app/tests/test_url_detection.py` | all green; ≥5 tests |
 | 5 | `python3 -m py_compile app/infrastructure/providers/${PLAT_LOWER}.py && echo "✓"` | `✓` |
 | 5 | `grep -c "class ${PLAT_PASCAL}Provider(BaseProvider):" app/infrastructure/providers/${PLAT_LOWER}.py` | `1` |
-| 6 | `grep -c "${PLAT_PASCAL}Provider" app/composition.py` | `≥ 2` (import + instantiation) |
+| 6 | `grep -c "${PLAT_PASCAL}Provider" app/composition/` | `≥ 2` (import + instantiation) |
 | 7 | `grep -nE "PROVIDER_${PLAT_UPPER}_" app/config.py .env.example deploy/{single,nl1,nl2}/.env.example 2>/dev/null \| wc -l` | matches OR `0` if no env added |
 | 8 | `pytest -x -q app/tests/test_providers_${PLAT_LOWER}.py` | all green; ≥15 tests |
 | 8 | `grep -cE '^(async )?def test_' app/tests/test_providers_${PLAT_LOWER}.py` | `≥ 15` |
@@ -1994,7 +1994,7 @@ provider → registry → tests → docs → rollout note → risks.
 | 2 | `migrations/versions/<rev>_add_tiktok_platform_enum.py` | New migration |
 | 3 | `app/utils/url.py` | Add `_TIKTOK_HOSTS` + dispatch line |
 | 4 | `app/infrastructure/providers/tiktok.py` | New provider |
-| 5 | `app/composition.py` | Register `TikTokProvider` |
+| 5 | `app/composition/` | Register `TikTokProvider` |
 | 6 | `app/tests/test_url_detection.py` | Extend with TikTok cases |
 | 7 | `app/tests/test_providers_tiktok.py` | New test file (15 scenarios) |
 | 8 | `app/tests/fixtures/yt_dlp_tiktok_video.json` | New |
@@ -2238,10 +2238,10 @@ class TikTokProvider(BaseProvider):
 #### 25.3.5 Registry wiring
 
 ```python
-# app/composition.py
+# app/composition/
 from app.infrastructure.providers.tiktok import TikTokProvider
 
-def _build_provider_registry(settings: Settings, storage: LocalStorage) -> ProviderRegistry:
+def build_provider_registry(settings: Settings, storage: LocalStorage) -> ProviderRegistry:
     ytdlp = YtDlpRunner(settings)
     yt = YouTubeProvider(settings=settings, ytdlp=ytdlp, storage=storage)
     ig = InstagramProvider(settings=settings, ytdlp=ytdlp, storage=storage)
@@ -2422,7 +2422,7 @@ is unticked, the provider is **not acceptable** for merge.
 - [ ] Alembic migration with `ALTER TYPE … ADD VALUE IF NOT EXISTS`.
 - [ ] URL detection: ≥3 positive + ≥2 negative test cases pass.
 - [ ] `<Platform>Provider` implements all three abstract methods.
-- [ ] Provider registered in `composition.py`.
+- [ ] Provider registered in `app/composition/`.
 - [ ] `BaseProvider` surface unchanged (no new public methods).
 - [ ] At least one happy-path `get_info` test passes against
       a recorded fixture.
@@ -2827,10 +2827,10 @@ def downgrade() -> None:
 ### B.4 — Registry wiring snippet
 
 ```python
-# app/composition.py — partial
+# app/composition/ — partial
 from app.infrastructure.providers.<platform> import <Platform>Provider
 
-def _build_provider_registry(settings, storage):
+def build_provider_registry(settings, storage):
     ytdlp = YtDlpRunner(settings)
     yt = YouTubeProvider(settings=settings, ytdlp=ytdlp, storage=storage)
     ig = InstagramProvider(settings=settings, ytdlp=ytdlp, storage=storage)
@@ -2921,11 +2921,11 @@ rg -n '_logger\.[a-z]+\(\s*f"' app/infrastructure/providers/
 # expected: empty
 ```
 
-### C.9 — Provider registered in `composition.py` (P2)
+### C.9 — Provider registered in `app/composition/` (P2)
 
 ```bash
 PLAT=tiktok    # set to your new platform
-rg -n "${PLAT^}Provider" app/composition.py
+rg -n "${PLAT^}Provider" app/composition/
 # expected: at least one match (import + instantiation)
 ```
 

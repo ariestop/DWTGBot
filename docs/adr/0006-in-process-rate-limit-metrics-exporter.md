@@ -70,7 +70,7 @@ Code locations:
 - Port: `app/application/services/rate_limit_metrics.py`
 - Implementation: `app/infrastructure/metrics/prometheus_metrics.py`
 - HTTP server: `app/infrastructure/metrics/server.py`
-- Wiring: `app/composition.py:_build_metrics`
+- Wiring: `app/composition/:build_metrics`
 - Lifecycle: `app/main_bot.py` (start before `application.start`, stop
   in the `finally` block)
 - Settings: `METRICS_ENABLED`, `METRICS_BIND_HOST`, `METRICS_PORT`,
@@ -208,7 +208,7 @@ collapses that to O(1).
 
 - Code: `app/infrastructure/metrics/prometheus_metrics.py`,
   `app/infrastructure/metrics/server.py`,
-  `app/composition.py`, `app/main_bot.py`
+  `app/composition/`, `app/main_bot.py`
 - Tests: `app/tests/test_rate_limit_metrics.py`,
   `app/tests/test_rate_limit_settings.py`
 - Docs: `docs/35-metrics-and-slo.md` §7,

@@ -32,6 +32,22 @@ class Settings(BaseSettings):
 - `env_file=".env"` — convenience for local dev only. In production, env
   vars are injected by Docker Compose via `env_file: .env` (per stack).
 
+Поля объявлены не в самом `Settings`, а в 18 тематических группах в
+`app/config_groups.py` (`DatabaseSettings`, `RedisSettings`,
+`ProgressSettings`, `RateLimitSettings` …). Каждая группа — обычный
+`BaseModel`-mixin, `Settings` наследует их все:
+
+```python
+class Settings(AppSettings, TelegramSettings, DatabaseSettings, ..., BaseSettings): ...
+```
+
+Поэтому имена переменных окружения остаются плоскими (`POSTGRES_HOST`, а
+не `DATABASE__HOST`), а существующие `.env` работают без изменений. В
+`app/config.py` остаются загрузка, вычисляемые свойства (`database_url`,
+`redis_url`, `rate_limit_windows` …), валидаторы и `validate_runtime`.
+`app/tests/test_config_groups.py` проверяет, что каждое поле принадлежит
+ровно одной группе.
+
 Single accessor:
 
 ```python
@@ -390,7 +406,9 @@ flowchart LR
 
 ## 7. Adding a new variable — checklist
 
-- [ ] Add a typed field to `Settings` with `Field(...)` bounds when
+- [ ] Add a typed field to the matching group in `app/config_groups.py`
+      (a new group needs an entry in `SETTINGS_GROUPS` and in the
+      `Settings` bases) with `Field(...)` bounds when
       sensible.
 - [ ] If derived, expose via `@property` (no caller-side recomputation).
 - [ ] Update `.env.example` (root) **and** the per-stack examples

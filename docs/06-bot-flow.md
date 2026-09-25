@@ -19,7 +19,7 @@ cases, and renders. It owns no business logic.
 - Single process, single asyncio loop.
 - Long-polling via `python-telegram-bot` (no webhook by default — see ADR-005
   in [`adr/`](adr/README.md)).
-- One `BotContainer` is built at startup by `app/composition.py:build_bot()`
+- One `BotContainer` is built at startup by `app/composition/:build_bot()`
   and injected into PTB's `Application.bot_data` under a fixed key.
 - Handlers retrieve dependencies via `get_container(context.bot_data)`.
 

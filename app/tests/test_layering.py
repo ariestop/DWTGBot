@@ -3,7 +3,7 @@
 ``app/domain`` and ``app/application`` may import only the standard
 library and inner project modules. Concrete adapters (infrastructure,
 bot, api, workers, composition) and third-party SDKs are reached
-through ports wired in ``app/composition.py``.
+through ports wired in ``app/composition/``.
 """
 
 from __future__ import annotations

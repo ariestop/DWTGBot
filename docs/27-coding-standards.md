@@ -364,8 +364,8 @@ files = [p for p in files if p.suffix.lower() != ".m3u8"]
 7. **Shadowing builtins** (`list`, `id`, `type`, `input`).
 8. **Cyclic imports** "fixed" with `if TYPE_CHECKING` instead of fixing
    layering.
-9. **Module-level global mutable state** outside `composition.py`.
-10. **Inline ORM session creation** outside `composition.py` /
+9. **Module-level global mutable state** outside `app/composition/`.
+10. **Inline ORM session creation** outside `app/composition/` /
     repositories.
 11. **`# type: ignore` without a comment** explaining why.
 

@@ -185,7 +185,7 @@ def _build_queue_sampler(
 ) -> object | None:
     """Return a ``QueueDepthSampler`` instance or ``None`` when disabled.
 
-    Lazy-imported for the same reason as ``_build_metrics``: keeps
+    Lazy-imported for the same reason as ``build_metrics``: keeps
     deploys with ``METRICS_ENABLED=false`` from pulling in
     ``prometheus_client``-adjacent code paths.
     """
