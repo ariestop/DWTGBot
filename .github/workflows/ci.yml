@@ -23,14 +23,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: requirements/dev.txt
-
-      - name: Install ruff
-        run: pip install -r requirements/dev.txt
+      - uses: ./.github/actions/setup-python-deps
 
       - name: ruff format --check
         run: ruff format --check .
@@ -44,18 +37,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: |
-            requirements/base.txt
-            requirements/dev.txt
-
-      - name: Install deps
-        run: |
-          pip install -r requirements/base.txt
-          pip install -r requirements/dev.txt
+      - uses: ./.github/actions/setup-python-deps
 
       - name: mypy
         run: mypy app
@@ -66,21 +48,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: |
-            requirements/base.txt
-            requirements/dev.txt
+      - uses: ./.github/actions/setup-python-deps
 
       - name: Install ffmpeg (for yt-dlp postprocessor probes)
         run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
-
-      - name: Install deps
-        run: |
-          pip install -r requirements/base.txt
-          pip install -r requirements/dev.txt
 
       - name: pytest
         env:
@@ -144,18 +115,7 @@ jobs:
       DWTGBOT_TEST_REDIS_URL: redis://127.0.0.1:6379/15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: |
-            requirements/base.txt
-            requirements/dev.txt
-
-      - name: Install deps
-        run: |
-          pip install -r requirements/base.txt
-          pip install -r requirements/dev.txt
+      - uses: ./.github/actions/setup-python-deps
 
       - name: alembic upgrade head
         env:
@@ -185,6 +145,22 @@ jobs:
         with:
           scandir: ./.github/scripts
           severity: warning
+
+  dockerfile-lint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [bot, api, worker, backup]
+    steps:
+      - uses: actions/checkout@v4
+      - name: hadolint docker/${{ matrix.image }}.Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/${{ matrix.image }}.Dockerfile
+          config: .hadolint.yaml
 
   compose-validate:
     name: Compose config (single / nl1 / nl2)
