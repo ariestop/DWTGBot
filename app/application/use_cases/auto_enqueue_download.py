@@ -120,8 +120,7 @@ class AutoEnqueueDownloadUseCase:
     async def execute(self, payload: AutoEnqueueInput) -> AutoEnqueueResult:
         info: MediaInfo = payload.analyzed.info
         provider = self._providers.get(info.platform)
-        # ``default_option`` was introduced in PR 2; it is the contract
-        # point that keeps the picker removable without losing
+        # ``default_option`` is the contract point that keeps the picker removable without losing
         # correctness (YT picks highest video_<height>, IG picks
         # single/gallery_all by kind).
         selected = provider.default_option(info)

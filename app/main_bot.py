@@ -74,7 +74,7 @@ async def _amain() -> int:
         await application.initialize()
         app_initialized = True
         await application.start()
-        # ADR-0010 §2.2 + PR 4: the live-progress consumer needs a
+        # ADR-0010 §2.2: the live-progress consumer needs a
         # ready PTB ``Bot`` to issue edits. Start it *after*
         # ``application.start()`` and *before* polling opens so the
         # recovery scan catches any ``progress_meta:*`` keys created

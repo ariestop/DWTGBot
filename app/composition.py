@@ -75,13 +75,9 @@ class BotComposition:
     core: CoreInfra
     container: BotContainer
     arq_pool: ArqRedis
-    # ADR-0010 §2.2: side-channel progress writer. In PR 1 this is a
-    # Noop across the board; later PRs swap it for RedisProgressReporter
-    # behind ``INSTANT_DOWNLOAD_ENABLED``. Kept as a top-level field so
-    # the future bot ``progress_updater`` can hang off it without
-    # reshaping the composition.
+    # ADR-0010 §2.2: side-channel progress writer (Noop unless wired).
     progress_reporter: ProgressReporter = field(default_factory=NoopProgressReporter)
-    # ADR-0010 §2.2 + task §4 PR 4: side-channel consumer. Constructed
+    # ADR-0010 §2.2: side-channel consumer. Constructed
     # eagerly so the bot entrypoint can call ``.start(bot)`` after PTB
     # initialisation; None when ``PROGRESS_TTL_SEC <= 0`` is ever added
     # as a kill-switch (not exposed today).
@@ -266,7 +262,7 @@ async def build_bot(settings: Settings) -> BotComposition:
     # ADR-0010 §2.1: bot needs its own RedisProgressReporter to call
     # ``reporter.cancel`` from the cancel-button handler. The worker
     # builds a separate instance (different lifetime / sync-bridge);
-    # both share the same Redis namespace via ``_progress_key`` naming.
+    # both use the key layout in ``app.application.ports.progress_channel``.
     bot_progress_reporter: ProgressReporter = RedisProgressReporter(
         redis=core.redis,
         redis_url=settings.redis_url,
@@ -327,8 +323,7 @@ async def build_bot(settings: Settings) -> BotComposition:
     queue_sampler = _build_queue_sampler(settings, pool=arq_pool, metrics=job_metrics)
 
     # ADR-0010 §2.2: the bot is the sole *reader* of the side-channel.
-    # Built unconditionally — PR 4 lands the consumer before PR 5 wires
-    # producers, so an idle updater is a no-op until events arrive.
+    # Built unconditionally: with no producer events it simply stays idle.
     progress_updater = ProgressUpdater(settings=settings, redis=core.redis)
 
     return BotComposition(

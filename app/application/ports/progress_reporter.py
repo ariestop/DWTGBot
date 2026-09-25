@@ -14,7 +14,7 @@ edits a placeholder message.
 This module defines the port. Concrete implementations:
 
 * ``app.infrastructure.cache.redis_progress_reporter.RedisProgressReporter``
-  (added in PR 3 of the instant-download feature set) — writes to a
+  — writes to a
   Redis hash and publishes a pubsub event.
 * :class:`NoopProgressReporter` (this module) — silent sink used in
   tests and when ``Settings.INSTANT_DOWNLOAD_ENABLED=false``. It lives
