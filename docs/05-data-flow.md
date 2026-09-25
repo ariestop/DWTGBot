@@ -38,6 +38,13 @@ flowchart LR
 | 6. Deliver | worker (NL-2) → Telegram or → `temp_links` row | `download_jobs.status = DONE`, optional `temp_links` row |
 | 7. Cleanup | scheduler (NL-2) | files unlinked, `temp_links.is_active = false` |
 
+> **Топологии.** Метки NL-1 / NL-2 в таблицах и диаграммах этого документа
+> обозначают роль — control plane / media plane. В `split` это два хоста,
+> связанные WireGuard; в `single` обе плоскости работают на одном хосте, а
+> границу между ними проводят сети Docker (см.
+> [`02-architecture.md`](02-architecture.md) §3.1,
+> [ADR-0011](adr/0011-single-server-topology.md)).
+
 ---
 
 ## 2. Identifiers and correlation
@@ -253,8 +260,11 @@ Rules enforced by the firewall config (see
 
 - **Public internet**: only Nginx on NL-2 (`80/tcp`, `443/tcp`) and Bot's
   outgoing connections to Telegram.
-- **Private VLAN**: Postgres `5432/tcp` and Redis `6379/tcp` on NL-1 are
-  reachable **only** from NL-2's private IP.
+- **Private VLAN** (только в `split`): Postgres `5432/tcp` and Redis
+  `6379/tcp` on NL-1 are reachable **only** from NL-2's private IP. В
+  `single` приватной сети между хостами нет: Postgres и Redis не
+  публикуют портов на хост и доступны только по сети Docker
+  `dwtgbot_internal`; nginx к ней не подключён.
 - **NL-2 internal**: API listens on `127.0.0.1:8001` only; Nginx is the
   sole front door. Worker listens on nothing.
 

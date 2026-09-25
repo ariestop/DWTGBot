@@ -109,6 +109,25 @@ This is dull. It also halves your mean time to resolution.
 A panic-restart erases the smoking gun. Even when you "have to"
 restart:
 
+> **Выбор стека (для всех команд документа).** Блоки ниже задают алиасы
+> `NL1` (control plane) и `NL2` (media plane) для топологии `split`. В
+> топологии `single` оба плана живут на одном хосте — замените строки
+> определения алиасов на один стек:
+>
+> ```bash
+> STACK=deploy/single/docker-compose.yml   # single
+> # split: STACK=deploy/nl2/docker-compose.yml на NL-2 (media plane),
+> #        STACK=deploy/nl1/docker-compose.yml на NL-1 (control plane)
+> NL1="docker compose -f $STACK"; NL2="docker compose -f $STACK"
+> ```
+>
+> Сервисы определены только во фрагментах `deploy/compose/control.yml` и
+> `deploy/compose/media.yml`; стеки лишь подключают их через `include`.
+> Имена контейнеров (`dwtgbot_worker`, `dwtgbot_bot`, `dwtgbot_postgres`,
+> …) одинаковы в обеих топологиях, поэтому команды `docker exec dwtgbot_*`
+> работают без изменений. Вместо `deploy/nl1/.env` / `deploy/nl2/.env` в
+> `single` используется один `deploy/single/.env`.
+
 ```bash
 # Snapshot logs FIRST
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
@@ -133,8 +152,8 @@ echo "== 1) Container status (both planes) =="
 $NL1 ps; $NL2 ps
 
 echo "== 2) Last ERRORs across the system =="
-for s in nl1 nl2; do
-  test -f deploy/$s/docker-compose.yml \
+for s in single nl1 nl2; do
+  test -f deploy/$s/.env \
     && docker compose -f deploy/$s/docker-compose.yml logs \
        --no-color --since=$SINCE \
        | jq -c 'select(.level == "error" or .level == "warning")' 2>/dev/null \
@@ -142,8 +161,8 @@ for s in nl1 nl2; do
 done
 
 echo "== 3) Top error_class histogram =="
-for s in nl1 nl2; do
-  test -f deploy/$s/docker-compose.yml \
+for s in single nl1 nl2; do
+  test -f deploy/$s/.env \
     && docker compose -f deploy/$s/docker-compose.yml logs --no-color --since=$SINCE \
        | jq -r 'select(.error_class) | .error_class' 2>/dev/null \
        | sort | uniq -c | sort -rn
@@ -326,7 +345,8 @@ for the canonical event catalogue.
 | Certbot | NL-2 | `dwtgbot_certbot` | stdout (text) |
 
 Access via `docker compose -f deploy/<host>/docker-compose.yml
-logs <service>`.
+logs <service>`. В топологии `single` все перечисленные сервисы работают
+на одном хосте: `docker compose -f deploy/single/docker-compose.yml logs <service>`.
 
 ### 3.3 The ten essential `jq` queries
 
@@ -1055,6 +1075,7 @@ browser cannot download it.
 cd /opt/DWTGBot
 git log -1 --oneline
 docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env images
+# single: docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env images
 systemctl is-active dwtgbot-autodeploy.timer 2>/dev/null || true
 sudo cat /var/lib/dwtgbot/autodeploy/nl2.last_successful_sha 2>/dev/null || true
 ```
@@ -1096,6 +1117,7 @@ expired, inactive, or `downloads_count >= max_downloads`. If the user sees it
 on the first apparent click:
 
 ```bash
+# single: -f deploy/single/docker-compose.yml --env-file deploy/single/.env
 docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env \
   logs --since=10m nginx | grep -E '/d/|TelegramBot|status":410'
 ```
@@ -1164,6 +1186,10 @@ triangulation cleanly, and restart from §1.1.
 The recurring configuration foot-guns. Match the symptom; check
 the file.
 
+В топологии `single` все упомянутые ниже `deploy/nl1/.env` и
+`deploy/nl2/.env` — это один файл `deploy/single/.env`; строки о
+расхождении значений между NL-1 и NL-2 относятся только к `split`.
+
 | Symptom | Likely misconfig | Where to check |
 |---|---|---|
 | Bot starts fine, no replies | `BOT_TOKEN` rotated by mistake | `deploy/nl1/.env` |
@@ -1173,10 +1199,10 @@ the file.
 | `invalid input value for enum platform` | new `Platform.X` shipped without ENUM migration (P10) | `migrations/versions/` lacks `ALTER TYPE … ADD VALUE` |
 | `Bad Gateway` (502) on links | nginx cannot reach `api` or cached a stale Docker IP | `deploy/nginx/conf.d/media.conf.template`; verify dynamic `resolver 127.0.0.11` + variable `proxy_pass` and restart nginx |
 | `403 Forbidden` on links with `temp_link_path_invalid` | `temp_links.file_path` outside `STORAGE_PATH` | provider P11 violation; `file_path` audit |
-| Cookies expired / 403 on a platform | cookies file missing or stale on either host (Instagram needs both NL-1 and NL-2) | `deploy/{single,nl1,nl2}/.env::INSTAGRAM_COOKIES_FILE` and host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (bind-mount into bot+worker). Rotate per [`24-runbooks.md` §5.4 step 4](24-runbooks.md). |
+| Cookies expired / 403 on a platform | cookies file missing or stale on either host (Instagram needs both NL-1 and NL-2; в `single` — один хост и один `deploy/single/.env`) | `deploy/{single,nl1,nl2}/.env::INSTAGRAM_COOKIES_FILE` and host file `/srv/dwtgbot/secrets/cookies-instagram.txt` (bind-mount into bot+worker). Rotate per [`24-runbooks.md` §5.4 step 4](24-runbooks.md). |
 | `MAX_PARALLEL_DOWNLOADS=0` (typo) → workers idle | env mistyped | `deploy/nl2/.env` + `Settings` validation (Field `ge=1`) |
 | Default `TEMP_LINK_TTL_SECONDS` accidentally 0 | links 410 immediately | `Settings` defaults; `13-config-and-env.md` |
-| `STORAGE_PATH` differs between worker and cleanup | files orphaned; cleanup doesn't reach them | `deploy/nl2/docker-compose.yml::worker.environment` ⊕ `cleanup.environment` |
+| `STORAGE_PATH` differs between worker and cleanup | files orphaned; cleanup doesn't reach them | `deploy/compose/media.yml::worker` ⊕ `cleanup` (volumes / env; стеки `single` и `nl2` их только подключают) + `.env` стека |
 | Old image tag pinned in `.env` after deploy | new code "doesn't take effect" after a plain rolling restart | `deploy/<host>/.env::IMAGE_*`; prefer TUI `[16] Update to latest main` / `dwtgbot-autodeploy.service` for real advancement |
 | `proxy_read_timeout` too low for big files | sporadic 504 on links | `deploy/nginx/conf.d/media.conf.template` |
 | Off-host backup destination unreachable | `Connection refused` in backup logs | `BACKUP_DEST_*` env + network |
@@ -1191,7 +1217,7 @@ fails today" → diff env first:
 ```bash
 # Diff actual env in container vs repo
 diff <(docker exec dwtgbot_worker env | sort) \
-     <(grep -v '^#' deploy/nl2/.env | sort) | head -40
+     <(grep -v '^#' deploy/nl2/.env | sort) | head -40   # single: deploy/single/.env
 ```
 
 Anything in one and not the other is a candidate.
@@ -1247,7 +1273,8 @@ $NL1 logs --no-color --since=1h bot \
   | jq -c 'select(.request_id == "<id>")'
 
 # A.3 By job_id (across worker + bot)
-for s in nl1 nl2; do
+for s in single nl1 nl2; do
+  test -f deploy/$s/.env || continue
   docker compose -f deploy/$s/docker-compose.yml logs --no-color --since=2h \
     | jq -c 'select(.job_id == "<id>")'
 done
@@ -1378,7 +1405,7 @@ The shortest path from symptom to evidence. One line per symptom.
 | Queue keeps growing | `$NL2 logs --since=10m worker \| grep -c worker_job_done` |
 | Slow downloads | `$NL2 logs --since=30m worker \| jq -c 'select(.event=="worker_job_done")\|{job_id,duration_ms}' \| jq -s 'sort_by(.duration_ms)\|reverse\|.[0:10]'` |
 | Telegram 401 | `docker exec dwtgbot_bot curl -fsS https://api.telegram.org/bot${BOT_TOKEN}/getMe \| jq` |
-| Migration error | `docker compose -f deploy/nl1/docker-compose.yml run --rm migrate alembic upgrade head` |
+| Migration error | `docker compose -f deploy/nl1/docker-compose.yml run --rm migrate alembic upgrade head` (single: `-f deploy/single/docker-compose.yml`) |
 | Cleanup not running | `$NL2 logs --since=24h cleanup \| jq -c 'select(.event=="cleanup_done")' \| tail` |
 | Backup not fresh | `ls -laht /var/backups/dwtgbot/*.sql.gz \| head` |
 | Container restart loop | `docker inspect <c> -f '{{.State.OOMKilled}} {{.RestartCount}}'` |

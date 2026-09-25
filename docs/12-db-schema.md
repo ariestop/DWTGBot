@@ -113,7 +113,7 @@ The central operational table. Every user request that gets past
 | `selected_option_key` | `varchar(64)` | opaque-to-bot string from provider |
 | `selected_format` | `varchar(64)` | provider-resolved (e.g. yt-dlp format spec or `mp3`) |
 | `status` | `job_status` (ENUM, default `pending`) | indexed |
-| `file_path` | `text` | absolute path on NL-2 storage volume |
+| `file_path` | `text` | absolute path on NL-2 storage volume (том `dwtgbot_storage` media plane; в `single` — на том же хосте) |
 | `file_size` | `bigint` | bytes |
 | `mime_type` | `varchar(128)` | best guess (mime.guess or yt-dlp) |
 | `telegram_file_id` | `varchar(255)` | filled when delivered via Telegram |
@@ -269,7 +269,7 @@ alembic upgrade head
 The `bot` container runs `alembic upgrade head` at startup (see
 `docker/bot.entrypoint.sh`). For risky migrations:
 1. Run migrations manually first via `deploy/scripts/deploy_update.sh`
-   (NL-1 mode).
+   (NL-1 mode; в `single` — `deploy_update.sh single`).
 2. Take a backup *before* (`deploy/scripts/backup.sh`).
 3. Have a tested `downgrade()` for the migration; if you didn't write
    one, document why.
@@ -286,7 +286,7 @@ Backups: `deploy/scripts/backup.sh` runs `pg_dump | gzip` on a schedule
 | Mode | `pg_dump` custom format, gzipped |
 | Frequency | hourly (configurable) |
 | Retention | N most recent, default 24 hourly + 14 daily |
-| Location | NL-1 local + (optionally) off-site |
+| Location | NL-1 local + (optionally) off-site; в `single` — локально на единственном хосте (вместе с данными), поэтому off-site копия особенно важна |
 | Restore | `deploy/scripts/restore.sh` (interactive, asks for confirmation) |
 
 Restore stops services, drops & recreates DB, loads dump, restarts. See

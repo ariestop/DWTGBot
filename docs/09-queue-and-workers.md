@@ -26,6 +26,12 @@ flowchart LR
     W2 -->|HTTPS| TG
 ```
 
+> **Топологии.** Метки NL-1 / NL-2 обозначают роль — control plane /
+> media plane. В `split` это два хоста (Redis и Postgres доступны worker
+> через WireGuard); в `single` обе плоскости работают на одном хосте и
+> общаются по сетям Docker
+> ([ADR-0011](adr/0011-single-server-topology.md)).
+
 - Producer = the bot container on NL-1, via `ArqQueueProducer`.
 - Consumer = arq worker container(s) on NL-2, started by
   `arq app.infrastructure.queue.worker_settings.WorkerSettings`.

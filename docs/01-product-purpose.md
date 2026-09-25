@@ -32,7 +32,7 @@ get the file.
 |---|---|---|
 | **Casual viewer** | Grab a single short clip occasionally | Paste link → one tap → file in chat |
 | **Power user** | Specific quality, audio-only podcasts, IG carousels | Multi-option keyboard, MP3 mode, ZIP for galleries |
-| **Operator (you)** | A bot for a small community / personal use | Two-server stack, automated ops, predictable cost |
+| **Operator (you)** | A bot for a small community / personal use | Стек на одном сервере (`single`) или на двух (`split`), automated ops, predictable cost |
 
 Out of personas: enterprise tenants, content creators (we don't re-encode
 or watermark), public unauthenticated users at scale (we are not a SaaS).

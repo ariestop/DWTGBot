@@ -156,7 +156,10 @@ Possible future:
 
 **Extends:** more than two servers, region failover, k8s.
 
-- Surface: `deploy/`. **Locked** at two-server Compose today.
+- Surface: `deploy/`. Сейчас зафиксированы две Compose-топологии —
+  `single` (один хост) и `split` (NL-1 + NL-2), см.
+  [ADR-0011](adr/0011-single-server-topology.md); всё сверх этого
+  (больше двух серверов, multi-region, k8s) требует нового ADR.
 - Cost: **high** (multi-region adds split-brain concerns; k8s
   rewrites the operational story).
 - Risk: **high**. **Requires ADR.**

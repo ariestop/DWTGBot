@@ -51,9 +51,9 @@ This table classifies every field by privacy role.
 
 | Location | Class | Content |
 |---|---|---|
-| `STORAGE_PATH/jobs/<id>/...` (NL-2 disk) | **user-requested content** | the actual media files (videos, images, audio) |
-| `STORAGE_TMP_PATH/<random>/...` (NL-2 disk) | **transient user-requested content** | in-flight worker scratch |
-| Postgres dumps in `/var/backups/dwtgbot/` (NL-1 disk) | **PII at rest** | full snapshot of `download_jobs`, `temp_links`, `audit_logs` |
+| `STORAGE_PATH/jobs/<id>/...` (NL-2 disk; в `single` — диск единственного хоста) | **user-requested content** | the actual media files (videos, images, audio) |
+| `STORAGE_TMP_PATH/<random>/...` (NL-2 disk; в `single` — диск единственного хоста) | **transient user-requested content** | in-flight worker scratch |
+| Postgres dumps in `/var/backups/dwtgbot/` (NL-1 disk; в `single` — диск единственного хоста) | **PII at rest** | full snapshot of `download_jobs`, `temp_links`, `audit_logs` |
 | Off-host backup copies (S3 / restic / rsync target) | **PII at rest** | same as above, possibly multiple revisions |
 | Container logs (Docker JSON-file driver) | **non-PII by policy (P11)** — only IDs | structured logs |
 
@@ -203,7 +203,9 @@ Confirm with the requester which `user_id` they mean before proceeding.
 ) TO '/tmp/dsr_files_user_:user_id.csv'
 ```
 
-Copy this list to NL-2 (where the files live).
+Copy this list to NL-2 (where the files live). В топологии `single`
+файлы и Postgres на одном хосте — копировать ничего не нужно, все шаги
+§4.3 выполняются там же.
 
 ### 4.3 Delete in the correct order
 
@@ -219,6 +221,7 @@ awk -F',' -v root="$STORAGE_PATH" '$1 !~ "^"root {print "REJECTED: "$0; exit 1}'
   "$NL2_USER_FILES"
 
 # Mark links inactive first so a racing /d/<token> request gets a clean 410
+# (выполняется на NL-1, где Postgres; в single — на том же хосте)
 docker exec dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c "
   UPDATE temp_links SET is_active=false
    WHERE job_id IN (SELECT id FROM download_jobs WHERE user_id = :user_id);"
@@ -278,6 +281,10 @@ Two strategies, pick one and document it:
 
 #### Strategy B — purge backups too (only when legally required)
 
+Команды ниже даны для `split` (NL-1). В `single` замените
+`deploy/nl1/docker-compose.yml` на `deploy/single/docker-compose.yml`;
+команды `docker exec dwtgbot_*` одинаковы в обеих топологиях.
+
 ```bash
 # 1. Stop new backups during the purge
 sudo docker compose -f deploy/nl1/docker-compose.yml stop backup
@@ -317,6 +324,7 @@ historical lines:
 docker compose logs --no-color bot api worker | jq -c 'select(.user_id == :user_id)' | wc -l
 
 # Remove (per-container; requires service restart)
+# single: -f deploy/single/docker-compose.yml
 docker compose -f deploy/nl1/docker-compose.yml logs --no-color bot \
   | jq -c 'select((.user_id // 0) != :user_id)' \
   > /tmp/bot.purged.log
@@ -387,7 +395,7 @@ BEGIN
 END $$;
 ```
 
-Schedule via host cron on NL-1:
+Schedule via host cron on NL-1 (в `single` — на единственном хосте):
 
 ```cron
 # Drop a month of audit_logs that's older than 24 months

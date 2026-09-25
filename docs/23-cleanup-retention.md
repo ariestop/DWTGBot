@@ -32,7 +32,7 @@ tuning, monitoring, and a checklist.
 
 ## §1 — Purpose and scope
 
-The cleanup loop has **one job**: keep disk usage on NL-2 under
+The cleanup loop has **one job**: keep disk usage on the media-plane host (NL-2 в `split`, единственный хост в `single`) under
 control by removing files whose access ticket has expired,
 without deleting anything a live request might still hand out.
 
@@ -141,7 +141,7 @@ Implementation should `DELETE FROM media_cache WHERE expires_at < now()`. This i
 | `CLEANUP_INTERVAL_SECONDS` | `3600` (1 h) | cycle period |
 | `TMP_MAX_AGE_HOURS` | `24` | scratch dir age threshold (manual script) |
 
-All can be tuned in `deploy/nl2/.env` (cleanup-side) and `deploy/nl1/.env` (cache-side).
+All can be tuned in `deploy/nl2/.env` (cleanup-side) and `deploy/nl1/.env` (cache-side). В топологии `single` всё задаётся в одном `deploy/single/.env`.
 
 #### 3.4.1 `MEDIA_CACHE_TTL_SECONDS` controls **two** independent things
 
@@ -255,7 +255,11 @@ This catches the most common ops mistake (forgot `chown`).
 
 ### 5.1 Compose service
 
-`deploy/nl2/docker-compose.yml` defines the `cleanup` service:
+Сервис `cleanup` определён во фрагменте `deploy/compose/media.yml`
+(ADR-0011); стеки `deploy/single/docker-compose.yml` и
+`deploy/nl2/docker-compose.yml` лишь подключают его через `include`, поэтому
+сервис и контейнер `dwtgbot_cleanup` одинаковы в обеих топологиях.
+Упрощённый вид (актуальное определение — в самом фрагменте):
 
 ```yaml
 cleanup:
@@ -309,6 +313,7 @@ The cleanup service has `restart: unless-stopped` but no compose healthcheck (it
 
 ```bash
 NL2='docker compose -f /opt/dwtgbot/deploy/nl2/docker-compose.yml'
+# single: NL2='docker compose -f /opt/dwtgbot/deploy/single/docker-compose.yml'
 
 # Recent successful cycles
 $NL2 logs --since=24h --no-color cleanup \
@@ -322,7 +327,9 @@ A healthy run emits *some* of `temp_links_deactivated`, `temp_link_files_removed
 
 ## §6 — Manual cleanup (`deploy/scripts/cleanup.sh`)
 
-Script runs **on the NL-2 host**. Two phases.
+Script runs **on the NL-2 host** (в топологии `single` — на единственном
+хосте: скрипт сам находит стек с media plane через `find_stack_with media` и
+вызывает `compose_stack` из `deploy/scripts/helpers.sh`). Two phases.
 
 ### 6.1 What it does
 
@@ -336,7 +343,7 @@ find "${TMP_PATH}" -mindepth 1 -maxdepth 2 -type d -mmin "+${minutes}" \
      -print -prune -exec rm -rf {} +
 
 # Phase 2 — trigger one-shot DB cleanup cycle
-compose_nl2 run --rm cleanup python -c '
+compose_stack "${STACK}" run --rm cleanup python -c '
 import asyncio
 from app.workers.cleanup_worker import _run_cycle, build_api
 from app.config import get_settings
@@ -369,7 +376,7 @@ sudo bash /opt/dwtgbot/deploy/scripts/cleanup.sh
 sudo TMP_MAX_AGE_HOURS=2 bash /opt/dwtgbot/deploy/scripts/cleanup.sh
 ```
 
-> Equivalent: `bash deploy/scripts/install.sh` → option **15) Cleanup old files (NL-2)**.
+> Equivalent: `bash deploy/scripts/install.sh` → option **15) Cleanup old files (single / NL-2)**.
 
 ### 6.4 Safety properties
 
@@ -521,16 +528,15 @@ If you set TTL very low (e.g. 60 s) you increase the chance of cleanup eating a 
 **Defence (built-in)**: none — by design. The standard cycle only reaps via `temp_links`. If you observe persistent orphan growth, opt in to the orphan sweep:
 
 ```bash
-# One-off audit — list candidate orphans
-ssh ops@nl2 '
-  comm -23 \
-    <(find /var/lib/dwtgbot/storage/jobs -mindepth 1 -maxdepth 1 -type d \
-        | sed "s|.*/||" | sort) \
-    <(docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" dwtgbot_postgres \
-        psql -U dwtgbot -d dwtgbot -At -c \
-          "SELECT DISTINCT job_id::text FROM temp_links WHERE file_path IS NOT NULL"
-       | sort)
-'
+# One-off audit — list candidate orphans.
+# split: Postgres на NL-1, файлы на NL-2 — собираем два списка и сравниваем.
+# single: те же команды без ssh на единственном хосте.
+ssh ops@nl1 'docker exec dwtgbot_postgres psql -U dwtgbot -d dwtgbot -At -c \
+  "SELECT DISTINCT job_id::text FROM temp_links WHERE file_path IS NOT NULL"' \
+  | sort > /tmp/linked_jobs.txt
+ssh ops@nl2 'find /var/lib/dwtgbot/storage/jobs -mindepth 1 -maxdepth 1 -type d \
+  | sed "s|.*/||"' | sort > /tmp/disk_jobs.txt
+comm -23 /tmp/disk_jobs.txt /tmp/linked_jobs.txt
 ```
 
 The output is a list of `job_id`-named dirs **without** any `temp_links` row. After review (no false positives expected — but do review), delete them:
@@ -616,10 +622,12 @@ Only when users complain about clicking too late (e.g. shared in slow channels).
 
 ### 12.5 Tuning is reversible
 
-All cleanup knobs live in `deploy/nl2/.env` and take effect on container restart:
+All cleanup knobs live in `deploy/nl2/.env` (в `single` — `deploy/single/.env`) and take effect on container restart:
 
 ```bash
 ssh ops@nl2 'docker compose -f /opt/dwtgbot/deploy/nl2/docker-compose.yml restart cleanup'
+# single:
+docker compose -f /opt/dwtgbot/deploy/single/docker-compose.yml restart cleanup
 ```
 
 No DB migration, no risk of data loss. If you dislike a value, change it back.
@@ -638,7 +646,8 @@ No DB migration, no risk of data loss. If you dislike a value, change it back.
 
 ```bash
 NL2='docker compose -f /opt/dwtgbot/deploy/nl2/docker-compose.yml'
-RPW=$(grep ^REDIS_PASSWORD deploy/nl1/.env | cut -d= -f2)
+# single: NL2='docker compose -f /opt/dwtgbot/deploy/single/docker-compose.yml'
+RPW=$(grep ^REDIS_PASSWORD deploy/nl1/.env | cut -d= -f2)   # single: deploy/single/.env
 
 # 1) Disk usage at a glance
 df -h /var/lib/dwtgbot
@@ -650,6 +659,7 @@ du -sh /var/lib/dwtgbot/storage/jobs/* 2>/dev/null | sort -h | tail -20
 df -i /var/lib/dwtgbot
 
 # 4) Counts: active vs inactive temp links
+#    (Postgres: на NL-1 в split, на том же хосте в single)
 docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c "
   SELECT is_active, count(*) AS n,
          pg_size_pretty(coalesce(sum(downloads_count),0)::bigint) AS dl_count
@@ -701,6 +711,9 @@ Wire into your alerting stack of choice. The runbook is `24-runbooks.md` §12 (d
 
 ### 14.1 Force a cleanup cycle right now
 
+В `single` выполняйте те же команды прямо на единственном хосте (без
+`ssh ops@nl2`) и с `-f deploy/single/docker-compose.yml`.
+
 ```bash
 # Full scratch sweep + DB cycle (most common)
 ssh ops@nl2 'sudo bash /opt/dwtgbot/deploy/scripts/cleanup.sh'
@@ -738,7 +751,7 @@ SELECT count(*) FROM temp_links
  WHERE is_active = false AND file_path IS NOT NULL;
 
 -- Total bytes that would be reaped (approximate; SUM over actual files)
--- Run on NL-2 after pulling the file_paths:
+-- Run on NL-1 (Postgres); stat runs on NL-2 over ssh. В single — без ssh:
 docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -At -c \
   "SELECT file_path FROM temp_links
     WHERE is_active=false AND file_path IS NOT NULL LIMIT 500" \
@@ -786,6 +799,7 @@ UPDATE temp_links
 ssh ops@nl2 'docker compose -f /opt/dwtgbot/deploy/nl2/docker-compose.yml stop cleanup'
 # Re-enable
 ssh ops@nl2 'docker compose -f /opt/dwtgbot/deploy/nl2/docker-compose.yml start cleanup'
+# single: те же команды с -f /opt/dwtgbot/deploy/single/docker-compose.yml на единственном хосте
 ```
 
 While disabled, manually keep an eye on `df -h` — disk can fill in hours under load.

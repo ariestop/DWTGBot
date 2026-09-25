@@ -211,6 +211,10 @@ sum by (user_id) (rate({app="bot"} | json
   | event="bot_message_handled" [5m]))
 ```
 
+В топологии `single` оба сервиса (`postgres` и `worker`) живут на одном
+хосте: замените `deploy/nl1/docker-compose.yml` и
+`deploy/nl2/docker-compose.yml` на `deploy/single/docker-compose.yml`.
+
 ```bash
 # Quick local check on NL-1: failed-job count, last hour
 docker compose -f deploy/nl1/docker-compose.yml exec postgres \
@@ -385,7 +389,9 @@ processes. The acceptance criteria below remain the contract for any
 *new* metrics families (e.g. caching layer, future provider stats):
 
 - Either run inside an existing process (preferred — less ops surface)
-  or stand up a new service in `deploy/nl1/docker-compose.yml`. Either
+  or stand up a new service in the fragment `deploy/compose/control.yml`
+  (сервисы определяются только во фрагментах `deploy/compose/*.yml`,
+  стеки `single`/`nl1`/`nl2` их лишь подключают через `include`). Either
   way, `/metrics` is exposed on a **private** port (not 80/443).
 - An ADR records the decision; update §3 / §4 / §6 of this document
   with the new metric names.

@@ -7,6 +7,16 @@
 > ADR-0002 (python-telegram-bot), `docs/02-architecture.md`,
 > `docs/06-bot-flow.md`, `docs/09-queue-and-workers.md`
 
+> **Дополнено ADR-0011:** появилась топология `single` (всё на одном
+> хосте, один стек `deploy/single`). Порядок деплоя «NL-1, затем NL-2»
+> из §3.3 относится к `split`. В `single` обе плоскости поднимаются одним
+> `docker compose up -d`, а `depends_on: migrate`
+> (`condition: service_completed_successfully`) в
+> `deploy/single/single.override.yml` гарантирует, что api, worker и
+> cleanup стартуют только после миграций. Строгого порядка bot → worker
+> это не задаёт; риск из §3.2 (лишние ключи прогресса в Redis до
+> старта нового bot) остаётся безвредным и кратковременным.
+
 ---
 
 ## 1. Context
@@ -223,7 +233,8 @@ without pulling a previous image.
   `PROGRESS_DEBOUNCE_PERCENT`, `POST_TEXT_TTL_SEC`,
   `POST_TEXT_MAX_CHARS`.
 - Deploy order (runbook change): pull + `up -d` on NL-1 **first**,
-  then on NL-2. Documented in `docs/24-runbooks.md`.
+  then on NL-2. Documented in `docs/24-runbooks.md`. (В `single` —
+  см. дополнение в начале ADR.)
 - New metrics (must be in `/metrics`):
   `progress_events_published_total{stage}`,
   `progress_updates_applied_total{result}`,

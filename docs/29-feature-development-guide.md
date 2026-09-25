@@ -290,7 +290,7 @@ cat > "$TOUCH" <<'PATHS'
 app/bot/handlers/about.py
 app/bot/keyboards/about.py
 app/tests/test_bot_about.py
-docs/05-bot-ux-flows.md
+docs/06-bot-flow.md
 PATHS
 
 # Class hint by directory pattern (matches §4 of this doc)
@@ -916,8 +916,8 @@ Every new env var lives in **all** of:
 
 1. `app/config.py` — typed `Settings` field.
 2. `.env.example` — repo-root template.
-3. `deploy/nl1/.env.example` and/or `deploy/nl2/.env.example`.
-4. `deploy/nl{1,2}/docker-compose.yml`'s `environment:` block.
+3. `deploy/single/.env.example` и `deploy/nl1/.env.example` и/или `deploy/nl2/.env.example`.
+4. `environment:` block в соответствующем фрагменте `deploy/compose/{control,media}.yml` (стеки `deploy/{single,nl1,nl2}` только `include` их).
 5. `docs/13-config-and-env.md`.
 
 If secret: also `deploy/scripts/install.sh`.
@@ -1290,7 +1290,7 @@ return _new_path(...)
 - ❌ Non-idempotent deploy step. **P9.**
 - ❌ Env var added in only one place. **P4.**
 - ❌ Compose change losing healthcheck / restart / anchors. **P9.**
-- ❌ Public port on NL-1. **P11.**
+- ❌ Public port on NL-1 (в `single` — у любого сервиса, кроме `nginx`). **P11.**
 - ❌ `internal;` removed from storage Nginx location. **P11.**
 
 ### 20.7 Subprocess / paths / IO
@@ -1427,7 +1427,7 @@ reviewer sign-off.
 ### 22.9 Deploy
 
 - [ ] Compose / Nginx / install changes follow `28-` §§18–20 rules.
-- [ ] No new public port on NL-1.
+- [ ] No new public port on NL-1 (в `single` — только `nginx` публикует 80/443).
 - [ ] No security default loosened.
 - [ ] Nginx `internal;` preserved.
 
@@ -1491,7 +1491,7 @@ A green PR is necessary but not sufficient. Use this checklist to
 
 ### 23.4 Deploy
 
-- [ ] Deployed to NL-1 / NL-2 (per `20-deployment.md`).
+- [ ] Deployed to `single` или NL-1 / NL-2 (per `20-deployment.md`).
 - [ ] Containers reach `healthy`.
 - [ ] No restart loops in the first 5 minutes.
 - [ ] `/readyz` returns 200 from each plane.
@@ -1761,14 +1761,14 @@ zips; flag-gated rollout.
 
 - `app/config.py` (add field)
 - `app/workers/settings.py` (use it)
-- `.env.example`, `deploy/nl{1,2}/.env.example`,
-  `deploy/nl{1,2}/docker-compose.yml` (env passthrough)
+- `.env.example`, `deploy/{single,nl1,nl2}/.env.example`,
+  `deploy/compose/{control,media}.yml` (env passthrough)
 - `app/tests/test_config.py` (extend)
 - `docs/13-config-and-env.md` (row), `docs/09-queue-and-workers.md`
   (capacity note)
 
 **Rollout note:** safe — default preserves current behaviour;
-operator changes via `.env` and restarts NL-2 worker.
+operator changes via `.env` and restarts worker (NL-2 в `split`).
 
 **Risks:** operator sets a too-high value and exhausts disk /
 memory. Mitigation: clamp validator + doc warning.
@@ -2046,8 +2046,8 @@ that is the single testable unit.
 # BAD — adds /about command AND renames helpers AND restructures imports
 + app/bot/handlers/about.py            (new — feature work)
 + app/bot/keyboards/about.py           (new — feature work)
-- app/bot/handlers/start.py            (renamed greet() → say_hello())
-- app/utils/text.py                    (moved from app/utils/strings.py)
+- app/bot/handlers/commands.py         (renamed greet() → say_hello(); illustrative)
+- app/domain/text_utils.py             (moved helpers around; illustrative)
 - app/application/services/queue.py    (added type hints unrelated to /about)
 - 12 other unrelated files touched
 ```
@@ -2057,7 +2057,7 @@ that is the single testable unit.
 + app/bot/handlers/about.py            (new)
 + app/bot/keyboards/about.py           (new)
 + app/tests/test_bot_about.py          (new)
-+ docs/05-bot-ux-flows.md              (about flow added)
++ docs/06-bot-flow.md              (about flow added)
 + docs/14-logging-observability.md     (bot_about_invoked event)
 ```
 
@@ -2156,10 +2156,11 @@ state machine.
 # GOOD — five-place rule applied in the same PR
 + app/config.py                            : Settings.max_parallel_downloads: int = Field(default=4, ge=1, le=64)
 + .env.example                             : MAX_PARALLEL_DOWNLOADS=4
++ deploy/single/.env.example               : MAX_PARALLEL_DOWNLOADS=4
 + deploy/nl1/.env.example                  : MAX_PARALLEL_DOWNLOADS=4
 + deploy/nl2/.env.example                  : MAX_PARALLEL_DOWNLOADS=4
-+ deploy/nl1/docker-compose.yml            : environment block adds MAX_PARALLEL_DOWNLOADS
-+ deploy/nl2/docker-compose.yml            : environment block adds MAX_PARALLEL_DOWNLOADS
++ deploy/compose/control.yml               : environment block adds MAX_PARALLEL_DOWNLOADS
++ deploy/compose/media.yml                 : environment block adds MAX_PARALLEL_DOWNLOADS
 + docs/13-config-and-env.md                : new row with name/type/default/effect
 + app/tests/test_config.py                 : test that the field clamps + validates
 ```
@@ -2175,7 +2176,7 @@ deploy guarantee.
 ```diff
 # BAD — feature ships green CI because no tests exist; coverage drops
 + app/bot/handlers/about.py            (new)
-+ docs/05-bot-ux-flows.md              (new flow)
++ docs/06-bot-flow.md              (new flow)
 # (tests "to follow")
 ```
 
@@ -2184,7 +2185,7 @@ deploy guarantee.
 + app/bot/handlers/about.py
 + app/bot/keyboards/about.py
 + app/tests/test_bot_about.py          (renders text, calls keyboard, logs event)
-+ docs/05-bot-ux-flows.md
++ docs/06-bot-flow.md
 + docs/14-logging-observability.md     (bot_about_invoked)
 ```
 

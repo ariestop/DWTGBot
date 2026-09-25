@@ -215,7 +215,9 @@ the provider does **not** unlink files.
 - **Audio**: `bestaudio/best` then `FFmpegExtractAudio` postprocessor.
 - **Auth**: respects `YOUTUBE_COOKIES_FILE` for age/auth-gated videos and
   Shorts. Keep the same path on NL-1 and NL-2 because NL-1 probes metadata
-  and NL-2 downloads bytes.
+  and NL-2 downloads bytes. В `single` это один хост, один
+  `deploy/single/.env` и один файл: bot и worker монтируют один и тот же
+  `/srv/dwtgbot/secrets`.
 - **Size estimates**: rough bitrate buckets per height + duration; null
   when duration unknown.
 - **Playlists**: only the first entry is kept; treat playlist URLs as

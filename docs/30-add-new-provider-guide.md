@@ -362,7 +362,7 @@ A new platform deserves its own provider when **all** are true:
       site, content the bot should not redistribute).
 - [ ] No hard auth requirement that we can't satisfy (e.g.
       mandatory OAuth flow per user — out of scope).
-- [ ] The platform works from NL-2's IP range (no hard geo block
+- [ ] The platform works from NL-2's IP range (в `single` — IP единственного хоста) (no hard geo block
       from Netherlands).
 
 Each unchecked box must be **explicitly waived** in the design
@@ -421,7 +421,7 @@ This is the **gate before any file edit**. Cross-ref §5.1 of
 - [ ] **Auth requirement decided** — none / cookies / OAuth /
       token; storage location for secrets if any.
 - [ ] **Geo / age / DRM constraints noted** — what fails from
-      NL-2 IP, anonymous user.
+      NL-2 IP (в `single` — IP хоста), anonymous user.
 - [ ] **Media model decided** — single video / single audio /
       gallery / playlist / live (only first three are first-class
       supported).
@@ -1403,8 +1403,8 @@ Only if the provider needs cookies / OAuth / token storage:
 ```markdown
 ### Provider auth: `<X>`
 
-- Storage: `/srv/dwtgbot/secrets/cookies-<x>.txt` on NL-2 host, `0600`.
-- Mounted read-only into the worker container.
+- Storage: `/srv/dwtgbot/secrets/cookies-<x>.txt`, `root:1000 0660` — в `single` на единственном хосте, в `split` файл нужен на обоих хостах (NL-1 и NL-2).
+- Каталог смонтирован RW в `bot` и `worker`: yt-dlp записывает обновлённые cookies обратно в файл.
 - Env var: `PROVIDER_<X>_COOKIES` — absolute path inside the container.
 - Lifecycle: rotated manually; never logged; never copied into temp dirs.
 - Supply-chain: no third-party scraper added; only `yt-dlp` consumes the file.
@@ -1556,8 +1556,8 @@ Every new env var lives in **all** of:
 
 1. `app/config.py` — typed `Settings` field with default + validation.
 2. `.env.example` — repo root.
-3. `deploy/nl1/.env.example` and/or `deploy/nl2/.env.example`.
-4. `deploy/nl{1,2}/docker-compose.yml`'s `environment:` block.
+3. `deploy/single/.env.example` и `deploy/nl1/.env.example` и/или `deploy/nl2/.env.example`.
+4. `environment:` block в соответствующем фрагменте `deploy/compose/{control,media}.yml` (стеки `deploy/{single,nl1,nl2}` только `include` их).
 5. `docs/13-config-and-env.md`.
 
 If secret: also `deploy/scripts/install.sh` (generate / prompt).
@@ -1566,11 +1566,12 @@ If secret: also `deploy/scripts/install.sh` (generate / prompt).
 
 If the provider needs cookies:
 
-- Mount a persistent volume on NL-2 (worker side):
-  `/srv/dwtgbot/secrets/cookies-<platform>.txt`.
+- Каталог `/srv/dwtgbot/secrets` bind-mount'ится в `bot` и `worker`:
+  `/srv/dwtgbot/secrets/cookies-<platform>.txt` (в `single` — один хост,
+  в `split` файл нужен и на NL-1, и на NL-2).
 - Path passed via env var.
-- Read-only mount inside the container.
-- Permissions `0600` on host (per [`17-security.md`](17-security.md)).
+- Каталог смонтирован RW (yt-dlp сохраняет обновлённые cookies).
+- Права на хосте `root:1000 0660`, каталог `0750` (per [`17-security.md`](17-security.md)).
 - **Never** logged. **Never** copied into temp dirs.
 
 ### 20.4 DO / DON'T
@@ -1581,7 +1582,7 @@ If the provider needs cookies:
 | ✅ Default = "auth disabled / off" | ❌ Default = "use my dev cookies" (P11) |
 | ✅ Read via injected `Settings` | ❌ `os.environ[...]` (P5, P11) |
 | ✅ Validate in `Settings` (path exists if non-empty) | ❌ Crash at first use (P9) |
-| ✅ Cookies file is read-only and 0600 | ❌ World-readable cookies (P11) |
+| ✅ Cookies file is `root:1000 0660`, never world-readable | ❌ World-readable cookies (P11) |
 
 ---
 
@@ -1663,7 +1664,7 @@ Provider deploys must be idempotent (P9):
 | ✅ Migration first, code restart second | ❌ Restart code before migration (P9, P10) |
 | ✅ Test rollout on staging first | ❌ Deploy direct to production untested (P9) |
 | ✅ Update install script if new secret | ❌ Require operator to know about the secret out-of-band (P9, P11) |
-| ✅ Verify cookies file mount is read-only | ❌ Bake cookies into the image (P11) |
+| ✅ Verify cookies live only in `/srv/dwtgbot/secrets` (`0750` dir) | ❌ Bake cookies into the image (P11) |
 
 ---
 
@@ -1779,7 +1780,7 @@ cheapest cure.
 | 20 | Tested only the happy path | Edge cases break in prod | Cover all 15 scenarios from §16.2 | P4 |
 | 21 | Tested against real yt-dlp | CI flaky; depends on upstream | Inject `FakeYtDlp`; use recorded fixtures | P4 |
 | 22 | Added new env var only to `.env.example` | Var is `None` in prod | All five places (§20.2) | P4 |
-| 23 | Cookies baked into image | Secret leaks via image registry | Mount via volume; `0600` on host | P11 |
+| 23 | Cookies baked into image | Secret leaks via image registry | Bind-mount `/srv/dwtgbot/secrets`; `root:1000 0660` on host | P11 |
 | 24 | Added a public method to `BaseProvider` for one platform | All providers must now implement it; broken | Keep platform-specific behaviour inside the platform's provider | P2, P8 |
 | 25 | Registered provider but `Platform` enum not extended | `Platform.NEW` doesn't exist | Add ENUM value first; then provider; then registry | P2, P10 |
 
@@ -1861,10 +1862,11 @@ rule.
 ### Step 10 — Pre-merge sweep & deploy
 
 - Run [Appendix C](#appendix-c--pre-merge-grep-recipes-for-provider-work) grep recipes.
-- Validate `docker compose -f deploy/nl1/docker-compose.yml config`
-  and `… nl2/…`.
+- Validate `docker compose -f deploy/single/docker-compose.yml config`
+  (`single`) и `docker compose -f deploy/nl1/docker-compose.yml config`
+  + `… nl2/…` (`split`).
 - Verify `nginx -t` if nginx changed (rare for provider work).
-- Apply migration to prod; restart NL-2 worker; restart NL-1 bot.
+- Apply migration to prod; restart worker (NL-2 в `split`); restart bot (NL-1 в `split`).
 - Smoke test per §21.4.
 
 ### Step 11 — Per-step verification commands
@@ -1888,11 +1890,12 @@ PLAT_PASCAL=TikTok
 | 5 | `python3 -m py_compile app/infrastructure/providers/${PLAT_LOWER}.py && echo "✓"` | `✓` |
 | 5 | `grep -c "class ${PLAT_PASCAL}Provider(BaseProvider):" app/infrastructure/providers/${PLAT_LOWER}.py` | `1` |
 | 6 | `grep -c "${PLAT_PASCAL}Provider" app/composition.py` | `≥ 2` (import + instantiation) |
-| 7 | `grep -nE "PROVIDER_${PLAT_UPPER}_" app/config.py .env.example deploy/nl{1,2}/.env.example 2>/dev/null \| wc -l` | matches OR `0` if no env added |
+| 7 | `grep -nE "PROVIDER_${PLAT_UPPER}_" app/config.py .env.example deploy/{single,nl1,nl2}/.env.example 2>/dev/null \| wc -l` | matches OR `0` if no env added |
 | 8 | `pytest -x -q app/tests/test_providers_${PLAT_LOWER}.py` | all green; ≥15 tests |
 | 8 | `grep -cE '^(async )?def test_' app/tests/test_providers_${PLAT_LOWER}.py` | `≥ 15` |
 | 9 | `for d in docs/07-provider-architecture.md docs/12-db-schema.md docs/14-logging-observability.md; do grep -q "${PLAT_PASCAL}\\\|${PLAT_LOWER}" "$d" \|\| echo "MISS $d"; done` | empty (no `MISS`) |
 | 10 | `bash <(sed -n '/^### C\\.15/,/^```$/p' docs/30-add-new-provider-guide.md \| sed -n '/^```bash/,/^```/p' \| sed '1d;$d')` | empty (no findings) |
+| 10 | `docker compose -f deploy/single/docker-compose.yml config >/dev/null && echo "✓"` | `✓` |
 | 10 | `docker compose -f deploy/nl1/docker-compose.yml config >/dev/null && echo "✓"` | `✓` |
 | 10 | `docker compose -f deploy/nl2/docker-compose.yml config >/dev/null && echo "✓"` | `✓` |
 
@@ -2368,8 +2371,8 @@ async def test_download_idempotent_overwrite(tmp_path):
 ### 25.5 Rollout note
 
 - Apply migration `0008_add_tiktok_platform_enum` first.
-- Restart NL-2 worker (loads `TikTokProvider`).
-- Restart NL-1 bot (loads new URL detection).
+- Restart worker (loads `TikTokProvider`; NL-2 в `split`).
+- Restart bot (loads new URL detection; NL-1 в `split`).
 - Smoke test:
   - paste a real TikTok URL → analyze succeeds, options shown;
   - click "Скачать видео" → file delivered;
@@ -2736,7 +2739,8 @@ class <Platform>Provider(BaseProvider):
 ### B.2 — `FakeYtDlp` skeleton
 
 ```python
-# app/tests/fakes/yt_dlp.py
+# app/tests/fakes/yt_dlp.py — новый файл (создать); каталога app/tests/fakes/ пока нет,
+# существующие фейки определены прямо в тестах или в app/tests/conftest.py
 from __future__ import annotations
 
 from pathlib import Path

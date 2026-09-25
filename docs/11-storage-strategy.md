@@ -34,7 +34,7 @@ Configurable in `app/config.py`:
 
 | Setting | Default | Owner |
 |---|---|---|
-| `STORAGE_PATH` | `/var/lib/dwtgbot/storage` | the volume mount on NL-2 |
+| `STORAGE_PATH` | `/var/lib/dwtgbot/storage` | the volume mount on NL-2 (в `single` — на единственном хосте; том объявлен в `deploy/compose/media.yml`) |
 | `STORAGE_TMP_PATH` | `/var/lib/dwtgbot/tmp` | scratch space — keep local, never mount over NFS |
 | `MAX_FILE_SIZE_MB` | `2048` (2 GiB) | hard ceiling per single artefact |
 
@@ -86,7 +86,9 @@ flowchart TB
 Hard rules from this diagram:
 
 1. **`bot` never mounts the volume.** If you ever feel the urge to add a
-   storage mount to the bot service in `deploy/nl1/docker-compose.yml`,
+   storage mount to the bot service in `deploy/compose/control.yml`
+   (или в `deploy/single/single.override.yml` — в `single` bot живёт на
+   одном хосте с томом, но монтировать его всё равно нельзя),
    stop — the design has been violated.
 2. **Only `worker` and `cleanup` write.** `api` and `nginx` are read-only.
    Reverse this and you're one bug away from a cleanup container deleting
@@ -247,7 +249,7 @@ If you add free-space checks to `LocalStorage`, do so in
 
 ## 8. Cleanup contract
 
-Owned by the cleanup container (NL-2). Lives in
+Owned by the cleanup container (NL-2; в `single` — тот же хост, что и bot). Lives in
 `app/workers/cleanup_worker.py` (see [`23-cleanup-retention.md`](23-cleanup-retention.md) and [`09-queue-and-workers.md`](09-queue-and-workers.md)).
 
 The cleanup pass does, in order:
@@ -328,13 +330,17 @@ deletes a code path that interacts with the filesystem.
 
 **Mount surface**
 - [ ] If a new container needs read access — added with `:ro` in
-      `deploy/nl2/docker-compose.yml`.
+      the fragment `deploy/compose/media.yml` (сервисы определяются только
+      во фрагментах; стеки `deploy/{single,nl1,nl2}/docker-compose.yml`
+      содержат лишь `include`).
 - [ ] If a new container needs write access — explicitly justified in the
       PR description; matches the access matrix in §1.1.
-- [ ] `bot` service in `deploy/nl1/docker-compose.yml` still has no
-      storage mount.
+- [ ] `bot` service in `deploy/compose/control.yml` still has no
+      storage mount, в том числе после наложения
+      `deploy/single/single.override.yml`.
 - [ ] `worker` and `nginx` resolve `STORAGE_PATH` to the same host path
-      (re-check by `docker compose config`).
+      (re-check by `docker compose config` для обоих стеков:
+      `deploy/single/docker-compose.yml` и `deploy/nl2/docker-compose.yml`).
 
 **Lifecycle**
 - [ ] Any new file written has an owner: either it's inside
