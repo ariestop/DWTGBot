@@ -168,7 +168,7 @@ app/infrastructure/
 │   ├── base.py
 │   ├── models.py
 │   └── session.py
-├── downloader/           # YtDlpRunner, FfmpegRunner
+├── downloader/           # YtDlpRunner + ytdlp_opts / ytdlp_results, mobile_compat (ffprobe/ffmpeg post-step)
 ├── providers/            # BaseProvider, YouTubeProvider, InstagramProvider, registry
 ├── queue/                # arq pool, producer, tasks, worker_settings
 ├── storage/              # LocalStorage (filesystem owner) — implements MediaStorage

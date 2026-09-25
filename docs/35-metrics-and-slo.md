@@ -119,7 +119,7 @@ from structured logs. Each log event has the canonical fields from
 | `bot_message_handled` | bot middleware (`app/bot/middleware/metrics_mw.py`) | `request_id`, `user_id`, `chat_id`, `latency_ms`, `latency_bucket`, `outcome` ∈ {ok, user_error, internal_error} |
 | `job_enqueued` | `app/application/use_cases/enqueue_download.py` | `job_id`, `user_id`, `platform`, `request_id` (job-cap rejections do NOT emit this — see ADR-0007 §2.2) |
 | `job_status_changed` | `app/application/use_cases/process_download.py` | `job_id`, `from_`, `to` ∈ values of `JobStatus` enum (`pending`, `processing`, `done`, `failed`), `reason_class` ∈ {`ok`, `user_error`, `provider_error`, `network_error`, `internal_error`} |
-| `job_done` | worker (`process_download._run`) | `job_id`, `total_seconds`, `file_size_bytes`, `file_size_class` ∈ {`lt_50mb`, `lt_200mb`, `gt_200mb`} |
+| `job_done` | worker (`ProcessDownloadUseCase._record_done`) | `job_id`, `total_seconds`, `file_size_bytes`, `file_size_class` ∈ {`lt_50mb`, `lt_200mb`, `gt_200mb`} |
 | `temp_link_served` | `api/public/downloads.py` | `token_prefix`, `result` ∈ {`ok`, `not_found`, `expired`, `gone`, `forbidden`}, `bytes_sent` (only when `result="ok"`) |
 | `queue_depth_sample` | `app/infrastructure/metrics/queue_depth_sampler.py` (every `METRICS_QUEUE_SAMPLE_INTERVAL_S`) | `depth` |
 

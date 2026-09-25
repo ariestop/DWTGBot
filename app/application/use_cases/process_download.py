@@ -10,13 +10,13 @@ from dataclasses import dataclass
 from app.application.ports.media_sender import MediaSender
 from app.application.ports.media_storage import MediaStorage
 from app.application.ports.progress_reporter import NoopProgressReporter, ProgressReporter
-from app.application.services.delivery_service import DeliveryService
+from app.application.services.delivery_service import DeliveryOutcome, DeliveryService
 from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.providers import Provider, ProviderRegistry
 from app.config import Settings
 from app.domain.entities.download_job import DownloadJob
-from app.domain.entities.media_info import DownloadOption, MediaInfo
+from app.domain.entities.media_info import DownloadOption, DownloadResult, MediaInfo
 from app.domain.enums import JobStatus, MediaKind, ProgressStage
 from app.domain.observability import ReplayIgnoreReason, file_size_class
 from app.domain.reason_class import ReasonClass, classify_exception
@@ -92,15 +92,7 @@ class ProcessDownloadUseCase:
         ):
             await self._run(job)
 
-    async def _run(self, job: DownloadJob) -> None:  # noqa: PLR0915
-        # PLR0915: the method exceeds 50 statements because ADR-0010
-        # added four progress-emission boundaries. Splitting the happy
-        # path into a helper would bury the exception handlers, which
-        # are tightly coupled to the inline variable state (started_
-        # monotonic, reason classification, etc). Kept linear for
-        # readability; the metric boundary comments serve as section
-        # headers. If it grows again, extract delivery + done-bookkeeping
-        # into a helper.
+    async def _run(self, job: DownloadJob) -> None:
         # Monotonic clock — immune to wall-clock jumps from NTP. Used
         # for ``job_duration_seconds`` (ADR-0007 §2.1, A4/A5 SLO).
         started_monotonic = time.monotonic()
@@ -114,135 +106,7 @@ class ProcessDownloadUseCase:
         job = transitioned
 
         try:
-            # S10 (audit fix): backpressure on a near-full disk. We
-            # check *after* the PROCESSING transition (so the orphan
-            # reaper sees the row) but *before* allocating the job
-            # dir — failing here keeps the disk clean. Fail-permanent:
-            # retrying with the same disk pressure would just thrash.
-            #
-            # ``storage`` is allowed to be ``None`` in unit tests that
-            # only exercise the retry/error machinery (test_retry_semantics).
-            # Production wiring in ``composition.build_worker`` always
-            # injects a real storage.
-            if self._storage is not None:
-                try:
-                    self._storage.assert_free_space()
-                except StorageError as exc:
-                    raise StorageError(
-                        str(exc),
-                        user_message=(
-                            "Сервис временно перегружен (нет свободного места). "
-                            "Попробуйте через несколько минут."
-                        ),
-                    ) from exc
-
-            # Phase 1 — ANALYZING (~5%). We already have ``PROCESSING``
-            # in the DB; the reporter just gives the UI a "we are working
-            # on it" signal before the slow I/O.
-            await self._emit_progress(job.id, percent=5.0, stage=ProgressStage.ANALYZING)
-            # First cancel-flag check: user may have tapped cancel while
-            # the job was still sitting on the queue; don't start
-            # network I/O if so.
-            await self._check_cancel(job.id)
-
-            provider = self._providers.get(job.platform)
-            info = await provider.get_info(job.source_url)
-            options = provider.build_options(info)
-            selected = self._pick_option(options, job.selected_option_key)
-            if selected is None:
-                raise AppError(
-                    f"Selected option not available anymore: {job.selected_option_key}",
-                    user_message="Выбранный вариант больше недоступен. Пришлите ссылку заново.",
-                )
-
-            estimate_bytes = await self._resolve_pre_download_size(
-                provider=provider,
-                url=job.source_url,
-                info=info,
-                option=selected,
-            )
-            self._reject_if_estimate_exceeds_cap(selected, estimate_bytes=estimate_bytes)
-
-            target = self._storage.job_dir(job.id or 0)
-
-            # Phase 2 — DOWNLOADING 0→70%. yt-dlp fires progress_hooks
-            # mid-stream; the hook writes directly to Redis (sync
-            # bridge) so we keep the use-case single-threaded here.
-            # The boundary write ensures the UI transitions even for
-            # providers / sources that do not emit hook frames (rare).
-            await self._emit_progress(job.id, percent=0.0, stage=ProgressStage.DOWNLOADING)
-            # Second cancel-flag check: avoids a wasted yt-dlp session
-            # if the user cancelled during the ANALYZING phase.
-            await self._check_cancel(job.id)
-            on_progress = self._scaled_download_hook(job.id, provider=provider)
-            result = await provider.download(
-                job.source_url,
-                selected,
-                target_dir=str(target),
-                on_progress=on_progress,
-            )
-            # Providers fall back to ``out_dir.name`` (= the numeric job
-            # id) when they don't have a better source-side title — that
-            # would surface the internal queue id as the caption title.
-            # Prefer the real ``MediaInfo.title`` whenever it is non-empty.
-            if info.title:
-                result = dataclasses.replace(result, title=info.title)
-
-            # Phase 3 — PROCESSING (mobile-compat transcode + delivery
-            # prep). We cannot observe ffmpeg progress cheaply; a single
-            # 70% boundary is enough until the delivery step.
-            await self._emit_progress(job.id, percent=70.0, stage=ProgressStage.PROCESSING)
-
-            # Phase 4 — UPLOADING (Telegram send or temp-link issue).
-            await self._emit_progress(job.id, percent=95.0, stage=ProgressStage.UPLOADING)
-            outcome = await self._delivery.deliver(
-                job_id=job.id or 0,
-                chat_id=job.chat_id,
-                result=result,
-            )
-
-            job.title = info.title
-            job.media_id = info.media_id
-            job.selected_format = selected.container or selected.label
-            job.mark_done(
-                file_path=outcome.delivered_path,
-                file_size=outcome.file_size,
-                mime_type=result.primary_mime,
-                telegram_file_id=outcome.primary_telegram_file_id,
-                public_url=outcome.public_url,
-            )
-            job = await self._persist_done(job)
-
-            # Terminal success: reporter.finish clears the placeholder
-            # via the progress_updater. Reporter swallows Redis errors
-            # (ADR-0010), so this call cannot mask a download failure.
-            if job.id is not None:
-                try:
-                    await self._reporter.finish(job_id=job.id)
-                except Exception:  # pragma: no cover  defensive
-                    _logger.exception("progress_finish_failed", job_id=job.id)
-
-            # Duration first so the Histogram + the Counter land on the
-            # same scrape; then the status-change + log keep the events
-            # paired (P11).
-            duration_seconds = time.monotonic() - started_monotonic
-            size_class = file_size_class(outcome.file_size)
-            self._metrics.observe_job_duration(file_size_class=size_class, seconds=duration_seconds)
-            self._metrics.inc_status_change(to=JobStatus.DONE, reason_class=ReasonClass.OK)
-            _logger.info(
-                "job_done",
-                method=outcome.method.value,
-                size=outcome.file_size,
-                total_seconds=round(duration_seconds, 3),
-                file_size_class=size_class.value,
-            )
-            _logger.info(
-                "job_status_changed",
-                from_=JobStatus.PROCESSING.value,
-                to=JobStatus.DONE.value,
-                reason_class=ReasonClass.OK.value,
-            )
-
+            await self._download_and_deliver(job, started_monotonic=started_monotonic)
         except JobCancelledError:
             # Cooperative cancel — user-initiated, non-retryable. The
             # bot already emitted ``reporter.cancel`` when the callback
@@ -281,6 +145,148 @@ class ProcessDownloadUseCase:
             reason = classify_exception(exc)
             _logger.exception("job_failed_unexpected", error=str(exc), reason_class=reason.value)
             raise
+
+    async def _download_and_deliver(self, job: DownloadJob, *, started_monotonic: float) -> None:
+        """Happy path of a PROCESSING job; every failure propagates to ``_run``.
+
+        Progress boundaries (ADR-0010 §2.2): ANALYZING 5% → DOWNLOADING
+        0→70% (yt-dlp hook) → PROCESSING 70% → UPLOADING 95% → finish.
+        """
+        self._assert_free_space()
+
+        # Phase 1 — ANALYZING. Cancel check before any network I/O: the
+        # user may have tapped cancel while the job sat on the queue.
+        await self._emit_progress(job.id, percent=5.0, stage=ProgressStage.ANALYZING)
+        await self._check_cancel(job.id)
+        provider, info, selected = await self._analyze(job)
+
+        # Phase 2 — DOWNLOADING. The boundary write moves the UI even for
+        # sources whose yt-dlp run emits no hook frames (rare). Second
+        # cancel check avoids a wasted yt-dlp session.
+        await self._emit_progress(job.id, percent=0.0, stage=ProgressStage.DOWNLOADING)
+        await self._check_cancel(job.id)
+        result = await self._download(job, provider=provider, info=info, option=selected)
+
+        # Phase 3 — PROCESSING (mobile-compat transcode already ran inside
+        # the provider; ffmpeg progress is not observable cheaply), then
+        # Phase 4 — UPLOADING (Telegram send or temp-link issue).
+        await self._emit_progress(job.id, percent=70.0, stage=ProgressStage.PROCESSING)
+        await self._emit_progress(job.id, percent=95.0, stage=ProgressStage.UPLOADING)
+        outcome = await self._delivery.deliver(
+            job_id=job.id or 0,
+            chat_id=job.chat_id,
+            result=result,
+        )
+
+        job.title = info.title
+        job.media_id = info.media_id
+        job.selected_format = selected.container or selected.label
+        job.mark_done(
+            file_path=outcome.delivered_path,
+            file_size=outcome.file_size,
+            mime_type=result.primary_mime,
+            telegram_file_id=outcome.primary_telegram_file_id,
+            public_url=outcome.public_url,
+        )
+        job = await self._persist_done(job)
+        await self._finish_progress(job.id)
+        self._record_done(outcome, started_monotonic=started_monotonic)
+
+    def _assert_free_space(self) -> None:
+        """S10 (audit fix): backpressure on a near-full disk.
+
+        Runs *after* the PROCESSING transition (so the orphan reaper sees
+        the row) but *before* allocating the job dir, keeping the disk
+        clean. Fail-permanent: retrying under the same disk pressure would
+        just thrash. ``storage`` may be ``None`` in unit tests that only
+        exercise the retry/error machinery (test_retry_semantics).
+        """
+        if self._storage is None:
+            return
+        try:
+            self._storage.assert_free_space()
+        except StorageError as exc:
+            raise StorageError(
+                str(exc),
+                user_message=(
+                    "Сервис временно перегружен (нет свободного места). "
+                    "Попробуйте через несколько минут."
+                ),
+            ) from exc
+
+    async def _analyze(self, job: DownloadJob) -> tuple[Provider, MediaInfo, DownloadOption]:
+        provider = self._providers.get(job.platform)
+        info = await provider.get_info(job.source_url)
+        selected = self._pick_option(provider.build_options(info), job.selected_option_key)
+        if selected is None:
+            raise AppError(
+                f"Selected option not available anymore: {job.selected_option_key}",
+                user_message="Выбранный вариант больше недоступен. Пришлите ссылку заново.",
+            )
+        estimate_bytes = await self._resolve_pre_download_size(
+            provider=provider,
+            url=job.source_url,
+            info=info,
+            option=selected,
+        )
+        self._reject_if_estimate_exceeds_cap(selected, estimate_bytes=estimate_bytes)
+        return provider, info, selected
+
+    async def _download(
+        self,
+        job: DownloadJob,
+        *,
+        provider: Provider,
+        info: MediaInfo,
+        option: DownloadOption,
+    ) -> DownloadResult:
+        target = self._storage.job_dir(job.id or 0)
+        result = await provider.download(
+            job.source_url,
+            option,
+            target_dir=str(target),
+            on_progress=self._scaled_download_hook(job.id, provider=provider),
+        )
+        # Providers fall back to ``out_dir.name`` (= the numeric job id)
+        # when they have no better title — that would surface the
+        # internal queue id as the caption title.
+        if info.title:
+            result = dataclasses.replace(result, title=info.title)
+        return result
+
+    async def _finish_progress(self, job_id: int | None) -> None:
+        """Terminal success: the progress updater clears the placeholder.
+
+        The reporter swallows Redis errors (ADR-0010), so this call
+        cannot mask a completed download.
+        """
+        if job_id is None:
+            return
+        try:
+            await self._reporter.finish(job_id=job_id)
+        except Exception:  # pragma: no cover  defensive
+            _logger.exception("progress_finish_failed", job_id=job_id)
+
+    def _record_done(self, outcome: DeliveryOutcome, *, started_monotonic: float) -> None:
+        # Duration first so the Histogram + the Counter land on the same
+        # scrape; then the status-change + log keep the events paired (P11).
+        duration_seconds = time.monotonic() - started_monotonic
+        size_class = file_size_class(outcome.file_size)
+        self._metrics.observe_job_duration(file_size_class=size_class, seconds=duration_seconds)
+        self._metrics.inc_status_change(to=JobStatus.DONE, reason_class=ReasonClass.OK)
+        _logger.info(
+            "job_done",
+            method=outcome.method.value,
+            size=outcome.file_size,
+            total_seconds=round(duration_seconds, 3),
+            file_size_class=size_class.value,
+        )
+        _logger.info(
+            "job_status_changed",
+            from_=JobStatus.PROCESSING.value,
+            to=JobStatus.DONE.value,
+            reason_class=ReasonClass.OK.value,
+        )
 
     def _guard_replay(self, job: DownloadJob) -> bool:
         if job.status is JobStatus.PENDING:

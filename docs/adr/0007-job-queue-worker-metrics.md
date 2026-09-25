@@ -67,8 +67,8 @@ Three additional realities shape the design:
 |---|---|---|---|---|
 | `bot_message_handled_total` | Counter | `outcome`, `latency_bucket` | bot | post-handler middleware (`app/bot/middleware/metrics_mw.py`) |
 | `jobs_created_total` | Counter | `platform` | bot | `EnqueueDownloadUseCase.execute` after `_jobs.create` |
-| `jobs_status_changed_total` | Counter | `to`, `reason_class` | worker | `ProcessDownloadUseCase._run` at every `mark_*` call site |
-| `job_duration_seconds` | Histogram | `file_size_class` | worker | success path of `ProcessDownloadUseCase._run` |
+| `jobs_status_changed_total` | Counter | `to`, `reason_class` | worker | `ProcessDownloadUseCase` at every status transition (`_transition_to`, `_record_done`, `_fail`, `_handle_cancellation`) |
+| `job_duration_seconds` | Histogram | `file_size_class` | worker | success path of `ProcessDownloadUseCase` (`_record_done`) |
 | `temp_link_serves_total` | Counter | `result` | api | every return path of `download` (`/d/{token}`) |
 | `arq_queue_depth` | Gauge | – | bot (sampler) | periodic `ZCARD` task on the bot's `arq_pool` |
 | `worker_active_jobs` | Gauge | – | worker | task wrapper around `process_download_job` |
