@@ -310,7 +310,7 @@ suggestion, it is how you keep diffs reviewable.
 | **B. Bot UX feature** | New command, new button, new keyboard | `app/bot/`, possibly `app/application/` | low–med | callback codec round-trip; rate-limit thinking; error message via `AppError` | bot handler test + use-case test (with fakes) | [`06-bot-flow.md`](06-bot-flow.md) handler catalogue, [`16-error-handling.md`](16-error-handling.md) if new exception |
 | **C. Use-case change** | Change order of steps; add validation; tighten output | `app/application/`, possibly `app/domain/` | med | layer rule (no infra import), three-tier exception pattern preserved | use-case test with fakes; existing tests still green | [`02-architecture.md`](02-architecture.md) if surface changed; [`16-error-handling.md`](16-error-handling.md) if new exception |
 | **D. Provider change** | Format spec tweak; new bucket; better metadata extraction | `app/infrastructure/providers/<platform>/`, fixtures | med | URL detection still works; `BaseProvider` surface unchanged; recorded JSON fixtures updated | provider unit test with fake yt-dlp; URL detection test | [`07-provider-architecture.md`](07-provider-architecture.md) provider table; [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md) if a new entry-style is introduced |
-| **E. New provider** | TikTok, SoundCloud | `app/infrastructure/providers/<new>/`, `app/utils/url.py`, `app/composition.py`, registry | med–high | full provider contract; ENUM migration for new `Platform`; URL detection priority | URL detection (3+ shapes), `get_info` against fixture, `build_options` shapes, failure modes | [`07-provider-architecture.md`](07-provider-architecture.md), [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md), `12-db-schema.md` (ENUM), `13-config-and-env.md` (auth/cookies) |
+| **E. New provider** | TikTok, SoundCloud | `app/infrastructure/providers/<new>/`, `app/utils/url.py`, `app/composition/`, registry | med–high | full provider contract; ENUM migration for new `Platform`; URL detection priority | URL detection (3+ shapes), `get_info` against fixture, `build_options` shapes, failure modes | [`07-provider-architecture.md`](07-provider-architecture.md), [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md), `12-db-schema.md` (ENUM), `13-config-and-env.md` (auth/cookies) |
 | **F. Queue / worker change** | New task, retry policy, idempotency, status transition | `app/workers/`, `app/application/services/queue.py`, `app/infrastructure/queue/` | high | idempotency contract; bounded `max_tries`; partial-failure path; statelessness | inner-function tests with fake `ctx`; idempotent retry test | [`09-queue-and-workers.md`](09-queue-and-workers.md), [`24-runbooks.md`](24-runbooks.md) if a new failure mode |
 | **G. Delivery / temp-link change** | TTL, max-downloads, token format, headers | `app/application/services/delivery.py`, `app/infrastructure/...`, `app/api/public/`, `deploy/nginx/` | high | `internal;` preserved; `X-Accel-Redirect` flow intact; rate limit; security headers | temp-link service tests; public-route tests with fake storage; nginx `nginx -t` | [`10-temp-links-and-delivery.md`](10-temp-links-and-delivery.md), [`17-security.md`](17-security.md) |
 | **H. DB schema change** | New column, new table, ENUM addition, index | Alembic, `app/infrastructure/db/models.py`, repository impls | very high | hand-reviewed migration; `downgrade()` (or justified empty); deploy order; backwards compatibility | repo impl test against in-mem; migration apply/downgrade locally | [`12-db-schema.md`](12-db-schema.md); if domain entity touched also `04-domain-model.md` |
@@ -974,7 +974,7 @@ implementing `BaseProvider` and registering it.
 | `app/infrastructure/providers/<new>/__init__.py` | Module |
 | `app/infrastructure/providers/<new>/provider.py` | `<New>Provider(BaseProvider)` |
 | `app/infrastructure/providers/<new>/options.py` (or in provider) | `build_options` logic |
-| `app/composition.py` | Register in `_build_provider_registry(...)` |
+| `app/composition/` | Register in `build_provider_registry(...)` |
 | `app/tests/test_url_detection.py` | URL recognition tests |
 | `app/tests/test_providers_<new>.py` | Provider unit tests |
 | `app/tests/fixtures/yt_dlp_<new>_*.json` | Recorded fixtures |
@@ -993,7 +993,7 @@ implementing `BaseProvider` and registering it.
    representative URLs to the test.
 4. **Implement the provider.** All platform specifics inside
    `<New>Provider`. Implement `get_info`, `build_options`, `download`.
-5. **Register** in `_build_provider_registry(...)`.
+5. **Register** in `build_provider_registry(...)`.
 6. **Write unit tests** with fake yt-dlp output (recorded fixtures).
 7. **Write failure-mode tests** (geo block, age gate, empty
    `formats`).
@@ -1018,7 +1018,7 @@ implementing `BaseProvider` and registering it.
 - [ ] `<New>Provider` extends `BaseProvider`; no new public methods.
 - [ ] All platform specifics live inside the provider class.
 - [ ] Recorded JSON fixtures committed.
-- [ ] `_build_provider_registry(...)` updated.
+- [ ] `build_provider_registry(...)` updated.
 - [ ] Provider table in `07-provider-architecture.md` updated.
 - [ ] Worked example added to `30-add-new-provider-guide.md`.
 - [ ] If auth / cookies / env var → `13-config-and-env.md` + `Settings`.
@@ -1050,7 +1050,7 @@ implementing `BaseProvider` and registering it.
 | ✅ Write `ALTER TYPE platform ADD VALUE` migration **before** code | ❌ Add code that inserts the new ENUM value with no migration (P10) |
 | ✅ Cover ≥3 URL shapes in detection tests | ❌ Match only the canonical URL form (P8) |
 | ✅ Keep all platform specifics inside `<New>Provider` | ❌ Leak `format_spec` strings or platform branches into use cases (P5, P8) |
-| ✅ Register in `_build_provider_registry(...)` in `composition.py` | ❌ Add the class but forget composition wiring (P2) |
+| ✅ Register in `build_provider_registry(...)` in `app/composition/` | ❌ Add the class but forget composition wiring (P2) |
 | ✅ Document failure modes (geo, age, empty `formats`) in tests | ❌ Test only the happy path (P4) |
 | ✅ Add new event names (`<new>_*`) to `14-` catalogue | ❌ Land code that emits unfindable events (P4) |
 | ✅ Provide a worked example block in `30-add-new-provider-guide.md` | ❌ Leave the next contributor to reverse-engineer your provider (P4) |
@@ -2185,9 +2185,9 @@ walk this table and ask "did the author update each row?".
 
 | You changed | You must also update |
 |---|---|
-| **Provider interface** (`BaseProvider`) | Every provider impl, registry in `composition.py`, `07-provider-architecture.md`, `30-add-new-provider-guide.md`, tests across all providers |
+| **Provider interface** (`BaseProvider`) | Every provider impl, registry in `app/composition/`, `07-provider-architecture.md`, `30-add-new-provider-guide.md`, tests across all providers |
 | **A specific provider** | Provider impl, recorded fixtures, `07-` provider table, tests for that provider |
-| **`Platform` enum** | ALTER TYPE migration, `composition.py` registry, `07-`, `30-`, URL detection tests |
+| **`Platform` enum** | ALTER TYPE migration, `app/composition/` registry, `07-`, `30-`, URL detection tests |
 | **Use case signature** | Bot/API/worker callers, tests, `02-architecture.md` if surface relevant |
 | **DB schema (table / column / index / ENUM)** | Alembic migration, ORM model, repo impl, tests, `12-db-schema.md`, deploy-order note in PR |
 | **Domain entity** | Use cases that touch it, repo mapping in infra, tests, `04-domain-model.md` |
@@ -2242,7 +2242,7 @@ broken PRs. Each is tagged with the violated principle (§2 / §1.A).
 - ❌ Importing infrastructure from domain or application — **P5**.
 - ❌ Adding a top-level `app/services/` or `app/helpers/` package —
   **P2**.
-- ❌ Bypassing `composition.py` for DI — **P2, P5**.
+- ❌ Bypassing `app/composition/` for DI — **P2, P5**.
 
 ### 23.3 Provider / pipeline
 
@@ -2698,7 +2698,7 @@ playbook treats partial fulfilment as not done — there is no
 - [ ] No layer-direction violation (P5).
 - [ ] No business logic in handlers (P6).
 - [ ] No new top-level package under `app/` (P2).
-- [ ] `composition.py` updated if a new dependency is wired (P2).
+- [ ] `app/composition/` updated if a new dependency is wired (P2).
 - [ ] No locked decision violated (or: superseding ADR in this PR) (P2).
 
 ### 27.3 Tests updated
@@ -2752,7 +2752,7 @@ playbook treats partial fulfilment as not done — there is no
 ### 27.10 No operational regressions
 
 - [ ] Healthchecks still pass.
-- [ ] `composition.py` still wires every entry point.
+- [ ] `app/composition/` still wires every entry point.
 - [ ] No new background task without schedule + cleanup behaviour
       considered (P9).
 
@@ -2875,7 +2875,7 @@ class <Feature>UseCase:
         ...
 ```
 
-Wire in `app/composition.py` (P2):
+Wire in `app/composition/` (P2):
 
 ```python
 self.<feature>_use_case = <Feature>UseCase(repo=self.<feature>_repo)
@@ -2922,7 +2922,7 @@ class <New>Provider(BaseProvider):
         ...
 ```
 
-Register in `app/composition.py` `_build_provider_registry(...)` (P2).
+Register in `app/composition/` `build_provider_registry(...)` (P2).
 
 ### B.4 — New arq task (worker layer)
 

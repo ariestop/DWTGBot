@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import app.composition as composition_mod
+import app.composition.worker as composition_mod
 from app.config import get_settings
 
 
@@ -79,8 +79,8 @@ def _patch_worker_build(monkeypatch) -> None:
         engine=SimpleNamespace(),
         sessionmaker=object(),
     )
-    monkeypatch.setattr(composition_mod, "_build_core", lambda settings: core)
-    monkeypatch.setattr(composition_mod, "_build_provider_registry", lambda *_a, **_kw: object())
+    monkeypatch.setattr(composition_mod, "build_core", lambda settings: core)
+    monkeypatch.setattr(composition_mod, "build_provider_registry", lambda *_a, **_kw: object())
     monkeypatch.setattr(composition_mod, "LocalStorage", _FakeStorage)
     monkeypatch.setattr(composition_mod, "SqlAlchemyJobsRepository", _FakeJobsRepo)
     monkeypatch.setattr(composition_mod, "SqlAlchemyTempLinksRepository", _FakeTempLinksRepo)
@@ -94,7 +94,7 @@ def _patch_worker_build(monkeypatch) -> None:
     monkeypatch.setattr(composition_mod, "ProcessDownloadUseCase", _FakeUseCase)
     monkeypatch.setattr(
         composition_mod,
-        "_build_metrics",
+        "build_metrics",
         lambda _settings: (object(), object(), None),
     )
 

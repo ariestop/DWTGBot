@@ -424,7 +424,7 @@ schema, indexes, and migration policy.
 - [ ] Add the repository implementation under
       `app/infrastructure/db/repositories/`.
 - [ ] Generate an Alembic migration; review the diff.
-- [ ] Wire the repository in `app/composition.py`.
+- [ ] Wire the repository in `app/composition/`.
 - [ ] Add unit tests for the entity (state machine, invariants).
 - [ ] Add a section to this document.
 - [ ] Update [`12-db-schema.md`](12-db-schema.md).

@@ -235,7 +235,7 @@ app/
     handlers/
       links.py                          # calls evaluate(...) + bumps first_deny
     container.py                        # carries rate_limit_gate, notice_throttle, metrics
-  composition.py                        # picks Redis vs Noop based on RL_ENABLED;
+  composition/                          # picks Redis vs Noop based on RL_ENABLED;
                                          # picks Prometheus vs Noop based on METRICS_ENABLED
   main_bot.py                           # starts/stops MetricsServer
 ```

@@ -154,7 +154,7 @@ checks, tests, and docs. This table is the feature-shaped sister of
 | **F-Cmd** Bot UX feature / new command | `/about`, `/help`, new button | `app/bot/`, possibly `app/application/` | UX inconsistency; placement of logic in wrong layer | handler test + (if use case) use-case test | [`06-bot-flow.md`](06-bot-flow.md), [`16-error-handling.md`](16-error-handling.md) if new exception |
 | **F-Flow** New callback-driven flow | "Choose quality → confirm → receive" | `app/bot/`, `app/application/`, possibly state store | State leakage across users; lost state on bot restart; oversized `callback_data` | one test per state transition + codec round-trip | [`06-bot-flow.md`](06-bot-flow.md) (flow diagram), [`14-`](14-logging-observability.md) (events) |
 | **F-Prov** Provider capability | New format spec; better metadata; new bucket | `app/infrastructure/providers/<platform>/`, fixtures | Breaking `BaseProvider` contract; trusting yt-dlp output blindly | provider unit tests against recorded fixtures | [`07-provider-architecture.md`](07-provider-architecture.md) |
-| **F-NewProv** New provider | TikTok, SoundCloud | `app/infrastructure/providers/<new>/`, `app/utils/url.py`, `app/composition.py`, ENUM migration | URL detection priority; ENUM migration; auth | URL detection ≥3 shapes, get_info, build_options, failure modes | [`07-`](07-provider-architecture.md), [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md), [`12-`](12-db-schema.md) (ENUM), [`13-`](13-config-and-env.md) if auth |
+| **F-NewProv** New provider | TikTok, SoundCloud | `app/infrastructure/providers/<new>/`, `app/utils/url.py`, `app/composition/`, ENUM migration | URL detection priority; ENUM migration; auth | URL detection ≥3 shapes, get_info, build_options, failure modes | [`07-`](07-provider-architecture.md), [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md), [`12-`](12-db-schema.md) (ENUM), [`13-`](13-config-and-env.md) if auth |
 | **F-Queue** Queue/worker feature | New task; status field; retry policy | `app/workers/`, `app/application/services/queue.py`, `app/infrastructure/queue/` | `_job_id` semantics; idempotency; bounded retries | inner-function test with fake `ctx`; idempotent retry test | [`09-queue-and-workers.md`](09-queue-and-workers.md), [`14-`](14-logging-observability.md), [`24-`](24-runbooks.md) if new failure mode |
 | **F-Deliv** Delivery / temp-link feature | TTL change; expiry warning; new header | `app/application/services/delivery.py`, `app/api/public/`, `deploy/nginx/` | `internal;` preserved; `X-Accel-Redirect` flow intact; rate limit | service test; public-route test; `nginx -t` | [`10-temp-links-and-delivery.md`](10-temp-links-and-delivery.md), [`17-security.md`](17-security.md) |
 | **F-Admin** Admin / ops feature | Admin command; manual job control | `app/bot/`, `app/application/`, possibly DB row | Auth bypass; destructive ops without confirm | handler test + admin auth test | [`06-`](06-bot-flow.md), [`17-security.md`](17-security.md), [`24-`](24-runbooks.md) |
@@ -1380,7 +1380,7 @@ reviewer sign-off.
 - [ ] No layer-direction violation (P5).
 - [ ] No business logic in handlers (P6).
 - [ ] No new top-level package under `app/` (P2).
-- [ ] `composition.py` updated if a new dependency wired (P2).
+- [ ] `app/composition/` updated if a new dependency wired (P2).
 - [ ] No locked decision violated (or: superseding ADR in this PR).
 
 ### 22.3 Tests

@@ -330,7 +330,7 @@ review.
 | Add `subprocess` invocations outside `YtDlpRunner` / `FFmpegRunner` | sandboxes the external binaries |
 | Mix Telegram presentation logic with provider logic | violates the provider contract |
 | Write god-functions (>100 lines, >5 responsibilities) | refactor into focused units |
-| Bypass `composition.py` for DI | wiring must remain centralised |
+| Bypass `app/composition/` for DI | wiring must remain centralised |
 
 ### 5.2 Boundary discipline
 
@@ -1007,11 +1007,11 @@ can call it.
 the protocol is implemented in `app/infrastructure/db/`. No
 shortcuts.
 
-### 16.19 Treating `composition.py` as a junk drawer
+### 16.19 Treating `app/composition/` as a junk drawer
 
 ❌ Wiring random helpers, registering ad-hoc singletons, mixing
 test-only fakes into the production composition.
-✅ `composition.py` wires **exactly** the dependencies declared
+✅ `app/composition/` wires **exactly** the dependencies declared
 by use cases. Test composition lives in `app/tests/conftest.py`.
 
 ### 16.20 Editing `migrations/versions/*.py` after merge
@@ -1050,7 +1050,7 @@ Each row is paired with the cheapest fix, the rule it breaks, and the
 | 17 | Edited a shipped migration | `migrations/versions/<old>.py` shows changes | revert; write a new migration | §16.20 | P10 |
 | 18 | Dropped a column in the same step that stopped writing | one-shot `op.drop_column` after schema-using code change | split into two migrations / two releases | §9.3 | P10 |
 | 19 | Added a new dependency without asking | `pyproject.toml` / requirements gain a line | revert; surface to user with rationale; await approval | §1.4 | P1, P2 |
-| 20 | Bypassed `composition.py` to wire something quickly | direct `from app.infrastructure...` import in `app/bot` or `app/api` | route through `composition.build_<layer>()` | §5.1 | P5, P2 |
+| 20 | Bypassed `app/composition/` to wire something quickly | direct `from app.infrastructure...` import in `app/bot` or `app/api` | route through `composition.build_<layer>()` | §5.1 | P5, P2 |
 | 21 | Streamed a public file with `FileResponse` | `FileResponse(path)` in `app/api/public/...` | switch to `X-Accel-Redirect` against the `internal` Nginx location | §14.1 | P11 |
 | 22 | Loosened Nginx `internal;` on storage location | `internal;` removed from `location /storage/` | revert; tokens are the security boundary | §14.1 | P11 |
 | 23 | Cached `MediaInfo` in a module-level dict | new `_cache: dict = {}` in a worker | move to Redis with explicit TTL or remove entirely | §16.17 | P7 |
@@ -1077,7 +1077,7 @@ signal is tagged with the **principle** (§1.A) it warns you about.
 | You're searching the codebase for "how does it usually work" instead of reading `docs/` | P2 | you skipped §2 | go read the relevant `docs/` topic now |
 | You're rewriting a function that wasn't in the plan because "it's clearer this way" | P1, P3 | speculative refactor | revert; note as follow-up |
 | You can't remember why a specific edit you just made is needed | P1 | low-confidence change | revert it; ask or document the assumption |
-| You're modifying `app/composition.py` for the second time in this change | P2, P5 | DI surface is shifting under you | reconsider whether you've found the right layer for the new code |
+| You're modifying `app/composition/` for the second time in this change | P2, P5 | DI surface is shifting under you | reconsider whether you've found the right layer for the new code |
 | You just copy-pasted a code block from one file to another | P1, P5 | duplication forming | extract to the rightful module per `02-architecture.md` |
 | You're touching > 3 files and the change is still labelled "small" | P1 | mis-classification | re-classify as medium per §7; produce design note |
 | You can't articulate the goal in one sentence anymore | P1 | scope expanded | restate goal; trim back the diff to match it |
@@ -1387,7 +1387,7 @@ POST-CHANGE
 [ ] Docs updated per §15
 [ ] Migration added if schema changed
 [ ] Env var present in: config.py + .env.example + per-stack .env.example + compose env block + 13- doc
-[ ] composition.py updated if new dependency wired
+[ ] app/composition/ updated if new dependency wired
 [ ] No secret in diff
 [ ] No new public-port exposure
 [ ] No path-traversal-friendly path
@@ -1461,7 +1461,7 @@ in practice.
    locked rows requires a superseding ADR **before** any code (§5).
 7. **No secrets, no shell strings, no path traversal, no public
    ports on NL-1, no `FileResponse` for public files, no
-   `composition.py` bypass (P11).**
+   `app/composition/` bypass (P11).**
 8. **Tests + docs + config travel with code in the same PR (P4).**
    §8.3, §15.
 9. **Migrations are forward-only, hand-reviewed, two-step for
@@ -1506,7 +1506,7 @@ defended principle in the response. Mid-flight violations? Apply
 - DO NOT add a new dependency without user approval.
 - DO NOT add a new top-level doc when 00–33 fits.
 - DO NOT delete migrations.
-- DO NOT bypass `composition.py` for DI.
+- DO NOT bypass `app/composition/` for DI.
 - DO NOT refactor "while you're here".
 - DO NOT mark tests `skip` to make CI green.
 - DO NOT invent architecture silently. Stop and ask.

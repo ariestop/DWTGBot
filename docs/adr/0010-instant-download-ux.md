@@ -104,7 +104,7 @@ Two implementations live in `app/infrastructure/cache/`:
   writer (max 1 write/sec/job-id).
 - `NoopProgressReporter` — for tests and for `INSTANT_DOWNLOAD_ENABLED=false`.
 
-Wiring is done exclusively in `app/composition.py` (both `build_bot`
+Wiring is done exclusively in `app/composition/` (both `build_bot`
 and `build_worker` receive the same concrete `RedisProgressReporter`;
 use cases depend only on the port).
 
@@ -180,7 +180,7 @@ flow. When `false`:
 
 - `handle_link` falls back to the existing picker path (kept intact
   for at least one major release).
-- `composition.py` injects `NoopProgressReporter` into the worker; no
+- `app/composition/` injects `NoopProgressReporter` into the worker; no
   progress is written.
 - The post-text button is not rendered.
 
@@ -310,7 +310,7 @@ and a graceful "no longer available" alert is adequate.
   the dependency matrix in `docs/03-project-structure.md` §7 and
   existing mypy boundaries.
 - **Composition:** `RedisProgressReporter` and its Noop variant are
-  constructed only in `app/composition.py`. Reviewers reject any PR
+  constructed only in `app/composition/`. Reviewers reject any PR
   that instantiates them elsewhere (§9 anti-pattern 2).
 - **Tests:**
   - `app/tests/unit/test_progress_reporter_protocol.py` — contract
@@ -357,7 +357,7 @@ and a graceful "no longer available" alert is adequate.
     step now lives in `mobile_compat.py`)
   - `app/infrastructure/cache/` (new reporter)
   - `app/bot/services/` (new progress updater)
-  - `app/composition.py`
+  - `app/composition/`
 - Docs: `docs/tasks/archive/instant-download-ux.md` (this ADR's
   implementation spec), `docs/02-architecture.md`,
   `docs/06-bot-flow.md`, `docs/09-queue-and-workers.md`.

@@ -19,7 +19,7 @@ adding files.
 | Bot | `app/bot/` | Telegram handlers, keyboards, callbacks, middleware. Thin shells over use cases. |
 | API | `app/api/` | FastAPI routes (`/healthz`, `/readyz`, `/d/{token}`). |
 | Workers | `app/workers/` | Long-running OS processes (cleanup, backup); `app/main_worker.py` for arq. |
-| Composition | `app/composition.py` | DI root — wires concrete implementations to interfaces. |
+| Composition | `app/composition/` | DI root — wires concrete implementations to interfaces. |
 | Utils | `app/utils/` | Pure helpers (URL parsing, filenames, correlation, retries). No IO. |
 
 ## Allowed imports
@@ -50,5 +50,5 @@ utils          ← (nothing project-internal)
 - ❌ `app/domain/*` imports `sqlalchemy`, `httpx`, `redis`, etc.
 - ❌ Use case that imports from `app/bot/...` or `app/api/...`.
 - ❌ "Util" function that opens a network connection or DB session.
-- ❌ Global mutable state outside `composition.py`.
+- ❌ Global mutable state outside `app/composition/`.
 - ❌ Reading `os.environ` outside `app/config.py`.

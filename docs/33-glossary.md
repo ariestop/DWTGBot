@@ -67,7 +67,7 @@ directories, and old job folders. See
 через `include` ([ADR-0011](adr/0011-single-server-topology.md)).
 
 **Composition root.**
-The single place (`app/composition.py`) where concrete
+The single place (`app/composition/`) where concrete
 infrastructure is wired into the application. Every entrypoint
 calls `build_bot()` / `build_worker()` / `build_api()`.
 

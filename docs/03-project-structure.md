@@ -28,8 +28,9 @@ it is on the human/AI reviewer to enforce).
 │   ├── utils/            # Cross-cutting utilities (url, filenames, retries, …)
 │   ├── workers/          # Long-running loops (cleanup, backup)
 │   ├── tests/            # Unit tests
-│   ├── composition.py    # Composition root
-│   ├── config.py         # pydantic-settings
+│   ├── composition/      # Composition root: bot, worker, api, cleanup + core
+│   ├── config.py         # pydantic-settings: Settings, get_settings, validate_runtime
+│   ├── config_groups.py  # Settings field groups (mixins; flat env names)
 │   ├── exceptions.py     # AppError hierarchy
 │   ├── logging_config.py # structlog setup
 │   ├── main_bot.py       # Bot entrypoint
@@ -322,8 +323,9 @@ ABCs/protocols.
 
 | File | Purpose |
 |---|---|
-| `composition.py` | Composition root (the *only* place that wires concrete infra) |
-| `config.py` | `Settings` (pydantic-settings) + `get_settings()` |
+| `app/composition/` | Composition root (the *only* place that wires concrete infra) |
+| `config.py` | `Settings` (pydantic-settings) + `get_settings()`, derived properties, `validate_runtime` |
+| `config_groups.py` | Field groups that `Settings` inherits (`DatabaseSettings`, `ProgressSettings`, …) |
 | `exceptions.py` | `AppError` hierarchy |
 | `logging_config.py` | structlog setup (JSON in prod, console in dev) |
 | `main_bot.py` | Bot process entrypoint |
@@ -331,7 +333,7 @@ ABCs/protocols.
 | `main_worker.py` | arq worker entrypoint |
 
 These files are **part of the architecture**. They have stricter rules:
-- `composition.py` is the only module that may import from both inner and
+- `app/composition/` is the only module that may import from both inner and
   outer layers.
 - `main_*.py` files contain only startup wiring + signal handling. No logic.
 
@@ -522,7 +524,7 @@ flowchart TD
    I/O, "use case" that secretly opens a SQLAlchemy session).
 3. **Cyclic imports between layers.** If you need to import "upward",
    refactor — extract a protocol or move shared types to `domain` or `utils`.
-4. **Importing `composition.py` from anything other than `main_*.py`,
+4. **Importing `app/composition/` from anything other than `main_*.py`,
    `bot/application.py`, `api/app.py`, `workers/*.py`.**
 5. **Adding deps in `requirements/dev.txt` that production also needs.**
    Production deps belong in `requirements/base.txt`.
@@ -539,7 +541,7 @@ flowchart TD
 
 | Mistake | Fix |
 |---|---|
-| Imported `redis.Redis` in a use case | Inject a service protocol; create the client in `composition.py` |
+| Imported `redis.Redis` in a use case | Inject a service protocol; create the client in `app/composition/` |
 | Wrote a "domain service" because the use case got long | Split into multiple use cases or extract pure domain functions on the entity itself |
 | Repository implementation is doing business logic | Move that logic to a use case; the repo should be CRUD + simple queries |
 | Bot handler validating a URL with regex | Use `app/utils/url.py`; do not duplicate |
@@ -562,4 +564,4 @@ Before creating a file, ask:
 - [ ] Did I update the relevant doc in `docs/`?
 - [ ] If this introduces a new dependency, did I pin it and document why?
 - [ ] If this introduces a new service or worker, is it wired in
-      `app/composition.py` and the docker-compose stack?
+      `app/composition/` and the docker-compose stack?

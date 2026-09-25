@@ -152,9 +152,9 @@ app/workers/  ───┘                  ▲
 | `app/application/` | Use cases, orchestration services, DTOs, protocols for infra | `app/domain/`, stdlib |
 | `app/infrastructure/` | DB, Redis, Telegram client, yt-dlp, ffmpeg, storage, queue impl | `app/application/`, `app/domain/`, third-party |
 | `app/bot/` | Telegram handlers, keyboards, callbacks | `app/application/`, `app/utils/`, `python-telegram-bot` |
-| `app/api/` | FastAPI routes (internal `/healthz`, `/readyz`; public `/d/{token}`) | `app/application/`, `app/infrastructure/` (via `composition.py`) |
-| `app/workers/` | arq runtime, scheduled tasks, cleanup, backup | `app/application/`, `app/infrastructure/` (via `composition.py`) |
-| `app/composition.py` | **Single** wiring point of concrete infra into use cases | every layer above |
+| `app/api/` | FastAPI routes (internal `/healthz`, `/readyz`; public `/d/{token}`) | `app/application/`, `app/infrastructure/` (via `app/composition/`) |
+| `app/workers/` | arq runtime, scheduled tasks, cleanup, backup | `app/application/`, `app/infrastructure/` (via `app/composition/`) |
+| `app/composition/` | **Single** wiring point of concrete infra into use cases | every layer above |
 | `deploy/`, `docker/` | Operations: Compose, Nginx, Certbot, scripts | none (it's not Python) |
 
 ### 2.4 Source-of-truth precedence
@@ -176,7 +176,7 @@ a doc, **stop and re-read the doc**.
 
 | Component | If you break it… | Fragility | First read |
 |---|---|---|---|
-| `app/composition.py` | every entry point fails to start | medium | [`02-architecture.md`](02-architecture.md) |
+| `app/composition/` | every entry point fails to start | medium | [`02-architecture.md`](02-architecture.md) |
 | `app/config.py` (`Settings`) | startup fails, or worse — silent misconfig | high | [`13-config-and-env.md`](13-config-and-env.md) |
 | `app/exceptions.py` (`AppError` hierarchy) | wrong errors shown to users; logs break | medium | [`16-error-handling.md`](16-error-handling.md) |
 | `app/infrastructure/db/models.py` + `migrations/` | schema drift, data loss potential | very high | [`12-db-schema.md`](12-db-schema.md) |
@@ -208,7 +208,7 @@ any of them must come with an ADR.
 | `app/bot/*` ← `app/api/*` / `app/workers/*` | sibling layers must not bind |
 | `app/utils/*` ← anything project-specific | utils must stay pure |
 
-`composition.py` is the only place that imports from every layer
+`app/composition/` is the only place that imports from every layer
 and wires them together.
 
 ### 3.2 Bot handlers contain no business logic
@@ -784,7 +784,7 @@ end-to-end. The short version:
 1. New `Platform` enum value (+ alembic ENUM migration).
 2. URL detection in `app/utils/url.py`.
 3. `<Platform>Provider` extending `BaseProvider`.
-4. Register in `_build_provider_registry(...)`.
+4. Register in `build_provider_registry(...)`.
 5. Tests: URL detection + provider unit test with fake yt-dlp.
 6. Docs: provider table in `07-provider-architecture.md`; entry in
    `30-add-new-provider-guide.md` worked examples.
@@ -1184,7 +1184,7 @@ maps to the principle (§1.A) it warns you about.
 | Searching the codebase to learn "how it usually works" | P2 | you skipped §4 reading | go read the matching `docs/` topic now |
 | Rewriting code that wasn't in the plan because "it's clearer" | P1, P3 | speculative refactor | revert; note as follow-up PR |
 | Can't explain why a specific line you just added is needed | P1 | low-confidence change | revert; ask or document the assumption |
-| Modifying `app/composition.py` for the second time | P2, P5 | DI surface is shifting under you | stop; you may have picked the wrong layer for the new code |
+| Modifying `app/composition/` for the second time | P2, P5 | DI surface is shifting under you | stop; you may have picked the wrong layer for the new code |
 | Just copy-pasted a code block between files | P1, P5 | duplication forming | extract to the right module per §2.3 |
 | Touching > 3 files with the change still labelled "small" | P1 | mis-classification | re-classify per §5 |
 | Can't restate the goal in one sentence anymore | P1 | scope expanded silently | restate goal; trim diff back |
@@ -1248,7 +1248,7 @@ you can't tick a box, fix it before declaring done.
 
 - [ ] No layer-direction violations introduced.
 - [ ] No locked decision violated (or: an ADR exists in this PR).
-- [ ] `composition.py` updated if a new dependency was added.
+- [ ] `app/composition/` updated if a new dependency was added.
 
 ### 19.2 Code quality
 
@@ -1479,7 +1479,7 @@ Behaviour around refusals:
 1. **Read before you write (P2).** §4 is non-negotiable.
 2. **Respect locked decisions (P2).** ADR-0005 §2 — twelve rows,
    no exceptions without a superseding ADR.
-3. **Stay inside your layer (P5, P6).** §8 + `composition.py` is
+3. **Stay inside your layer (P5, P6).** §8 + `app/composition/` is
    the only wiring point.
 4. **Emit the plan before the diff (P1).** §6.A template, no
    `TBD`, no `etc.`, with explicit "files NOT touched" and

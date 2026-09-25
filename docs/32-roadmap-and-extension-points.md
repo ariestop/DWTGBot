@@ -23,7 +23,7 @@ next, and where would it go."
 
 - Surface: `app/infrastructure/providers/<platform>.py` extending
   `BaseProvider`.
-- Wired in: `app/composition.py::_build_provider_registry`.
+- Wired in: `app/composition/::build_provider_registry`.
 - Recipe: [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md).
 - Cost: **low** (1–2 days for a yt-dlp-supported platform).
 - Risk: **low** (registry is isolated; failures don't affect existing
@@ -129,7 +129,7 @@ Possible future:
   `METRICS_ENABLED=false`). Each of the three processes (bot, worker,
   API) exposes its own `/metrics` — see ADR-0007 §2.5. Extending is
   straightforward: register the new collector against the per-process
-  `CollectorRegistry` in `app/composition.py:_build_metrics`.
+  `CollectorRegistry` in `app/composition/:build_metrics`.
 - Tracing: not implemented; OpenTelemetry would be the candidate. The
   Prometheus exporter from ADR-0006 is additive and does not block OTLP
   later (see ADR-0006 §4.3).

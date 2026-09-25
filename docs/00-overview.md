@@ -243,7 +243,7 @@ For full incident playbooks see [`24-runbooks.md`](24-runbooks.md).
 
 - **Provider-based architecture** keeps platform-specific weirdness behind a
   thin interface so adding TikTok later is a small, well-bounded PR.
-- **Composition root** (`app/composition.py`) is the only place that wires
+- **Composition root** (`app/composition/`) is the only place that wires
   concrete classes; everything else depends on protocols/ABCs. This is what
   enables fast unit tests with fakes (no Redis/DB needed).
 - **arq + idempotent job IDs** prevent duplicate processing if the bot
@@ -333,7 +333,7 @@ If any box can't be ticked after a reasonable attempt, file an issue tagged `onb
 | Mistake | Why it happens | What to do instead |
 |---|---|---|
 | Adding business logic to a bot handler ("just a small `if`") | Handlers feel like the natural place because that's where the user interaction is | Put the logic in `app/application/use_cases/`; the handler stays a thin adapter |
-| Importing from `app.infrastructure.*` in `app.application.*` | Copy-pasting a quick fix that "works" | Depend on the protocol in `app.application.services` or `app.domain.repositories`; wire concretes only in `composition.py` |
+| Importing from `app.infrastructure.*` in `app.application.*` | Copy-pasting a quick fix that "works" | Depend on the protocol in `app.application.services` or `app.domain.repositories`; wire concretes only in `app/composition/` |
 | Editing an old Alembic migration to "fix" the schema | Faster than writing a new one | Always write a *new* migration. Old ones may already be applied in prod |
 | Adding an env var only in `.env.example` (or only in compose) | The two surfaces look alike, easy to miss one | Add to **all five**: `app/config.py` Settings model, `.env.example`, the relevant compose fragment's env block (`deploy/compose/{control,media}.yml`), the per-topology `deploy/{single,nl1,nl2}/.env.example`, and `docs/13-config-and-env.md` |
 | Logging a token, password, or full Telegram update payload while debugging | "I'll remove it before commit" | Never log secrets. Use [`14-logging-observability.md`](14-logging-observability.md) — log structured fields, never raw payloads |

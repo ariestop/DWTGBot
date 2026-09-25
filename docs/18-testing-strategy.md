@@ -248,7 +248,7 @@ The threshold is a regression guard, not a design target. Pay attention to:
 - **`utils/`** — pure, easy to cover, no excuse for low coverage.
 
 Don't aim for coverage in:
-- `composition.py` (it's wiring; integration test if anything).
+- `app/composition/` (it's wiring; integration test if anything).
 - `infrastructure/db/repositories/*` (covered indirectly by
   integration tests).
 - Entrypoints (`app/main_*.py`).
