@@ -65,7 +65,7 @@ Redis 1152 MiB и по 512 MiB у bot, api, backup, cleanup и nginx. Это о�
 
 ### 1.2 Sizing notes
 
-- NL-2 storage = `(MAX_FILE_SIZE_MB × concurrent jobs × TTL window)` plus headroom for cache. With defaults (2 GiB max file, `WORKER_CONCURRENCY=2`, `TEMP_LINK_TTL_SECONDS=86400`) provision **at least 50 GiB**.
+- NL-2 storage = `(MAX_FILE_SIZE_MB × concurrent jobs × TTL window)` plus headroom for cache. With defaults (2 GiB max file, `WORKER_CONCURRENCY=2`, `TEMP_LINK_TTL_SECONDS=3600`) provision **at least 50 GiB**.
 - Postgres on NL-1 stays small — typically <1 GiB even at scale; backups dominate. `/var/backups/dwtgbot` should hold `BACKUP_RETENTION_DAYS × dump_size` plus 30%.
 - Don't share NL-1 with other workloads competing for disk I/O — Postgres is sensitive.
 
@@ -868,7 +868,7 @@ echo | openssl s_client -connect media.example.com:443 -servername media.example
 | `PUBLIC_BASE_URL` | `https://media.example.com` | **same** | used to build temp link URLs |
 | `SERVER_NAME` | n/a | `media.example.com` | nginx server_name |
 | `API_PORT` | `8080` | `8080` | container-internal API listen port; NL-2 nginx upstream is rendered from this env var |
-| `TEMP_LINK_TTL_SECONDS` | `86400` | `86400` | |
+| `TEMP_LINK_TTL_SECONDS` | `3600` | `3600` | |
 | `TEMP_LINK_MAX_DOWNLOADS` | `5` | `5` | |
 | `TEMP_LINK_TOKEN_BYTES` | `32` | `32` | |
 | `API_INTERNAL_TOKEN` | random | **same value** | `X-Internal-Token` header for `/readyz` and `/internal/*` |

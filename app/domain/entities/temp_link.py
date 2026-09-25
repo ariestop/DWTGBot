@@ -34,8 +34,18 @@ class TempLink:
             and self.downloads_count < self.max_downloads
         )
 
+    def can_resume(self, *, now: datetime | None = None) -> bool:
+        """Whether a continuation request (Range / HEAD) may be served.
+
+        Continuations of an already started download do not spend the
+        counter, so they stay allowed after the last slot is taken —
+        otherwise the final download could never finish or seek.
+        """
+        moment = now or datetime.now(UTC)
+        return self.is_active and self.expires_at > moment and self.downloads_count > 0
+
     def register_use(self) -> None:
+        # ``is_active`` is left alone on exhaustion: it means "not expired
+        # and not revoked", and cleanup deletes the file once it flips.
         self.downloads_count += 1
         self.updated_at = datetime.now(UTC)
-        if self.downloads_count >= self.max_downloads:
-            self.is_active = False

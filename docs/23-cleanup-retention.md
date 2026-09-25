@@ -80,7 +80,7 @@ Three independent classes, three independent rules.
 
 | Class | Authoritative timestamp | Set by | Default lifetime |
 |---|---|---|---|
-| Temp link | `temp_links.expires_at` | delivery service when link is created | `TEMP_LINK_TTL_SECONDS` (e.g. 86 400 s = 24 h) |
+| Temp link | `temp_links.expires_at` | delivery service when link is created | `TEMP_LINK_TTL_SECONDS` (default 3 600 s = 1 h) |
 | Temp link | `temp_links.downloads_count >= max_downloads` | nginx/api on each successful 200 | `TEMP_LINK_MAX_DOWNLOADS` (default 5) |
 | Media cache | `media_cache.expires_at` | provider when info is cached | `MEDIA_CACHE_TTL_SECONDS` (default 21 600 s = 6 h) |
 | Scratch dir | mtime of the directory | filesystem on creation | `TMP_MAX_AGE_HOURS` (default 24 h) |
@@ -111,11 +111,15 @@ Pseudocode of the gate (executed by the API serving `/links/<token>`):
 
 ```python
 if link.expires_at <= now() or link.downloads_count >= link.max_downloads:
-    return 410        # gone — cleanup will reap shortly
+    return 410        # no new download
 return X-Accel-Redirect(link.file_path)
 ```
 
-`is_active = false` exists as a third explicit kill switch (operators can mass-deactivate without changing TTL, e.g. during an incident).
+Range continuations and `HEAD` of a download that already started are
+exempt from the counter check (not from TTL or `is_active`) — see
+[`10-temp-links-and-delivery.md`](10-temp-links-and-delivery.md) §4.1.
+
+`is_active = false` exists as a third explicit kill switch (operators can mass-deactivate without changing TTL, e.g. during an incident). Exhaustion alone does **not** set it: an exhausted link keeps its file until `expires_at`, so the last download can finish. Cleanup therefore deletes files of expired or revoked links only.
 
 ### 3.2 Media cache — provider info caching
 
@@ -135,7 +139,7 @@ Implementation should `DELETE FROM media_cache WHERE expires_at < now()`. This i
 
 | Var | Default | Where it's used |
 |---|---|---|
-| `TEMP_LINK_TTL_SECONDS` | `86400` (24 h) | initial `expires_at` for new links |
+| `TEMP_LINK_TTL_SECONDS` | `3600` (1 h) | initial `expires_at` for new links |
 | `TEMP_LINK_MAX_DOWNLOADS` | `5` | per-link download budget |
 | `MEDIA_CACHE_TTL_SECONDS` | `21600` (6 h) | **dual-use** — see §3.4.1 below |
 | `CLEANUP_INTERVAL_SECONDS` | `3600` (1 h) | cycle period |
@@ -281,7 +285,7 @@ Same image as the worker (one less artifact to maintain). It mounts both the sto
 | Setting | Default | Effect |
 |---|---|---|
 | `CLEANUP_INTERVAL_SECONDS` | `3600` | one cycle / hour |
-| `TEMP_LINK_TTL_SECONDS` | `86400` (24 h) | "ticket" lifetime |
+| `TEMP_LINK_TTL_SECONDS` | `3600` (1 h) | "ticket" lifetime |
 | `TEMP_LINK_MAX_DOWNLOADS` | `5` | budget per link |
 | `MEDIA_CACHE_TTL_SECONDS` | `21600` (6 h) | provider info cache lifetime |
 | `STORAGE_PATH` | `/var/lib/dwtgbot/storage` | must exist, owned by `1000:1000` |
@@ -595,7 +599,7 @@ Future extension: an opt-in `--orphans` flag on `cleanup.sh` to run the same aud
 |---|---|---|
 | Cycle period | 1 h | Up to ~1 h delay between expiry and deletion |
 | Batch size | 500 (in-code, `list_inactive_with_files(limit=500)`) | Up to 12 000 deletes/day; covers ~99 % of installs |
-| TTL | 24 h | Files live ~25 h max from creation |
+| TTL | 1 h | Files live ~2 h max from creation |
 | Cache TTL | 6 h | At most 1 day of provider info on disk |
 
 Reasonable for: ≤ 5 000 jobs/day with avg file ≈ 200 MB → ≈ 1 TB/day churn, comfortably handled.

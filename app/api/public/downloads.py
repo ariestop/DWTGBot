@@ -4,7 +4,10 @@ Public temp-link endpoint: ``GET /d/{token}``.
 Flow:
   1. Look up the token in DB.
   2. Validate active / not expired / not exhausted.
-  3. Atomically increment downloads_count; deactivate when limit reached.
+  3. If the request starts a new download, atomically increment
+     downloads_count and deactivate when the limit is reached.
+     Continuations (``Range`` not starting at byte 0, ``HEAD``) of an
+     already started download are free — see ``starts_new_download``.
   4. Stream the file back. If running behind nginx with the
      ``X-Accel-Redirect`` location ``/_protected/``, we delegate the actual
      bytes to nginx for efficient sendfile().
@@ -44,7 +47,33 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-@router.get("/d/{token}")
+def starts_new_download(method: str, range_header: str | None) -> bool:
+    """Whether a request should spend one ``downloads_count`` slot.
+
+    Video players and download managers fetch one file with many Range
+    requests (seek, resume, moov-at-end probing). Charging each of them
+    exhausted a 5-use link during the first playback, cutting the file
+    mid-stream. Only a request that reads from byte 0 counts; an
+    unparseable Range is treated as a full read, so it counts too.
+    """
+    if method != "GET":
+        return False
+    if not range_header:
+        return True
+    unit, _, spec = range_header.partition("=")
+    if unit.strip().lower() != "bytes":
+        return True
+    first = spec.split(",", 1)[0].strip()
+    start, sep, _ = first.partition("-")
+    if not sep:
+        return True
+    start = start.strip()
+    if not start:
+        return False  # suffix range ``bytes=-N`` — the tail of the file
+    return not start.isdigit() or int(start) == 0
+
+
+@router.api_route("/d/{token}", methods=["GET", "HEAD"])
 async def download(token: str, request: Request) -> Response:
     composition: ApiComposition = _composition(request)
     settings: Settings = _settings(request)
@@ -83,18 +112,24 @@ async def download(token: str, request: Request) -> Response:
         _logger.warning("temp_link_served", token=token_prefix, result="gone")
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="File no longer available")
 
-    # Single atomic UPDATE ... RETURNING — closes the race that the
-    # previous load/mutate/save pair left open: two parallel requests
-    # on a max=1 link could both see ``downloads_count == 0`` and both
-    # be served. Now Postgres serialises the row update for us.
-    link = await composition.temp_links_repo.try_register_use(token)
+    counted = starts_new_download(request.method, request.headers.get("range"))
+    if counted:
+        # Single atomic UPDATE ... RETURNING — closes the race that the
+        # previous load/mutate/save pair left open: two parallel requests
+        # on a max=1 link could both see ``downloads_count == 0`` and both
+        # be served. Now Postgres serialises the row update for us.
+        link = await composition.temp_links_repo.try_register_use(token)
+    elif pre_check.is_usable() or pre_check.can_resume():
+        link = pre_check
+    else:
+        link = None
     if link is None:
         # By-design expiry / exhaustion (or a race we just lost).
         # Excluded from the A6 denominator at query time
         # (ADR-0007 §2.8) — would otherwise tank a legitimate
         # "user clicked twice" SLO.
         metrics.inc_temp_link_serve(result=TempLinkServeResult.EXPIRED)
-        _logger.info("temp_link_served", token=token_prefix, result="expired")
+        _logger.info("temp_link_served", token=token_prefix, result="expired", counted=counted)
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Link expired or exhausted")
 
     metrics.inc_temp_link_serve(result=TempLinkServeResult.OK)
@@ -102,6 +137,7 @@ async def download(token: str, request: Request) -> Response:
         "temp_link_served",
         token=token_prefix,
         result="ok",
+        counted=counted,
         downloads=link.downloads_count,
         max=link.max_downloads,
         active=link.is_active,

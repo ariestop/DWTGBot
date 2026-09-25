@@ -231,7 +231,7 @@ async def test_try_register_use_atomic_single_use(sessionmaker) -> None:
     assert len(successes) == 1, f"expected exactly one success, got {len(successes)}"
     winner = successes[0]
     assert winner.downloads_count == 1
-    assert winner.is_active is False, "single-use link must auto-deactivate on first use"
+    assert winner.is_active is True, "exhaustion is enforced by the counter, not is_active"
 
     again = await repo.try_register_use(seeded.token)
     assert again is None, "exhausted link must keep returning None"
@@ -250,7 +250,8 @@ async def test_try_register_use_respects_multi_use_cap(sessionmaker) -> None:
     final = await repo.get_by_token(seeded.token)
     assert final is not None
     assert final.downloads_count == 3
-    assert final.is_active is False
+    assert final.is_active is True
+    assert final.is_usable() is False
 
 
 async def test_try_register_use_returns_none_for_expired(sessionmaker) -> None:

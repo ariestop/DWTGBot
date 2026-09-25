@@ -21,7 +21,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.public.downloads import router
+from app.api.public.downloads import router, starts_new_download
 from app.config import get_settings
 from app.domain.entities.temp_link import TempLink
 from app.domain.repositories.temp_links_repo import TempLinksRepository
@@ -201,3 +201,60 @@ def test_invalid_path_does_not_consume_download_slot(
     # has the full quota.
     assert bad_link.downloads_count == 0
     assert bad_link.is_active is True
+
+
+@pytest.mark.parametrize(
+    ("method", "range_header", "expected"),
+    [
+        ("GET", None, True),
+        ("GET", "bytes=0-", True),
+        ("GET", "bytes=0-1", True),
+        ("GET", "bytes=1048576-", False),
+        ("GET", "bytes=500-999, 0-10", False),
+        ("GET", "bytes=-500", False),
+        ("GET", "items=5-", True),
+        ("GET", "garbage", True),
+        ("HEAD", None, False),
+    ],
+)
+def test_starts_new_download(method: str, range_header: str | None, expected: bool) -> None:
+    assert starts_new_download(method, range_header) is expected
+
+
+def test_range_continuation_does_not_consume_slot(real_file: Path) -> None:
+    """A player seeking / a download manager resuming sends many Range
+    requests for one playback. Only the byte-0 request spends a slot, so
+    a single-use link keeps serving the rest of that same download."""
+    link = _make_link(token="rangerangerange0", file_path=str(real_file), max_downloads=1)
+    client, metrics = _make_client(_AtomicRepo([link]))
+
+    # Range bytes themselves are nginx's job (X-Accel); the api only
+    # decides whether the request spends a slot.
+    assert client.get(f"/d/{link.token}", headers={"Range": "bytes=0-1"}).status_code == 200
+    assert client.get(f"/d/{link.token}", headers={"Range": "bytes=3-"}).status_code == 200
+    assert link.downloads_count == 1
+
+    assert client.get(f"/d/{link.token}").status_code == 410
+    assert client.get(f"/d/{link.token}", headers={"Range": "bytes=0-"}).status_code == 410
+    assert metrics.serves == ["ok", "ok", "expired", "expired"]
+
+
+def test_head_does_not_consume_slot(real_file: Path) -> None:
+    link = _make_link(token="headheadheadhead", file_path=str(real_file), max_downloads=1)
+    client, _ = _make_client(_AtomicRepo([link]))
+
+    assert client.head(f"/d/{link.token}").status_code == 200
+    assert link.downloads_count == 0
+    assert client.get(f"/d/{link.token}").content == b"payload"
+    assert link.downloads_count == 1
+
+
+def test_revoked_link_refuses_range_continuation(real_file: Path) -> None:
+    link = _make_link(token="revokedrevoked00", file_path=str(real_file), max_downloads=5)
+    link.downloads_count = 1
+    link.is_active = False
+    client, metrics = _make_client(_AtomicRepo([link]))
+
+    r = client.get(f"/d/{link.token}", headers={"Range": "bytes=3-"})
+    assert r.status_code == 410
+    assert metrics.serves == ["expired"]

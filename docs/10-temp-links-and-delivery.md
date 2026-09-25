@@ -93,7 +93,11 @@ sequenceDiagram
     alt invalid (404 / 403 / 410, no counter mutation)
         API -->> NX: error code
         NX -->> U: error
-    else valid path
+    else Range continuation (start > 0) or HEAD
+        API ->> API: link.is_usable() or link.can_resume()  # no counter mutation
+        API -->> NX: 200 + X-Accel-Redirect (nginx answers 206 for the Range)
+        NX -->> U: requested bytes (sendfile)
+    else valid path, GET from byte 0
         API ->> DB: try_register_use(token)  # atomic UPDATE ... RETURNING
         alt UPDATE matched
             DB -->> API: post-update TempLink
@@ -125,6 +129,7 @@ Behaviour:
 |---|---|---|
 | token unknown | `404 Not Found` | "Link not found" |
 | token expired / exhausted / inactive | `410 Gone` | "Link expired or exhausted" |
+| Range continuation / `HEAD` on an exhausted link that was started, not expired, not revoked | `200 OK` + `X-Accel-Redirect` | finishing or seeking the last download does not need a slot |
 | `file_path` outside `STORAGE_PATH` | `403 Forbidden` | path-traversal defense |
 | `file_path` does not exist on disk | `410 Gone` | "File no longer available" |
 | OK + behind nginx | `200 OK` + `X-Accel-Redirect` + `Content-Disposition: attachment` | nginx serves the bytes |
@@ -152,11 +157,49 @@ if request.headers.get("x-internal-xaccel", "0") == "1":
 return FileResponse(...)
 ```
 
+### 4.1 What counts as one download
+
+A video player or a download manager fetches one file with many HTTP
+requests: `Range: bytes=0-`, then `bytes=<offset>-` on every seek,
+resume after a network stall, or probe for an `moov` atom at the end of
+the MP4. When every request spent a slot, a 5-use link was exhausted
+during the very first playback; the next Range request got `410` and the
+player (or the saved file) was left truncated, and a second tap on the
+button showed "Link expired or exhausted".
+
+`starts_new_download(method, range_header)` decides whether a request
+spends a slot:
+
+| Request | Spends a slot? | Allowed when |
+|---|---|---|
+| `GET` without `Range` | yes | `try_register_use` succeeds |
+| `GET` with `Range: bytes=0-…` (incl. `0-1` probes) | yes | `try_register_use` succeeds |
+| `GET` with a non-`bytes` or unparseable `Range` | yes | `try_register_use` succeeds |
+| `GET` with `Range: bytes=N-…`, `N > 0`, or suffix `bytes=-N` | no | `is_usable()` or `can_resume()` |
+| `HEAD` | no | `is_usable()` or `can_resume()` |
+
+`TempLink.can_resume()` is `is_active AND expires_at > now AND
+downloads_count > 0`: an exhausted link can still finish or seek the
+download it already started until the TTL ends, while a revoked
+(`is_active=false`) or expired link refuses everything. The Range bytes
+themselves are nginx's job — the static module honours `Range` on the
+`X-Accel-Redirect` target and answers `206`.
+
+Trade-off: `TEMP_LINK_MAX_DOWNLOADS` limits the number of downloads
+started from byte 0, not bytes transferred. A client that already holds
+the token can fetch the tail with Range requests without spending
+slots. The token is the secret; the counter is a sharing budget, and the
+TTL is the hard bound.
+
+### 4.2 Atomic counter
+
 `try_register_use(token)` is a single
-`UPDATE temp_links SET downloads_count = downloads_count + 1, is_active
-= CASE WHEN downloads_count + 1 >= max_downloads THEN false ELSE true
-END WHERE token = :t AND is_active AND expires_at > now AND
-downloads_count < max_downloads RETURNING *`. This guarantees that a
+`UPDATE temp_links SET downloads_count = downloads_count + 1 WHERE
+token = :t AND is_active AND expires_at > now AND downloads_count <
+max_downloads RETURNING *`. Reaching the limit does **not** flip
+`is_active`: the `downloads_count < max_downloads` predicate refuses new
+downloads on its own, and `is_active=false` keeps meaning "expired or
+revoked" — the signal cleanup uses to delete the file. This guarantees that a
 single-use link served to two concurrent clients is delivered to
 exactly one of them — the other gets `410 Gone`. See ADR-0008 §2.5.
 
@@ -222,10 +265,18 @@ stateDiagram-v2
     [*] --> ACTIVE: TempLinkService.issue
     ACTIVE --> ACTIVE: try_register_use (downloads_count + 1 < max)
     ACTIVE --> EXHAUSTED: try_register_use (downloads_count + 1 == max)
+    EXHAUSTED --> EXHAUSTED: Range continuation / HEAD (can_resume)
     ACTIVE --> EXPIRED: cleanup (now > expires_at)
-    EXHAUSTED --> CLEANED: cleanup deletes file + row
-    EXPIRED --> CLEANED: cleanup deletes file + row
+    EXHAUSTED --> EXPIRED: cleanup (now > expires_at)
+    ACTIVE --> REVOKED: operator sets is_active=false
+    EXHAUSTED --> REVOKED: operator sets is_active=false
+    EXPIRED --> CLEANED: cleanup deletes file
+    REVOKED --> CLEANED: cleanup deletes file
 ```
+
+`EXHAUSTED` is `downloads_count >= max_downloads` with `is_active=true`:
+no new downloads, but the file stays on disk until the TTL ends so the
+last download can finish.
 
 Cleanup is owned by the **cleanup container** on NL-2 (see
 [`20-deployment.md`](20-deployment.md)). It runs on a
@@ -335,6 +386,7 @@ runs in a self-hosted Bot API server, raise this in `Settings` to up to
 | `PUBLIC_BASE_URL` does not match cert SAN | TLS error in browser | Re-issue cert with the right `--domains` |
 | Bot sends link before `mark_done` persisted | If worker crashes between, message exists but DB lacks `public_url` | Known current ordering: `DeliveryService` sends, then `ProcessDownloadUseCase` persists the returned `DeliveryOutcome`. During incidents, search by `temp_links.job_id`; do not assume `download_jobs.public_url` is populated. |
 | Temp-link URL embedded in **message text** (anchor or plain) | First user click returns 410 "Link expired or exhausted" because Telegram's preview crawler (UA `TelegramBot (like TwitterBot)`) hit `/d/<token>` and consumed slot(s) from `downloads_count` — observed in production 2026-04-26 even with `link_preview_options.is_disabled=True` | Move the URL out of the message body into an inline `url=` button (`InlineKeyboardButton(text="📥 Скачать", url=...)`). Inline URL buttons are not subject to preview generation; the crawler never sees the URL. Keep `link_preview_options(is_disabled=True)` as defense-in-depth. See `DeliveryService._deliver_via_link`. |
+| Every Range request charged as a download | Video does not play or the saved file is truncated; a second tap on "📥 Скачать" returns 410 "Link expired or exhausted" although TTL has not passed — observed 2026-09 | Only `GET` from byte 0 spends a slot (`starts_new_download`, §4.1). Check `temp_link_served` logs: `counted=false` lines are continuations. |
 | `Content-Disposition` added both by API and nginx | Some browsers abort or behave inconsistently; headers show two `content-disposition` lines | Keep the filename-bearing header in the API response only. `/_protected/` must not add its own `Content-Disposition`. |
 | Compression enabled on `/d/` or `/_protected/` | Firefox may show "Corrupted Content Error" / "Ошибка искажения содержимого"; partial body in nginx logs while `curl` works | Keep `gzip off; gunzip off;` in both locations. Verify with `curl --compressed -D - -o /tmp/body.bin https://.../d/<token>`: no `Content-Encoding`, size matches `Content-Length`, `file` identifies the MP4/JPEG/audio. |
 
@@ -345,8 +397,7 @@ runs in a self-hosted Bot API server, raise this in `Settings` to up to
 - **Per-link auth**: optional Telegram-issued bearer attached to the link
   (`/d/<token>?u=<signed_user_id>`) for stricter sharing. Backwards
   compatible — token alone keeps working.
-- **Range requests**: today we serve full files. nginx supports `Range`
-  for free; expose it if media players need seeking. Combined with
-  `bytes-served` accounting in the API for analytics.
+- **Bytes-served accounting**: Range requests are served (see §4.1);
+  per-link `bytes-served` analytics would need nginx log correlation.
 - **CDN offload**: front nginx with Cloudflare R2 / similar; signed URLs
   shorten time-to-first-byte. Significant change — design ADR first.

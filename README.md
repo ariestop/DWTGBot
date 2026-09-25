@@ -230,7 +230,7 @@ make worker
 | `STORAGE_TMP_PATH` | `/var/lib/dwtgbot/tmp` | Рабочие scratch-директории |
 | `MAX_FILE_SIZE_MB` | `2048` | Жёсткий верхний предел одного скачивания |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | **В prod обязан быть HTTPS** |
-| `TEMP_LINK_TTL_SECONDS` | `86400` | Срок жизни ссылки |
+| `TEMP_LINK_TTL_SECONDS` | `3600` | Срок жизни ссылки |
 | `TEMP_LINK_MAX_DOWNLOADS` | `5` | Лимит использований на token |
 | `TEMP_LINK_TOKEN_BYTES` | `32` | URL-safe entropy |
 | `API_INTERNAL_TOKEN` | — | **Обязателен в prod** |
