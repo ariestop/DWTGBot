@@ -111,6 +111,13 @@ Maps the existing `app/exceptions.py` hierarchy (`InvalidUrlError`,
 `DownloadTimeoutError`, network/Redis errors → `network_error`;
 everything else → `internal_error`). Pure function, easy to unit-test.
 
+> **Дополнено (2026-09-25):** актуальная таблица соответствия —
+> колонка `reason_class` в [`16-error-handling.md`](../16-error-handling.md) §2.
+> Прочие `AppError` по-прежнему уходят в `provider_error`, а
+> неожиданные исключения — в `internal_error`, но каждый подкласс
+> `AppError` теперь обязан стоять в явной группе (guard-тест в
+> `app/tests/test_reason_class.py`).
+
 ### 2.4 Add `bot_message_handled` and `job_status_changed` log events
 
 These are emitted **alongside** the metric increment (P11). Existing

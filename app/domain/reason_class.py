@@ -18,20 +18,24 @@ from enum import Enum
 
 from app.exceptions import (
     AppError,
+    ConfigError,
     DownloadError,
     DownloadTimeoutError,
     FfmpegError,
+    FileTooLargeError,
     InvalidUrlError,
     JobCancelledError,
     JobConcurrentUpdateError,
     MediaNotFoundError,
     MediaPrivateError,
     ProviderError,
+    SizeUnknownError,
     StorageError,
     TempLinkExhaustedError,
     TempLinkExpiredError,
     TooManyJobsError,
     UnsupportedPlatformError,
+    UpstreamUnavailableError,
 )
 
 
@@ -75,6 +79,12 @@ _USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
 _PROVIDER_ERROR_TYPES: tuple[type[BaseException], ...] = (
     ProviderError,  # base class — narrower subclasses are listed above
     FfmpegError,
+    # The chosen option is too big / of unknown size per the provider's
+    # own metadata — a property of the upstream media, not our bug.
+    FileTooLargeError,
+    SizeUnknownError,
+    # Circuit breaker open after upstream throttling (429s).
+    UpstreamUnavailableError,
 )
 
 # Transient I/O. ``DownloadTimeoutError`` is treated as network rather
@@ -86,12 +96,18 @@ _NETWORK_ERROR_TYPES: tuple[type[BaseException], ...] = (
     ConnectionError,
 )
 
-# Storage and "file too large" failures are operational bugs (cleanup
-# was too aggressive, capacity caps misaligned) — never the user's fault.
+# Operational bugs on our side (disk / cleanup, optimistic-lock races,
+# misconfiguration) — never the user's fault.
 _INTERNAL_ERROR_TYPES: tuple[type[BaseException], ...] = (
     StorageError,
     JobConcurrentUpdateError,
+    ConfigError,
 )
+
+# Every ``AppError`` subclass must be covered by one of the tuples above;
+# ``app/tests/test_reason_class.py`` fails on an unclassified newcomer.
+# Only these bases may rely on the PROVIDER_ERROR fallback below.
+FALLBACK_BASES: tuple[type[BaseException], ...] = (AppError, DownloadError)
 
 
 def classify_exception(exc: BaseException) -> ReasonClass:

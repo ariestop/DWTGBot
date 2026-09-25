@@ -66,25 +66,33 @@ This split is the entire point of the hierarchy.
 
 ## 2. Class catalogue
 
-| Class | `is_retryable` | Default `user_message` | Typical raise site |
-|---|---|---|---|
-| `AppError` | `False` | "Что-то пошло не так..." | base only; rarely raised directly |
-| `ConfigError` | `False` | "Сервис временно недоступен (ошибка конфигурации)." | startup validators |
-| `InvalidUrlError` | `False` | "Это не похоже на ссылку. Пришлите URL целиком." | bot URL detection |
-| `UnsupportedPlatformError` | `False` | "Эту площадку я пока не поддерживаю." | `detect_platform → None` |
-| `ProviderError` | **`True`** | "Не удалось получить информацию о медиа." | provider catch-all |
-| `MediaNotFoundError` | `False` | "Медиа не найдено или удалено." | yt-dlp 404 / removed |
-| `MediaPrivateError` | `False` | "Контент приватный или требует авторизации." | yt-dlp "private" |
-| `DownloadError` | **`True`** | "Не удалось скачать файл. Попробуйте ещё раз." | yt-dlp generic |
-| `DownloadTimeoutError` | `False` | "Скачивание заняло слишком много времени." | per-attempt yt-dlp timeout |
-| `FileTooLargeError` | `False` | "Файл слишком большой даже для временной ссылки." | `_deliver_via_link` cap |
-| `FfmpegError` | `False` | "Не удалось обработать медиа." | direct ffmpeg failures |
-| `StorageError` | `False` | "Ошибка хранилища." | `LocalStorage`, `ensure_within` |
-| `TempLinkExpiredError` | `False` | "Ссылка устарела." | reserved (API uses HTTP 410) |
-| `TempLinkExhaustedError` | `False` | "Лимит скачиваний по этой ссылке исчерпан." | reserved |
+| Class | `is_retryable` | `reason_class` | Default `user_message` | Typical raise site |
+|---|---|---|---|---|
+| `AppError` | `False` | `provider_error` (fallback) | "Что-то пошло не так. Попробуйте позже." | base only; rarely raised directly |
+| `ConfigError` | `False` | `internal_error` | "Сервис временно недоступен (ошибка конфигурации)." | reserved for config failures |
+| `InvalidUrlError` | `False` | `user_error` | "Это не похоже на ссылку. Пришлите URL целиком." | bot URL detection |
+| `UnsupportedPlatformError` | `False` | `user_error` | "Эту площадку я пока не поддерживаю." | `detect_platform → None` |
+| `ProviderError` | **`True`** | `provider_error` | "Не удалось получить информацию о медиа." | provider catch-all |
+| `MediaNotFoundError` | `False` | `user_error` | "Медиа не найдено или удалено." | yt-dlp 404 / removed |
+| `MediaPrivateError` | `False` | `user_error` | "Контент приватный или требует авторизации." | yt-dlp "private" |
+| `DownloadError` | **`True`** | `provider_error` (fallback) | "Не удалось скачать файл. Попробуйте ещё раз." | yt-dlp generic |
+| `DownloadTimeoutError` | `False` | `network_error` | "Скачивание заняло слишком много времени." | per-attempt yt-dlp timeout |
+| `FileTooLargeError` | `False` | `provider_error` | "Файл слишком большой даже для временной ссылки." | `_deliver_via_link` cap, pre-download estimate |
+| `SizeUnknownError` | `False` | `provider_error` | "Не удалось заранее определить размер файла. Попробуйте другую ссылку." | video without a size estimate |
+| `UpstreamUnavailableError` | **`True`** | `provider_error` | "Источник временно ограничивает скачивание. Попробуйте через несколько минут." | circuit breaker open |
+| `FfmpegError` | `False` | `provider_error` | "Не удалось обработать медиа." | direct ffmpeg failures |
+| `StorageError` | `False` | `internal_error` | "Ошибка хранилища." | `LocalStorage`, `ensure_within` |
+| `JobConcurrentUpdateError` | **`True`** | `internal_error` | "Задача обновлялась параллельно. Попробуйте ещё раз." | optimistic-lock conflict |
+| `TooManyJobsError` | `False` | `user_error` | "Сейчас у вас уже выполняется несколько задач. Дождитесь их завершения и попробуйте снова." | per-user job cap |
+| `JobCancelledError` | `False` | `user_error` | "Отменено." | cooperative cancel (ADR-0010) |
+| `TempLinkExpiredError` | `False` | `user_error` | "Ссылка устарела." | reserved (API uses HTTP 410) |
+| `TempLinkExhaustedError` | `False` | `user_error` | "Лимит скачиваний по этой ссылке исчерпан." | reserved |
 
 > **Adding a new error class:** subclass the closest existing one; set a
-> default `user_message`; document it in this table. Don't invent siblings
+> default `user_message`; document it in this table. Also add it to a bucket in
+> `app/domain/reason_class.py` — `app/tests/test_reason_class.py` fails on
+> an unclassified `AppError` subclass (only `AppError` / `DownloadError`
+> themselves may use the `provider_error` fallback). Don't invent siblings
 > when a more specific subclass is appropriate.
 
 ---
