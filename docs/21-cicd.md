@@ -119,7 +119,19 @@ playbook agents should follow on hosts.
 
 ## §3 — `ci.yml` (lint / test / scanners)
 
-Eight parallel jobs, all on `ubuntu-latest`. Each has a `timeout-minutes` to fail fast.
+Eleven parallel jobs (`dockerfile-lint` is a four-image matrix), all on `ubuntu-latest`. Each has a `timeout-minutes` to fail fast.
+
+Задачи `lint`, `typecheck`, `tests` и `integration-tests` ставят Python и
+зависимости через общий composite action
+`.github/actions/setup-python-deps`: `pip install --require-hashes -r
+requirements/dev.lock`, pip-кэш привязан к `dev.lock`. CI получает ту же
+резолюцию с хэшами, что и Docker-образы (`requirements/prod.lock`), а не
+свободную резолюцию из `*.txt`.
+
+Настройки pytest и mypy живут только в `pyproject.toml`
+(`[tool.pytest.ini_options]`, `[tool.mypy]`); отдельных `pytest.ini` и
+`mypy.ini` нет — pytest отдаёт `pytest.ini` приоритет над `pyproject.toml`,
+из-за чего порог покрытия раньше молча не применялся.
 
 ### 3.1 `lint` — ruff (format + lint)
 
@@ -130,7 +142,7 @@ Eight parallel jobs, all on `ubuntu-latest`. Each has a `timeout-minutes` to fai
   run: ruff check .
 ```
 
-- Pinned to `requirements/dev.txt` (`pip cache` keyed on that file).
+- Tool versions come from `requirements/dev.lock` (see §3 intro).
 - Fails if any file is not formatted, or `ruff check` reports any rule violation.
 - **Local equivalent:** `ruff format --check . && ruff check .` or `make lint`.
 
@@ -141,7 +153,6 @@ Eight parallel jobs, all on `ubuntu-latest`. Each has a `timeout-minutes` to fai
 ```
 
 - Type-checks the `app/` package only (not `tests/`).
-- Pip cache keyed on `requirements/{base,dev}.txt`.
 - **Local equivalent:** `mypy app` or `make typecheck`.
 
 ### 3.3 `tests` — pytest
@@ -196,8 +207,18 @@ services:
     severity: warning
 ```
 
-- Only `deploy/scripts/*.sh` is scanned (production-critical bash).
+- Scans `deploy/scripts/*.sh` and `.github/scripts/*.sh`.
 - Treats `warning` and above as failures.
+
+### 3.5b `dockerfile-lint` — hadolint
+
+- Matrix по четырём образам: `docker/{bot,api,worker,backup}.Dockerfile`,
+  `hadolint/hadolint-action@v3.1.0` с конфигом `.hadolint.yaml`.
+- Порог — `warning`. Отключено только `DL3008` (пины версий apt): Debian
+  убирает старые версии пакетов с зеркал, и точные пины ломают пересборку.
+  Воспроизводимость обеспечивают patch-пин базового образа и lock-файлы
+  Python с хэшами.
+- **Локально:** `hadolint --config .hadolint.yaml docker/*.Dockerfile`.
 
 ### 3.5a `compose-validate` — Compose-стеки (ADR-0011)
 
@@ -416,29 +437,35 @@ jobs:
 
 ### 5.3 Per-job step
 
-Each job runs the same SSH script via `appleboy/ssh-action@v1.0.3`:
+Скрипт SSH-деплоя задан один раз в задаче `single` (YAML-якоря
+`&deploy_envs` и `&deploy_script`); `nl1` и `nl2` ссылаются на него
+алиасами `*deploy_envs` / `*deploy_script`. Различия между хостами
+передаются только через `env` шага: `DEPLOY_TARGET`, `DEPLOY_REPO_PATH`,
+`DEPLOY_REF`. GitHub Actions поддерживает якоря и алиасы, но не merge keys
+(`<<:`), поэтому переиспользуются целые скалярные значения.
 
 ```yaml
 - uses: appleboy/ssh-action@v1.0.3
   env:
     GITHUB_TOKEN: ${{ github.token }}
+    DEPLOY_TARGET: nl1
+    DEPLOY_REPO_PATH: ${{ secrets.NL1_REPO_PATH }}
+    DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
   with:
     host: ${{ secrets.NL1_HOST }}
     username: ${{ secrets.NL1_SSH_USER }}
     key: ${{ secrets.NL1_SSH_KEY }}
     port: ${{ secrets.NL1_SSH_PORT || 22 }}
     script_stop: true                      # abort on first non-zero exit
-    envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
-    script: |
-      set -Eeuo pipefail
-      cd "${{ secrets.NL1_REPO_PATH }}"
-      GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
-      git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-      DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
-      git checkout "${DEPLOY_REF}"
-      git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
-      ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
+    envs: *deploy_envs
+    script: *deploy_script                 # cd "${DEPLOY_REPO_PATH}", fetch, checkout "${DEPLOY_REF}",
+                                           # export IMAGE_*, deploy_update.sh "${DEPLOY_TARGET}"
 ```
+
+Скрипт экспортирует все четыре `IMAGE_*` на любом хосте: стек, которому
+часть образов не нужна (например `nl2` без `bot`/`backup`), их игнорирует.
+Для проверки локально: `actionlint` ≥ 1.7.12 (более старые версии не
+понимают алиасы в скалярных полях).
 
 - `script_stop: true` + `set -Eeuo pipefail` → first failure aborts the whole script (no half-deploys).
 - `git pull --ff-only … || true` → tolerates a detached-HEAD-on-tag checkout (no upstream to pull).
@@ -665,7 +692,7 @@ Live edits drift; the next deploy reverts them silently.
 ### 9.4 Gates and approvals
 
 - **Required reviewers** on `nl1` / `nl2` environments (§5.4).
-- **Branch protection** on `main`: required CI checks (`lint`, `typecheck`, `tests`, `integration-tests`, `shell-lint`, `compose-validate`, `trivy`, `gitleaks`).
+- **Branch protection** on `main`: required CI checks (`lint`, `typecheck`, `tests`, `integration-tests`, `shell-lint`, `dockerfile-lint`, `compose-validate`, `trivy`, `gitleaks`).
 - **CODEOWNERS** for `deploy/`, `migrations/`, `.github/workflows/` directing review to ops.
 - **Required signed commits** (recommended).
 
@@ -780,6 +807,8 @@ Per-stage table of common failures, how they manifest, and what to do. Always re
 | `tests` | one or more pytest failures | broken behaviour | reproduce locally with the same env block (§3.3); fix |
 | `tests` | timeouts / flakes | test reads network or filesystem state | mark `@pytest.mark.integration` if appropriate, or fix the test |
 | `shell-lint` | shellcheck warnings | new bash issues | fix in `deploy/scripts/`; SC1091 for sourced files needs `# shellcheck source=…` annotation |
+| `dockerfile-lint` | hadolint warnings | new Dockerfile issue | fix the Dockerfile; add a rule to `.hadolint.yaml` only with a written reason |
+| any Python job | `pip install --require-hashes` fails | `*.txt` changed without `make lock` | run `make lock`, commit the regenerated `*.lock` |
 
 CI failures **block** the PR merge (branch protection). They never deploy.
 
