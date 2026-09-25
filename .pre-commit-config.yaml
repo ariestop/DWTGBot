@@ -20,8 +20,9 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  # Keep in sync with `requirements/dev.txt` mypy pin.
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
+    rev: v1.13.0
     hooks:
       - id: mypy
         additional_dependencies:
