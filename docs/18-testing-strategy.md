@@ -170,6 +170,19 @@ Patterns to include:
 - Length bounds (Telegram `callback_data` ≤ 64 bytes).
 - Defensive decoding (malformed input returns `None`, not raises).
 
+### 4.5 Guard-тесты структуры репозитория
+
+Проверяют не поведение, а инварианты, которые иначе держались бы только
+на ревью:
+
+| Тест | Что проверяет |
+|---|---|
+| `test_layering.py` | `app/domain` и `app/application` импортируют только stdlib и внутренние модули — без `app.infrastructure`, `app.bot`, `app.api`, `app.workers`, `app.composition` и сторонних SDK ([ADR-0012](adr/0012-application-ports-media-sender-storage.md)) |
+| `test_deploy_topology.py` | инварианты compose-стеков `single` / `nl1` / `nl2` |
+| `test_composition_smoke.py` | настоящие `build_worker` / `build_api` / `build_cleanup` собираются и закрываются без DB, Redis и Telegram |
+
+Если guard-тест упал, чините код или документацию, а не ослабляйте тест.
+
 ---
 
 ## 5. Integration tests (opt-in)
