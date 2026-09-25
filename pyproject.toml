@@ -52,7 +52,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "app/tests/**" = ["S105", "S106", "S108", "S104", "PLR2004"]
-"app/config.py" = ["S104"]                    # 0.0.0.0 bind defaults inside containers
+"app/config.py" = ["S104"]                    # 0.0.0.0 checks in validate_runtime
+"app/config_groups.py" = ["S104"]             # 0.0.0.0 bind defaults inside containers
 "app/api/**" = ["B008"]                       # FastAPI Depends(...) idiom
 "app/bot/callbacks/download.py" = ["PLR0911", "PLR0912"]  # callback dispatch table
 # NOTE: redis_state_store moved off pickle in S4 (audit fix). The
