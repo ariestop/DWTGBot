@@ -7,7 +7,8 @@ import shutil
 import pytest
 
 from app.config import Settings
-from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner, _extract_known_size
+from app.infrastructure.downloader.ytdlp_results import extract_known_size
+from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
 
 
 def _make_runner(monkeypatch: pytest.MonkeyPatch) -> YtDlpRunner:
@@ -24,7 +25,7 @@ def _make_runner(monkeypatch: pytest.MonkeyPatch) -> YtDlpRunner:
     return runner
 
 
-def test_extract_known_size_prefers_requested_formats_sum() -> None:
+def testextract_known_size_prefers_requested_formats_sum() -> None:
     payload = {
         "requested_formats": [
             {"filesize": 100},
@@ -32,11 +33,11 @@ def test_extract_known_size_prefers_requested_formats_sum() -> None:
         ]
     }
 
-    assert _extract_known_size(payload) == 140
+    assert extract_known_size(payload) == 140
 
 
-def test_extract_known_size_uses_top_level_fallback() -> None:
-    assert _extract_known_size({"filesize_approx": 123}) == 123
+def testextract_known_size_uses_top_level_fallback() -> None:
+    assert extract_known_size({"filesize_approx": 123}) == 123
 
 
 @pytest.mark.asyncio
