@@ -46,19 +46,28 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          DEPLOY_TARGET: single
+          DEPLOY_REPO_PATH: ${{ secrets.SINGLE_REPO_PATH }}
+          DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
         with:
           host: ${{ secrets.SINGLE_HOST }}
           username: ${{ secrets.SINGLE_SSH_USER }}
           key: ${{ secrets.SINGLE_SSH_KEY }}
           port: ${{ secrets.SINGLE_SSH_PORT || 22 }}
           script_stop: true
-          envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
-          script: |
+          # Audit fix #4: pass immutable image tags into the deploy
+          # script's environment. The compose files require IMAGE_* to
+          # be set (``${VAR:?...}``) and will refuse to start otherwise.
+          # Using ``sha-<short>`` of the deployed ref guarantees the
+          # registry has the artefact (built by build-images.yml).
+          # Exporting all four IMAGE_* is harmless on hosts whose stack
+          # does not use some of them.
+          envs: &deploy_envs GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN,DEPLOY_TARGET,DEPLOY_REPO_PATH,DEPLOY_REF
+          script: &deploy_script |
             set -Eeuo pipefail
-            cd "${{ secrets.SINGLE_REPO_PATH }}"
+            cd "${DEPLOY_REPO_PATH}"
             GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
             git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-            DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
             git checkout "${DEPLOY_REF}"
             git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
@@ -69,7 +78,7 @@ jobs:
             export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
             export IMAGE_BACKUP="ghcr.io/${REPO_LC}-backup:${IMAGE_TAG}"
             echo "${GITHUB_TOKEN}" | sudo docker login ghcr.io -u github-actions --password-stdin
-            ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh single
+            ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh "${DEPLOY_TARGET}"
 
   nl1:
     if: >-
@@ -86,35 +95,17 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          DEPLOY_TARGET: nl1
+          DEPLOY_REPO_PATH: ${{ secrets.NL1_REPO_PATH }}
+          DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
         with:
           host: ${{ secrets.NL1_HOST }}
           username: ${{ secrets.NL1_SSH_USER }}
           key: ${{ secrets.NL1_SSH_KEY }}
           port: ${{ secrets.NL1_SSH_PORT || 22 }}
           script_stop: true
-          # Audit fix #4: pass immutable image tags into the deploy
-          # script's environment. The compose files require IMAGE_* to
-          # be set (``${VAR:?...}``) and will refuse to start otherwise.
-          # Using ``sha-<short>`` of the deployed ref guarantees the
-          # registry has the artefact (built by build-images.yml).
-          envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
-          script: |
-            set -Eeuo pipefail
-            cd "${{ secrets.NL1_REPO_PATH }}"
-            GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-            DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
-            git checkout "${DEPLOY_REF}"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
-            SHORT_SHA="$(git rev-parse --short=7 HEAD)"
-            export IMAGE_TAG="sha-${SHORT_SHA}"
-            REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-            export IMAGE_BOT="ghcr.io/${REPO_LC}-bot:${IMAGE_TAG}"
-            export IMAGE_API="ghcr.io/${REPO_LC}-api:${IMAGE_TAG}"
-            export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
-            export IMAGE_BACKUP="ghcr.io/${REPO_LC}-backup:${IMAGE_TAG}"
-            echo "${GITHUB_TOKEN}" | sudo docker login ghcr.io -u github-actions --password-stdin
-            ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl1
+          envs: *deploy_envs
+          script: *deploy_script
 
   nl2:
     # Audit fix A3: bare ``needs: [nl1]`` silently skipped nl2 when
@@ -142,25 +133,14 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          DEPLOY_TARGET: nl2
+          DEPLOY_REPO_PATH: ${{ secrets.NL2_REPO_PATH }}
+          DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
         with:
           host: ${{ secrets.NL2_HOST }}
           username: ${{ secrets.NL2_SSH_USER }}
           key: ${{ secrets.NL2_SSH_KEY }}
           port: ${{ secrets.NL2_SSH_PORT || 22 }}
           script_stop: true
-          envs: GITHUB_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN
-          script: |
-            set -Eeuo pipefail
-            cd "${{ secrets.NL2_REPO_PATH }}"
-            GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-            DEPLOY_REF="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}"
-            git checkout "${DEPLOY_REF}"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
-            SHORT_SHA="$(git rev-parse --short=7 HEAD)"
-            export IMAGE_TAG="sha-${SHORT_SHA}"
-            REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-            export IMAGE_API="ghcr.io/${REPO_LC}-api:${IMAGE_TAG}"
-            export IMAGE_WORKER="ghcr.io/${REPO_LC}-worker:${IMAGE_TAG}"
-            echo "${GITHUB_TOKEN}" | sudo docker login ghcr.io -u github-actions --password-stdin
-            ASSUME_YES=1 sudo -E bash deploy/scripts/deploy_update.sh nl2
+          envs: *deploy_envs
+          script: *deploy_script
