@@ -67,7 +67,7 @@
 
 Перечисляется здесь только для roadmap-контекста. Каждый пункт требует отдельного ADR перед стартом.
 
-- Ports/Services унификация (`StoragePort`, `TelegramSenderPort`, миграция `process_download` и `delivery_service`).
+- ~~Ports/Services унификация (`StoragePort`, `TelegramSenderPort`, миграция `process_download` и `delivery_service`).~~ ✅ сделано: [ADR-0012](../adr/0012-application-ports-media-sender-storage.md), порты `MediaSender` / `MediaStorage`.
 - yt-dlp полная ENV-конфигурация (вынести магические тайм-ауты).
 - Graceful degradation для Redis/Postgres down (user-facing "сервис в пониженном режиме").
 - Canary-деплой + auto-rollback по `/readyz`.

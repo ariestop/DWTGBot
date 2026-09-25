@@ -60,7 +60,7 @@ For the precise import-allowed matrix see [`03-project-structure.md`](03-project
 | Layer | Folder | Owns | Forbidden |
 |---|---|---|---|
 | **Domain** | `app/domain/` | Pure dataclass entities, enums, repository ABCs, business invariants | Importing infrastructure, importing application; no I/O |
-| **Application** | `app/application/` | Use cases, service protocols (`Provider`, `QueueProducer`, `RequestStateStore`), DTOs | Importing infrastructure; instantiating concrete repos |
+| **Application** | `app/application/` | Use cases, service protocols (`Provider`, `QueueProducer`, `RequestStateStore`), ports (`MediaSender`, `MediaStorage`, `ProgressReporter` — ADR-0012), DTOs | Importing infrastructure or third-party SDKs (enforced by `app/tests/test_layering.py`); instantiating concrete repos |
 | **Infrastructure** | `app/infrastructure/` | DB (SQLAlchemy), Redis, arq, yt-dlp/ffmpeg runners, providers, storage, Telegram client | Containing business logic; bypassing `app/composition.py` |
 | **Bot (adapter)** | `app/bot/` | python-telegram-bot handlers, callbacks, keyboards, middleware | Containing business logic; calling infrastructure directly |
 | **API (adapter)** | `app/api/` | FastAPI routers, lifecycle, internal/public endpoints | Containing business logic; bypassing use cases |
