@@ -19,7 +19,6 @@ size and Telegram limits.
 from __future__ import annotations
 
 import asyncio
-import mimetypes
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -204,28 +203,15 @@ class InstagramProvider(BaseProvider):
         elif option.kind is MediaKind.VIDEO and option.key.startswith("gallery_"):
             files = [f for f in files if _looks_like_video(f)]
 
-        if not files:
-            raise DownloadError("Instagram download produced no matching files")
-
-        total = sum(f.stat().st_size for f in files if f.exists())
-        primary = files[0]
-        mime = mimetypes.guess_type(primary.name)[0] or "application/octet-stream"
         kind_out = (
             MediaKind.GALLERY if option.kind is MediaKind.GALLERY or len(files) > 1 else option.kind
         )
-        _logger.info(
-            "instagram_download_done",
-            files=len(files),
-            total_bytes=total,
-            primary=primary.name,
-            kind=kind_out.value,
-        )
-        return DownloadResult(
-            files=tuple(str(f) for f in files),
-            total_size_bytes=total,
-            primary_mime=mime,
+        return self._result_from_files(
+            files,
             title=out_dir.name,
             kind=kind_out,
+            done_event="instagram_download_done",
+            empty_error="Instagram download produced no matching files",
         )
 
     def _compute_playlist_items(self, option: DownloadOption, *, url: str) -> str | None:
@@ -245,22 +231,12 @@ class InstagramProvider(BaseProvider):
         return info.items
 
     def _auth_extra_opts(self) -> dict[str, str] | None:
-        cookiefile = (self._settings.INSTAGRAM_COOKIES_FILE or "").strip()
-        if not cookiefile:
-            return None
-        cookie_path = Path(cookiefile)
-        if not cookie_path.is_file():
-            _logger.warning("instagram_cookiefile_missing", path=cookiefile)
-            return None
-        return {"cookiefile": str(cookie_path)}
+        return self._cookie_extra_opts(
+            self._settings.INSTAGRAM_COOKIES_FILE, missing_event="instagram_cookiefile_missing"
+        )
 
     def _with_auth_extra_opts(self, extra_opts: dict[str, str] | None) -> dict[str, str] | None:
-        auth_opts = self._auth_extra_opts()
-        if auth_opts is None:
-            return extra_opts
-        if extra_opts is None:
-            return auth_opts
-        return {**extra_opts, **auth_opts}
+        return self._merge_extra_opts(extra_opts, self._auth_extra_opts())
 
 
 # -------------------------- helpers --------------------------

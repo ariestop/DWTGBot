@@ -19,11 +19,10 @@ import time
 import pytest
 from telegram.error import BadRequest, RetryAfter, TelegramError
 
+from app.bot.services.progress_caption import render_bar, render_caption
 from app.bot.services.progress_updater import (
     ProgressUpdater,
     _ActiveJob,
-    _render_bar,
-    _render_caption,
 )
 from app.config import get_settings
 from app.domain.enums import ProgressStage
@@ -146,31 +145,31 @@ def _seed_progress(
 
 
 def test_render_bar_bounds() -> None:
-    assert _render_bar(0.0) == "[" + "░" * 10 + "]"
-    assert _render_bar(100.0) == "[" + "█" * 10 + "]"
-    assert _render_bar(-5.0).count("█") == 0
-    assert _render_bar(200.0).count("█") == 10
+    assert render_bar(0.0) == "[" + "░" * 10 + "]"
+    assert render_bar(100.0) == "[" + "█" * 10 + "]"
+    assert render_bar(-5.0).count("█") == 0
+    assert render_bar(200.0).count("█") == 10
 
 
 def test_render_bar_middle() -> None:
     # 50 % => 5/10 filled exactly.
-    assert _render_bar(50.0) == "[" + "█" * 5 + "░" * 5 + "]"
+    assert render_bar(50.0) == "[" + "█" * 5 + "░" * 5 + "]"
 
 
 def test_render_caption_downloading_has_bar_and_percent() -> None:
-    caption = _render_caption(ProgressStage.DOWNLOADING, 42.0)
+    caption = render_caption(ProgressStage.DOWNLOADING, 42.0)
     assert "Скачиваю" in caption
     assert "42" in caption
     assert "[" in caption and "]" in caption
 
 
 def test_render_caption_analyzing_has_no_bar() -> None:
-    caption = _render_caption(ProgressStage.ANALYZING, 0.0)
+    caption = render_caption(ProgressStage.ANALYZING, 0.0)
     assert "[" not in caption
 
 
 def test_render_caption_failed_includes_reason() -> None:
-    caption = _render_caption(ProgressStage.FAILED, 0.0, reason="timeout")
+    caption = render_caption(ProgressStage.FAILED, 0.0, reason="timeout")
     assert "timeout" in caption
 
 

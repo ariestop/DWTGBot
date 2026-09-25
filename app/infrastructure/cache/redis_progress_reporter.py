@@ -1,7 +1,8 @@
 """
 Redis-backed :class:`ProgressReporter`.
 
-Implements the side-channel contract from ADR-0010 §2.2:
+Implements the side-channel contract from ADR-0010 §2.2 (key names in
+``app.application.ports.progress_channel``):
 
 * ``progress:{job_id}``      — HASH {percent, stage, updated_at [, reason]}
                                with ``PROGRESS_TTL_SEC`` expiry.
@@ -39,8 +40,8 @@ Failure policy
 Every Redis call is wrapped in try/except: ADR-0010 forbids the
 progress side-channel from breaking the main download flow. On any
 failure we log at WARNING and return; the worker proceeds and the
-bot-side watchdog eventually swaps the placeholder for a "connection
-lost" notice (PR 4).
+bot-side watchdog eventually swaps the placeholder for a "still
+downloading" notice.
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ import redis as redis_sync
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from app.application.ports.progress_channel import EVENTS_CHANNEL, progress_key, progress_meta_key
 from app.application.ports.progress_reporter import ProgressReporter
 from app.config import Settings
 from app.domain.enums import ProgressStage
@@ -64,16 +66,6 @@ if TYPE_CHECKING:
 
 
 _logger = get_logger(__name__)
-
-_EVENTS_CHANNEL = "progress:events"
-
-
-def _progress_key(job_id: int) -> str:
-    return f"progress:{job_id}"
-
-
-def _meta_key(job_id: int) -> str:
-    return f"progress_meta:{job_id}"
 
 
 @dataclass(slots=True)
@@ -133,11 +125,11 @@ class RedisProgressReporter(ProgressReporter):
         }
         try:
             async with self._r.pipeline(transaction=False) as pipe:
-                pipe.hset(_meta_key(job_id), mapping=meta)  # type: ignore[arg-type]
-                pipe.expire(_meta_key(job_id), self._settings.PROGRESS_META_TTL_SEC)
-                pipe.hset(_progress_key(job_id), mapping=progress)  # type: ignore[arg-type]
-                pipe.expire(_progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
-                pipe.publish(_EVENTS_CHANNEL, str(job_id))
+                pipe.hset(progress_meta_key(job_id), mapping=meta)  # type: ignore[arg-type]
+                pipe.expire(progress_meta_key(job_id), self._settings.PROGRESS_META_TTL_SEC)
+                pipe.hset(progress_key(job_id), mapping=progress)  # type: ignore[arg-type]
+                pipe.expire(progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
+                pipe.publish(EVENTS_CHANNEL, str(job_id))
                 await pipe.execute()
         except RedisError:
             _logger.warning("progress_start_failed", job_id=job_id)
@@ -164,15 +156,15 @@ class RedisProgressReporter(ProgressReporter):
         try:
             async with self._r.pipeline(transaction=False) as pipe:
                 pipe.hset(
-                    _progress_key(job_id),
+                    progress_key(job_id),
                     mapping={
                         "percent": f"{clamped:.1f}",
                         "stage": stage.value,
                         "updated_at": str(int(time.time())),
                     },
                 )
-                pipe.expire(_progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
-                pipe.publish(_EVENTS_CHANNEL, str(job_id))
+                pipe.expire(progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
+                pipe.publish(EVENTS_CHANNEL, str(job_id))
                 await pipe.execute()
         except RedisError:
             _logger.warning("progress_update_failed", job_id=job_id, stage=stage.value)
@@ -218,15 +210,15 @@ class RedisProgressReporter(ProgressReporter):
             try:
                 pipe = client.pipeline(transaction=False)
                 pipe.hset(
-                    _progress_key(job_id),
+                    progress_key(job_id),
                     mapping={
                         "percent": f"{clamped:.1f}",
                         "stage": ProgressStage.DOWNLOADING.value,
                         "updated_at": str(int(time.time())),
                     },
                 )
-                pipe.expire(_progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
-                pipe.publish(_EVENTS_CHANNEL, str(job_id))
+                pipe.expire(progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
+                pipe.publish(EVENTS_CHANNEL, str(job_id))
                 pipe.execute()
             except RedisError:
                 _logger.warning("progress_hook_failed", job_id=job_id)
@@ -292,9 +284,9 @@ class RedisProgressReporter(ProgressReporter):
             mapping["reason"] = reason[:512]
         try:
             async with self._r.pipeline(transaction=False) as pipe:
-                pipe.hset(_progress_key(job_id), mapping=mapping)  # type: ignore[arg-type]
-                pipe.expire(_progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
-                pipe.publish(_EVENTS_CHANNEL, str(job_id))
+                pipe.hset(progress_key(job_id), mapping=mapping)  # type: ignore[arg-type]
+                pipe.expire(progress_key(job_id), self._settings.PROGRESS_TTL_SEC)
+                pipe.publish(EVENTS_CHANNEL, str(job_id))
                 await pipe.execute()
         except RedisError:
             _logger.warning("progress_terminal_failed", job_id=job_id, stage=stage.value)

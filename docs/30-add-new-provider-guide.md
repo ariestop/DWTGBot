@@ -203,14 +203,36 @@ class BaseProvider(ABC):
     def build_options(self, info: MediaInfo) -> list[DownloadOption]: ...
 
     @abstractmethod
+    def default_option(self, info: MediaInfo) -> DownloadOption: ...   # ADR-0010 §2.1
+
+    @abstractmethod
+    async def probe_size(
+        self, url: str, *, info: MediaInfo, option: DownloadOption
+    ) -> int | None: ...
+
+    @abstractmethod
     async def download(
         self,
         url: str,
         option: DownloadOption,
         *,
         target_dir: str,
+        on_progress: Callable[[float], None] | None = None,          # ADR-0010 §2.2
     ) -> DownloadResult: ...
 ```
+
+Защищённые помощники базового класса — используйте их вместо копирования
+кода из существующих провайдеров:
+
+| Помощник | Назначение |
+|---|---|
+| `_cookie_extra_opts(configured, *, missing_event=...)` | `{"cookiefile": path}` для yt-dlp или `None`, если путь пуст или файла нет (тогда пишется `missing_event`, например `"<platform>_cookiefile_missing"`) |
+| `_merge_extra_opts(extra_opts, auth_opts)` | объединение опций вызова и авторизации; при конфликте побеждает авторизация |
+| `_result_from_files(files, *, title, kind, done_event, empty_error)` | `DownloadResult` из файлов в каталоге задачи: сумма размеров, MIME первого файла, событие `done_event`; пустой список → `DownloadError(empty_error)` |
+
+Имена событий передаются строковыми литералами, не f-строками (правило
+логирования). Помощники не расширяют публичный интерфейс, поэтому ADR для
+них не нужен.
 
 **This surface is frozen.** Adding a public method, a positional
 argument, or a new constructor parameter is an **architectural

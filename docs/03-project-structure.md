@@ -126,6 +126,7 @@ app/application/
 ├── ports/               # Порты к адаптерам (Protocol), ADR-0012
 │   ├── media_sender.py  # MediaSender + DTO InlineKeyboard / InlineButton
 │   ├── media_storage.py # MediaStorage
+│   ├── progress_channel.py   # Redis-ключи side-channel прогресса (контракт worker ↔ bot)
 │   └── progress_reporter.py  # ProgressReporter + NoopProgressReporter
 ├── services/            # Service protocols (Protocol/ABC)
 │   ├── delivery_service.py
@@ -199,16 +200,22 @@ app/bot/
 ├── application.py        # Application factory (build_application)
 ├── container.py          # BotContainer dataclass (DI)
 ├── callbacks/
-│   ├── codec.py          # DownloadCallback (encode/decode + 64-byte limit)
-│   └── download.py       # Inline-button callback handler
+│   ├── cancel_job.py     # Кнопка отмены (ADR-0010 §2.1)
+│   ├── codec.py          # Callback wire formats (encode/decode + 64-byte limit)
+│   ├── download.py       # Inline-button callback handler
+│   └── post_text.py      # Кнопка «текст поста» (ADR-0010 §2.3)
 ├── handlers/
 │   ├── commands.py       # /start /help /about /health
 │   ├── errors.py         # Global error handler → user-friendly message
 │   └── links.py          # Free-text URL handler
 ├── keyboards/
 │   └── download_options.py
-└── middleware/
-    └── logging_mw.py     # Binds correlation IDs into structlog context
+├── middleware/
+│   ├── logging_mw.py     # Binds correlation IDs into structlog context
+│   └── metrics_mw.py     # bot_message_handled latency / outcome (ADR-0007)
+└── services/
+    ├── progress_caption.py  # Чистый текст подписи прогресса и полоска
+    └── progress_updater.py  # pubsub + watchdog: правка placeholder-сообщения
 ```
 
 **You may put here:**

@@ -1,5 +1,5 @@
 """
-Bot-side live-progress updater (ADR-0010 §2.2, task §4 item 2 PR 4).
+Bot-side live-progress updater (ADR-0010 §2.2).
 
 Owns two asyncio tasks:
 
@@ -19,11 +19,10 @@ placeholders — any meta with a live TTL is re-attached and future events
 continue to update it in place.
 
 The updater intentionally lives *only* in the bot process. The worker is
-still the sole writer to the Redis side-channel (see ADR-0010 §2.2,
-§3 "Alternatives considered" B2). PR 5 will plug the ``handle_link``
-auto-flow into ``ProgressReporter.start()`` so that progress events start
-producing visible UI; PR 4 just installs the plumbing — until then the
-updater stays idle (no keys to read) and the watchdog does nothing.
+the sole writer to the Redis side-channel (see ADR-0010 §2.2,
+§3 "Alternatives considered" B2); key names live in
+``app.application.ports.progress_channel`` and caption text in
+``app.bot.services.progress_caption``.
 
 Failure policy
 --------------
@@ -46,6 +45,13 @@ from redis.exceptions import RedisError
 from telegram import Bot
 from telegram.error import BadRequest, RetryAfter, TelegramError
 
+from app.application.ports.progress_channel import (
+    EVENTS_CHANNEL,
+    PROGRESS_META_KEY_PREFIX,
+    progress_key,
+    progress_meta_key,
+)
+from app.bot.services.progress_caption import STALE_CAPTION, render_caption
 from app.config import Settings
 from app.domain.enums import ProgressStage
 from app.logging_config import get_logger
@@ -56,9 +62,6 @@ if TYPE_CHECKING:
 _logger = get_logger(__name__)
 
 
-_EVENTS_CHANNEL = "progress:events"
-_PROGRESS_META_PREFIX = "progress_meta:"
-_PROGRESS_KEY_PREFIX = "progress:"
 _WATCHDOG_TICK_SEC = 5.0
 # Keep recent placeholder deletions in memory for a short window so the
 # recovery scan on a bot restart does not resurrect a job that was
@@ -67,62 +70,6 @@ _TOMBSTONE_TTL_SEC = 60.0
 # Terminal-caption hold before delete: gives the user a brief glance at
 # "Готово" / "Отменено" before the placeholder disappears.
 _TERMINAL_HOLD_SEC = 2.0
-
-_STAGE_PHRASES: dict[ProgressStage, str] = {
-    ProgressStage.ANALYZING: "Анализирую ссылку…",
-    ProgressStage.DOWNLOADING: "Скачиваю",
-    ProgressStage.PROCESSING: "Обрабатываю",
-    ProgressStage.UPLOADING: "Загружаю",
-    ProgressStage.DONE: "Готово",
-    ProgressStage.CANCELLED: "Отменено",
-    ProgressStage.FAILED: "Не удалось скачать",
-}
-# yt-dlp's ``progress_hooks`` emit only during the "downloading" status.
-# HLS fragment transitions and the postprocess merge step (Instagram,
-# some YouTube formats) therefore produce routine silent gaps where the
-# worker is perfectly healthy and ffmpeg is just muxing. The previous
-# "lost connection" wording read like a crash to users even when the
-# download finished seconds later — surface the real shape of the
-# situation instead.
-_STALE_CAPTION = "Скачивание продолжается, это может занять ещё немного времени…"
-
-
-def _progress_key(job_id: int) -> str:
-    return f"{_PROGRESS_KEY_PREFIX}{job_id}"
-
-
-def _meta_key(job_id: int) -> str:
-    return f"{_PROGRESS_META_PREFIX}{job_id}"
-
-
-def _render_bar(percent: float, *, width: int = 10) -> str:
-    filled = round(percent / 100.0 * width)
-    filled = max(0, min(width, filled))
-    return "[" + "█" * filled + "░" * (width - filled) + "]"
-
-
-def _render_caption(
-    stage: ProgressStage,
-    percent: float,
-    *,
-    reason: str | None = None,
-) -> str:
-    """Render the placeholder caption shown to the user.
-
-    The text is deliberately short so it fits on one line on small
-    screens; the bar is 10 cells so each cell ~= 10 %. Terminal stages
-    skip the bar entirely.
-    """
-    phrase = _STAGE_PHRASES.get(stage, "...")
-    if stage in (
-        ProgressStage.DOWNLOADING,
-        ProgressStage.PROCESSING,
-        ProgressStage.UPLOADING,
-    ):
-        return f"{phrase}… {_render_bar(percent)} {int(percent)} %"
-    if stage is ProgressStage.FAILED and reason:
-        return f"{phrase}: {reason}"
-    return phrase
 
 
 def _bytes_to_str(value: object) -> str | None:
@@ -248,7 +195,7 @@ class ProgressUpdater:
     async def _recover_active_jobs(self) -> None:
         try:
             async for key in self._redis.scan_iter(
-                match=f"{_PROGRESS_META_PREFIX}*",
+                match=f"{PROGRESS_META_KEY_PREFIX}*",
                 count=100,
             ):
                 key_text = _bytes_to_str(key)
@@ -280,12 +227,12 @@ class ProgressUpdater:
             try:
                 pubsub = self._redis.pubsub()
                 try:
-                    await pubsub.subscribe(_EVENTS_CHANNEL)
+                    await pubsub.subscribe(EVENTS_CHANNEL)
                     backoff = 1.0
                     await self._consume_pubsub(pubsub)
                 finally:
                     with contextlib.suppress(Exception):
-                        await pubsub.unsubscribe(_EVENTS_CHANNEL)
+                        await pubsub.unsubscribe(EVENTS_CHANNEL)
                     with contextlib.suppress(Exception):
                         await pubsub.close()
             except asyncio.CancelledError:
@@ -335,7 +282,7 @@ class ProgressUpdater:
         if self._tombstones.get(job_id, 0.0) > time.monotonic():
             return
         try:
-            progress = await self._redis.hgetall(_progress_key(job_id))
+            progress = await self._redis.hgetall(progress_key(job_id))
         except RedisError:
             _logger.warning("progress_read_failed", job_id=job_id)
             return
@@ -345,7 +292,7 @@ class ProgressUpdater:
         job = self._active.get(job_id)
         if job is None:
             try:
-                meta = await self._redis.hgetall(_meta_key(job_id))
+                meta = await self._redis.hgetall(progress_meta_key(job_id))
             except RedisError:
                 _logger.warning("progress_meta_read_failed", job_id=job_id)
                 return
@@ -371,7 +318,7 @@ class ProgressUpdater:
         if self._is_debounced(job, percent=percent, stage=stage):
             return
 
-        caption = _render_caption(stage, percent, reason=reason)
+        caption = render_caption(stage, percent, reason=reason)
         applied = await self._apply_caption(job, caption)
         if applied:
             job.last_apply_at = time.monotonic()
@@ -416,7 +363,7 @@ class ProgressUpdater:
                 self._forget(job_id)
                 continue
             if age > warn_after and not job.stale_notified:
-                await self._apply_caption(job, _STALE_CAPTION)
+                await self._apply_caption(job, STALE_CAPTION)
                 job.stale_notified = True
 
     # ---- telegram helpers ------------------------------------------------
@@ -486,8 +433,7 @@ class ProgressUpdater:
         job.terminated = True
         if stage is ProgressStage.FAILED:
             # Keep the error caption in place — user should see the
-            # failure reason; cleanup happens via watchdog (drop_after)
-            # or an explicit follow-up in PR 5 when retry UX lands.
+            # failure reason; cleanup happens via the watchdog (drop_after).
             self._forget(job.job_id, drop_immediately=False)
             return
         # DONE / CANCELLED: short hold so the terminal caption is visible,

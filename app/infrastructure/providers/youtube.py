@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import mimetypes
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -205,14 +204,9 @@ class YouTubeProvider(BaseProvider):
         raise DownloadError(f"Unsupported YouTube option: {option.key}")
 
     def _auth_extra_opts(self) -> dict[str, str] | None:
-        cookiefile = (self._settings.YOUTUBE_COOKIES_FILE or "").strip()
-        if not cookiefile:
-            return None
-        cookie_path = Path(cookiefile)
-        if not cookie_path.is_file():
-            _logger.warning("youtube_cookiefile_missing", path=cookiefile)
-            return None
-        return {"cookiefile": str(cookie_path)}
+        return self._cookie_extra_opts(
+            self._settings.YOUTUBE_COOKIES_FILE, missing_event="youtube_cookiefile_missing"
+        )
 
     def _build_result(
         self,
@@ -221,24 +215,12 @@ class YouTubeProvider(BaseProvider):
         info_title: str,
         kind: MediaKind,
     ) -> DownloadResult:
-        if not files:
-            raise DownloadError("yt-dlp produced no files")
-        total = sum(f.stat().st_size for f in files if f.exists())
-        primary = files[0]
-        mime = mimetypes.guess_type(primary.name)[0] or "application/octet-stream"
-        _logger.info(
-            "youtube_download_done",
-            files=len(files),
-            total_bytes=total,
-            primary=primary.name,
-            mime=mime,
-        )
-        return DownloadResult(
-            files=tuple(str(f) for f in files),
-            total_size_bytes=total,
-            primary_mime=mime,
+        return self._result_from_files(
+            files,
             title=info_title,
             kind=kind,
+            done_event="youtube_download_done",
+            empty_error="yt-dlp produced no files",
         )
 
 
