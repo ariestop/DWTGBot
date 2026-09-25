@@ -124,6 +124,10 @@ shutdown. It subscribes to `progress:events`, looks up
 `progress:{job_id}` + `progress_meta:{job_id}`, and calls
 `bot.edit_message_caption`. Behaviour:
 
+> **Дополнено (2026-09-25):** имена ключей и канала вынесены в
+> `app/application/ports/progress_channel.py` (общий контракт writer ↔
+> reader), текст подписи — в `app/bot/services/progress_caption.py`.
+
 - Debounce: skip updates when `|Δpercent| < PROGRESS_DEBOUNCE_PERCENT`
   and the stage has not changed, unless the last successful edit is
   older than `PROGRESS_REDRAW_INTERVAL_SEC`.
