@@ -12,6 +12,23 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — `lock-check` no longer fails on upstream releases
+
+`make lock-check` resolved from an empty tmpdir, so any new release of a
+transitive dependency turned CI red on an untouched tree and blocked the
+image build and deploy that depend on it. `lock-check` and `make lock`
+now seed the resolver with the committed `*.lock` (uv prefers existing
+pins); `make lock-upgrade` is the explicit way to move everything to the
+newest versions.
+
+### Fixed — TLS bootstrap and renewal
+
+`init-letsencrypt.sh` failed the first issue with `live directory exists`
+because the self-signed dummy was never removed; it is now dropped right
+before `certbot certonly` and restored if certbot fails. nginx reloads
+every 6 h so certificates renewed by the `certbot` loop are actually
+served.
+
 ### Changed — `install.sh` defaults to plain text menu (whiptail opt-in)
 
 Operator feedback: the whiptail dialog hid the scrolling shell context

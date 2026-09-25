@@ -13,7 +13,7 @@ COMPOSE_NL1    := docker compose -f deploy/nl1/docker-compose.yml --env-file dep
 COMPOSE_NL2    := docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env
 
 .PHONY: help venv install dev-install lint fmt typecheck test \
-        lock lock-check \
+        lock lock-upgrade lock-check \
         up down logs ps restart \
         single-up single-down single-logs \
         nl1-up nl1-down nl1-logs nl2-up nl2-down nl2-logs \
@@ -49,14 +49,28 @@ dev-install: venv ## Install dev dependencies from lockfile
 PY_LOCK ?= python3.14
 LOCK_FLAGS := --universal --python-version 3.14 --generate-hashes --quiet
 
-lock: ## Regenerate requirements/*.lock from *.txt
-	@# Resolve from a tmpdir holding only requirements/*.txt so uv does
+# The existing *.lock files are copied next to the *.txt: uv prefers the
+# versions already pinned in the output file, so ``lock`` / ``lock-check``
+# only move what a *.txt edit forces. Without them every upstream release
+# of a transitive dependency made ``lock-check`` fail on an untouched tree.
+lock: ## Update requirements/*.lock after editing *.txt (keeps existing pins)
+	@# Resolve from a tmpdir holding only requirements/ so uv does
 	@# not pick up the project root's ``pyproject.toml`` (project
 	@# ``requires-python = ">=3.14"`` skews transitive resolution and
 	@# diverged from ``lock-check``'s output, producing perpetual
 	@# spurious "lockfiles are stale" failures in CI). The CI gate
 	@# (``lock-check``) and the developer-facing ``lock`` target now
 	@# share the exact same resolver context.
+	@tmpdir=$$(mktemp -d); \
+	mkdir -p $$tmpdir/requirements; \
+	cp requirements/*.txt requirements/*.lock $$tmpdir/requirements/; \
+	for r in base dev prod; do \
+	  (cd $$tmpdir && $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o requirements/$$r.lock $(LOCK_FLAGS)); \
+	  cp $$tmpdir/requirements/$$r.lock requirements/$$r.lock; \
+	done; \
+	rm -rf $$tmpdir
+
+lock-upgrade: ## Re-resolve requirements/*.lock to the newest allowed versions
 	@tmpdir=$$(mktemp -d); \
 	mkdir -p $$tmpdir/requirements; \
 	cp requirements/*.txt $$tmpdir/requirements/; \
@@ -69,7 +83,7 @@ lock: ## Regenerate requirements/*.lock from *.txt
 lock-check: ## Fail if *.lock drifts from *.txt (used in CI)
 	@tmpdir=$$(mktemp -d); \
 	mkdir -p $$tmpdir/requirements; \
-	cp requirements/*.txt $$tmpdir/requirements/; \
+	cp requirements/*.txt requirements/*.lock $$tmpdir/requirements/; \
 	for r in base dev prod; do \
 	  (cd $$tmpdir && $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o requirements/$$r.lock $(LOCK_FLAGS)); \
 	  if ! diff -q requirements/$$r.lock $$tmpdir/requirements/$$r.lock >/dev/null; then \

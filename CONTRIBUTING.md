@@ -40,14 +40,18 @@ Adding or bumping a dependency is always a two-step change:
 
 ```bash
 # 1. edit requirements/<tier>.txt (add pin + rationale comment)
-# 2. regenerate the matching lockfile
+# 2. regenerate the matching lockfile (keeps every other pin as is)
 make lock
 # 3. commit both files in the same commit
 ```
 
-CI's `lockfile-check` job reruns `uv pip compile` on a clean runner
-and fails the PR if the committed `*.lock` diverges from what the
-current `*.txt` would produce. Dockerfiles install from `prod.lock`
+To pull in the newest allowed versions of all transitive dependencies,
+run `make lock-upgrade` in a dedicated `chore:` commit.
+
+CI's `lockfile-check` job reruns `uv pip compile` on a clean runner,
+seeded with the committed `*.lock` so existing pins are preferred, and
+fails the PR if the result diverges — i.e. only when a `*.txt` edit was
+not followed by `make lock`, never because upstream published a release. Dockerfiles install from `prod.lock`
 with `--require-hashes`, so merging an out-of-sync pair would also
 fail image builds.
 
