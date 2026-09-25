@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from telegram import InlineKeyboardMarkup
+from telegram.error import TelegramError
 
+from app.application.ports.media_sender import InlineKeyboard
 from app.application.services.delivery_service import (
     _POST_TEXT_CALLBACK_PREFIX,
     DeliveryService,
@@ -37,11 +38,13 @@ class _SendCall:
     file: Path | None
     text: str | None
     caption: str | None
-    reply_markup: InlineKeyboardMarkup | None
+    reply_markup: InlineKeyboard | None
     disable_web_page_preview: bool | None = None
 
 
 class _FakeSender:
+    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
+
     def __init__(self) -> None:
         self.calls: list[_SendCall] = []
 
@@ -51,7 +54,7 @@ class _FakeSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         self.calls.append(
             _SendCall(
@@ -70,7 +73,7 @@ class _FakeSender:
         chat_id: int,
         text: str,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
         disable_web_page_preview: bool = False,
     ) -> None:
         self.calls.append(
@@ -175,17 +178,17 @@ def _expected_callback_data(job_id: int) -> str:
     return f"{_POST_TEXT_CALLBACK_PREFIX}|{job_id}"
 
 
-def _extract_button_data(markup: InlineKeyboardMarkup | None) -> str | None:
+def _extract_button_data(markup: InlineKeyboard | None) -> str | None:
     if markup is None:
         return None
-    first_row = markup.inline_keyboard[0]
+    first_row = markup.rows[0]
     return first_row[0].callback_data
 
 
-def _extract_button_label(markup: InlineKeyboardMarkup | None) -> str | None:
+def _extract_button_label(markup: InlineKeyboard | None) -> str | None:
     if markup is None:
         return None
-    first_row = markup.inline_keyboard[0]
+    first_row = markup.rows[0]
     return first_row[0].text
 
 
@@ -304,7 +307,7 @@ class TestPostTextButton:
         # preview crawler, so ``temp_links.downloads_count`` is no
         # longer pre-consumed before the user's first tap).
         assert call.reply_markup is not None
-        keyboard = call.reply_markup.inline_keyboard
+        keyboard = call.reply_markup.rows
         assert len(keyboard) == 2
         download_row = keyboard[0]
         assert len(download_row) == 1
@@ -356,7 +359,7 @@ class TestPostTextButton:
         assert outcome.method is DeliveryMethod.TEMP_LINK
         call = sender.calls[0]
         assert call.reply_markup is not None
-        keyboard = call.reply_markup.inline_keyboard
+        keyboard = call.reply_markup.rows
         assert len(keyboard) == 1
         assert keyboard[0][0].text == "📥 Скачать"
         assert keyboard[0][0].url == "https://tmp.example/abc"

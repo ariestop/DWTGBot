@@ -26,10 +26,12 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from telegram import Bot, InlineKeyboardMarkup, InputFile, LinkPreviewOptions
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, LinkPreviewOptions
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
 
+from app.application.ports.media_sender import InlineKeyboard
 from app.config import Settings
 from app.logging_config import get_logger
 
@@ -122,7 +124,22 @@ async def _probe_video(path: Path) -> _VideoMeta:
         return _VideoMeta(None, None, None)
 
 
+def _to_markup(keyboard: InlineKeyboard | None) -> InlineKeyboardMarkup | None:
+    if keyboard is None:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(b.text, url=b.url, callback_data=b.callback_data) for b in row]
+            for row in keyboard.rows
+        ]
+    )
+
+
 class TelegramSender:
+    # Any Telegram API failure (TimedOut, NetworkError, transient CDN
+    # BadRequest) is retried in place by DeliveryService.
+    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
+
     def __init__(self, settings: Settings) -> None:
         self._bot = Bot(
             token=settings.BOT_TOKEN,
@@ -144,7 +161,7 @@ class TelegramSender:
         chat_id: int,
         text: str,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
         disable_web_page_preview: bool = False,
     ) -> None:
         # The ``disable_web_page_preview`` kwarg was kept for backwards
@@ -168,7 +185,7 @@ class TelegramSender:
             chat_id=chat_id,
             text=text,
             parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup,
+            reply_markup=_to_markup(reply_markup),
             link_preview_options=link_preview,
         )
 
@@ -178,7 +195,7 @@ class TelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         # Probe first (cheap: one ffprobe subprocess, no decode). If Telegram
         # receives explicit width/height/duration it renders a proportional
@@ -195,7 +212,7 @@ class TelegramSender:
             width=meta.width,
             height=meta.height,
             duration=meta.duration,
-            reply_markup=reply_markup,
+            reply_markup=_to_markup(reply_markup),
             write_timeout=_UPLOAD_TIMEOUT_S,
             read_timeout=_READ_TIMEOUT_S,
         )
@@ -207,7 +224,7 @@ class TelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
         msg = await self._bot.send_audio(
@@ -215,7 +232,7 @@ class TelegramSender:
             audio=InputFile(data, filename=file_path.name),
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
-            reply_markup=reply_markup,
+            reply_markup=_to_markup(reply_markup),
             write_timeout=_UPLOAD_TIMEOUT_S,
             read_timeout=_READ_TIMEOUT_S,
         )
@@ -227,7 +244,7 @@ class TelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
         msg = await self._bot.send_photo(
@@ -235,7 +252,7 @@ class TelegramSender:
             photo=InputFile(data, filename=file_path.name),
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
-            reply_markup=reply_markup,
+            reply_markup=_to_markup(reply_markup),
             write_timeout=_UPLOAD_TIMEOUT_S,
             read_timeout=_READ_TIMEOUT_S,
         )
@@ -247,7 +264,7 @@ class TelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
         msg = await self._bot.send_document(
@@ -255,7 +272,7 @@ class TelegramSender:
             document=InputFile(data, filename=file_path.name),
             caption=caption,
             parse_mode=ParseMode.HTML if caption else None,
-            reply_markup=reply_markup,
+            reply_markup=_to_markup(reply_markup),
             write_timeout=_UPLOAD_TIMEOUT_S,
             read_timeout=_READ_TIMEOUT_S,
         )

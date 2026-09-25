@@ -22,10 +22,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from telegram import InlineKeyboardMarkup
+from telegram.error import TelegramError
 
 from app.application.dto.jobs import WorkerJobPayload
 from app.application.dto.media import AnalyzedMedia
+from app.application.ports.media_sender import InlineKeyboard
 from app.application.services.delivery_service import DeliveryService
 from app.application.use_cases.auto_enqueue_download import (
     AutoEnqueueDownloadUseCase,
@@ -50,14 +51,14 @@ class _SentVideo:
     chat_id: int
     file_path: Path
     caption: str | None
-    reply_markup: InlineKeyboardMarkup | None
+    reply_markup: InlineKeyboard | None
 
 
 @dataclass(slots=True)
 class _SentText:
     chat_id: int
     text: str
-    reply_markup: InlineKeyboardMarkup | None
+    reply_markup: InlineKeyboard | None
 
 
 class _InMemoryJobsRepo:
@@ -136,6 +137,8 @@ class _FakeTempLinks:
 
 
 class _FakeTelegramSender:
+    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
+
     def __init__(self) -> None:
         self.videos: list[_SentVideo] = []
         self.texts: list[_SentText] = []
@@ -146,7 +149,7 @@ class _FakeTelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         self.videos.append(
             _SentVideo(
@@ -163,7 +166,7 @@ class _FakeTelegramSender:
         chat_id: int,
         text: str,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
         disable_web_page_preview: bool = False,
     ) -> None:
         del disable_web_page_preview
@@ -175,7 +178,7 @@ class _FakeTelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         del chat_id, file_path, caption, reply_markup
         raise AssertionError("send_audio is not expected in this harness")
@@ -186,7 +189,7 @@ class _FakeTelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         del chat_id, file_path, caption, reply_markup
         raise AssertionError("send_photo is not expected in this harness")
@@ -197,7 +200,7 @@ class _FakeTelegramSender:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         del chat_id, file_path, caption, reply_markup
         raise AssertionError("send_document is not expected in this harness")
@@ -436,7 +439,7 @@ async def test_happy_path_delivers_video_with_caption_and_post_text_button(
     assert "Размер файла:" in sent.caption
     assert "Footer text" in sent.caption
     assert sent.reply_markup is not None
-    assert sent.reply_markup.inline_keyboard[0][0].text == "Получить текст поста 👇"
+    assert sent.reply_markup.rows[0][0].text == "Получить текст поста 👇"
     job = await repo.get(payload.job_id)
     assert job is not None
     assert job.status is JobStatus.DONE
@@ -557,7 +560,7 @@ async def test_large_result_falls_back_to_temp_link_without_direct_upload(
     assert "href=" not in sent.text
     assert "Footer text" in sent.text
     assert sent.reply_markup is not None
-    keyboard = sent.reply_markup.inline_keyboard
+    keyboard = sent.reply_markup.rows
     assert keyboard[0][0].text == "📥 Скачать"
     assert keyboard[0][0].url == "https://media.example.com/d/temp-100"
     expected_path = str(storage.job_dir(payload.job_id) / "result.mp4")

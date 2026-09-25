@@ -14,7 +14,7 @@ from arq.connections import ArqRedis
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.application.ports.progress_reporter import ProgressReporter
+from app.application.ports.progress_reporter import NoopProgressReporter, ProgressReporter
 from app.application.services.delivery_service import DeliveryService
 from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
@@ -36,7 +36,6 @@ from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.bot.container import BotContainer
 from app.bot.services.progress_updater import ProgressUpdater
 from app.config import Settings
-from app.infrastructure.cache.noop_progress_reporter import NoopProgressReporter
 from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.infrastructure.cache.redis_job_cancellation import RedisJobCancellationStore
 from app.infrastructure.cache.redis_notice_throttle import RedisNoticeThrottle

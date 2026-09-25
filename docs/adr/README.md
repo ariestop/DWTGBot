@@ -82,6 +82,7 @@ Copy [`0000-template.md`](0000-template.md) and fill it in.
 | [0009](0009-python-314-runtime.md) | Raise the language floor to Python 3.14 (supersedes ADR-0005 row 1) | Accepted |
 | [0010](0010-instant-download-ux.md) | Instant-download UX and progress side-channel (single-message flow, Redis Pub/Sub progress) | Proposed |
 | [0011](0011-single-server-topology.md) | Односерверная топология `single` рядом с `split` (supersedes ADR-0005 rows 2–4, amends ADR-0001) | Accepted |
+| [0012](0012-application-ports-media-sender-storage.md) | Порты `MediaSender` / `MediaStorage`: слой application без импортов infrastructure и `telegram` | Accepted |
 
 > 🔒 **Start here when in doubt:**
 > [ADR-0005](0005-locked-architectural-assumptions.md) is the canonical

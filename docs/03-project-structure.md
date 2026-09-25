@@ -123,6 +123,10 @@ app/application/
 ├── dto/                 # Data Transfer Objects (frozen dataclasses)
 │   ├── jobs.py          # EnqueueDownloadInput / Result, WorkerJobPayload
 │   └── media.py         # AnalyzedMedia
+├── ports/               # Порты к адаптерам (Protocol), ADR-0012
+│   ├── media_sender.py  # MediaSender + DTO InlineKeyboard / InlineButton
+│   ├── media_storage.py # MediaStorage
+│   └── progress_reporter.py  # ProgressReporter + NoopProgressReporter
 ├── services/            # Service protocols (Protocol/ABC)
 │   ├── delivery_service.py
 │   ├── providers.py     # Provider, ProviderRegistry
@@ -146,6 +150,9 @@ app/application/
 - Subprocess calls.
 
 **May import from:** `app.domain.*`, `app.utils.*`, standard library, typing.
+Сторонние SDK (`telegram`, `sqlalchemy`, `redis`, `yt_dlp` …) и
+`app.infrastructure.*` запрещены; правило для `app/domain` и
+`app/application` проверяет `app/tests/test_layering.py`.
 
 ### 2.3 `app/infrastructure/`
 
@@ -164,8 +171,8 @@ app/infrastructure/
 ├── downloader/           # YtDlpRunner, FfmpegRunner
 ├── providers/            # BaseProvider, YouTubeProvider, InstagramProvider, registry
 ├── queue/                # arq pool, producer, tasks, worker_settings
-├── storage/              # LocalStorage (filesystem owner)
-└── telegram/             # TelegramSender (worker-side telegram.Bot)
+├── storage/              # LocalStorage (filesystem owner) — implements MediaStorage
+└── telegram/             # TelegramSender (worker-side telegram.Bot) — implements MediaSender
 ```
 
 **You may put here:**

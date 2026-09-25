@@ -30,10 +30,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from telegram import InlineKeyboardMarkup
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 
 import app.application.services.delivery_service as delivery_service_module
+from app.application.ports.media_sender import InlineKeyboard
 from app.application.services.delivery_service import DeliveryService
 from app.domain.entities.media_info import DownloadResult
 from app.domain.enums import DeliveryMethod, MediaKind
@@ -45,7 +45,7 @@ class _Call:
     file: Path | None
     text: str | None
     caption: str | None
-    reply_markup: InlineKeyboardMarkup | None
+    reply_markup: InlineKeyboard | None
 
 
 class _SenderVideo:
@@ -55,6 +55,8 @@ class _SenderVideo:
     A ``BaseException`` is raised, anything else (including ``None``)
     is returned verbatim as the resulting ``file_id``.
     """
+
+    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
 
     def __init__(self, outcomes: list[Any]) -> None:
         self._outcomes = list(outcomes)
@@ -66,7 +68,7 @@ class _SenderVideo:
         file_path: Path,
         caption: str | None = None,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         self.calls.append(
             _Call(
@@ -90,7 +92,7 @@ class _SenderVideo:
         chat_id: int,
         text: str,
         *,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboard | None = None,
         disable_web_page_preview: bool = False,
     ) -> None:
         del chat_id, disable_web_page_preview
