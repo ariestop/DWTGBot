@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import case, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.entities.temp_link import TempLink
@@ -93,10 +93,13 @@ class SqlAlchemyTempLinksRepository(TempLinksRepository):
         """Atomic check-and-increment.
 
         Encodes the same predicates as ``TempLink.is_usable`` directly
-        in the WHERE clause, plus the increment + auto-deactivate
-        in the SET clause. Postgres serialises concurrent updates of
-        the same row, so two requests on a max=1 link can no longer
-        both see ``downloads_count < max`` and both succeed.
+        in the WHERE clause, plus the increment in the SET clause.
+        Exhaustion does not flip ``is_active`` (see
+        ``TempLink.register_use``); the ``downloads_count < max`` filter
+        alone refuses further new downloads. Postgres serialises
+        concurrent updates of the same row, so two requests on a max=1
+        link can no longer both see ``downloads_count < max`` and both
+        succeed.
 
         ``RETURNING`` returns ``None`` when the WHERE clause matched no
         rows — i.e. token missing, inactive, expired, or already at
@@ -114,16 +117,6 @@ class SqlAlchemyTempLinksRepository(TempLinksRepository):
                 )
                 .values(
                     downloads_count=TempLinkModel.downloads_count + 1,
-                    # ``+1 >= max`` means *this* call exhausts the link;
-                    # flip is_active to False atomically so the next
-                    # request hits the WHERE filter and gets None.
-                    is_active=case(
-                        (
-                            TempLinkModel.downloads_count + 1 >= TempLinkModel.max_downloads,
-                            False,
-                        ),
-                        else_=True,
-                    ),
                     updated_at=now,
                 )
                 .returning(TempLinkModel)

@@ -36,15 +36,28 @@ class TestTempLinkEntity:
         link = self._link(is_active=False)
         assert link.is_usable() is False
 
-    def test_register_use_decrements_remaining_and_deactivates_on_limit(self) -> None:
+    def test_register_use_exhausts_link_without_deactivating(self) -> None:
         link = self._link(max_downloads=2)
         link.register_use()
         assert link.downloads_count == 1
-        assert link.is_active is True
+        assert link.is_usable() is True
         link.register_use()
         assert link.downloads_count == 2
-        assert link.is_active is False
         assert link.is_usable() is False
+        assert link.is_active is True
+
+    def test_exhausted_link_can_still_resume(self) -> None:
+        link = self._link(max_downloads=1)
+        assert link.can_resume() is False
+        link.register_use()
+        assert link.is_usable() is False
+        assert link.can_resume() is True
+
+    def test_expired_or_revoked_link_cannot_resume(self) -> None:
+        expired = self._link(downloads_count=1, expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        revoked = self._link(downloads_count=1, is_active=False)
+        assert expired.can_resume() is False
+        assert revoked.can_resume() is False
 
 
 # ---------- service ----------
