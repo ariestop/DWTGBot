@@ -208,7 +208,7 @@ Three things to internalise from this diagram:
 |---|---|---|
 | Telegram upload size cap | 49 MB (under the 50 MB Bot API limit) | `TELEGRAM_MAX_UPLOAD_MB` |
 | Single download hard ceiling | 2 GB | `MAX_FILE_SIZE_MB` |
-| Temp link TTL | 24 hours | `TEMP_LINK_TTL_SECONDS` |
+| Temp link TTL | 1 hour | `TEMP_LINK_TTL_SECONDS` |
 | Temp link uses | 5 | `TEMP_LINK_MAX_DOWNLOADS` |
 | Worker concurrency | 2 jobs / worker | `WORKER_CONCURRENCY` |
 | Job timeout | 30 min | `JOB_TIMEOUT_SECONDS` |

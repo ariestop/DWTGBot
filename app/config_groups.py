@@ -94,7 +94,7 @@ class DeliverySettings(BaseModel):
     """Temp-link delivery (ADR-0004)."""
 
     PUBLIC_BASE_URL: str = "http://localhost:8080"
-    TEMP_LINK_TTL_SECONDS: int = Field(86_400, ge=60)
+    TEMP_LINK_TTL_SECONDS: int = Field(3_600, ge=60)
     TEMP_LINK_MAX_DOWNLOADS: int = Field(5, ge=1, le=1000)
     TEMP_LINK_TOKEN_BYTES: int = Field(32, ge=16, le=128)
 

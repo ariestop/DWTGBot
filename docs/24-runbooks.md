@@ -2310,7 +2310,7 @@ sudo rsync -aHAX --numeric-ids "${SRC}/" "root@<NL2_PRIVATE_IP>:${DST}/"
 - [ ] Мониторинг: добавить NL-2 в алерты по диску, TLS, `/healthz`.
 - [ ] Offsite-бэкап продолжает работать с NL-1 (рекомендация, а не
       требование, как в `single` — но отключать его не нужно).
-- [ ] Через `TEMP_LINK_TTL_SECONDS` (по умолчанию 24 ч) удалить на NL-1
+- [ ] Через `TEMP_LINK_TTL_SECONDS` (по умолчанию 1 ч) удалить на NL-1
       volume media plane, которые больше не используются:
 
       ```bash

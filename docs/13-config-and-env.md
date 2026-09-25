@@ -127,7 +127,7 @@ Grouped by concern. **Bold** = required, no safe default.
 | Variable | Type | Default | Notes |
 |---|---|---|---|
 | **`PUBLIC_BASE_URL`** | url | `http://localhost:8080` | `https://` required in production |
-| `TEMP_LINK_TTL_SECONDS` | int ≥60 | `86400` (24 h) | Issue-time TTL |
+| `TEMP_LINK_TTL_SECONDS` | int ≥60 | `3600` (1 h) | Issue-time TTL |
 | `TEMP_LINK_MAX_DOWNLOADS` | int 1..1000 | `5` | Per-link counter |
 | `TEMP_LINK_TOKEN_BYTES` | int 16..128 | `32` | URL-safe-base64 length ≈ 4·N/3 |
 
