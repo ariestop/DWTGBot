@@ -256,7 +256,7 @@ class LimitDecision:
     layer: str | None         # which layer denied (None if allowed)
     retry_after_s: int        # 0 if allowed
 
-# app/application/ports/rate_limit_gate.py
+# app/application/services/rate_limit_gate.py
 class RateLimitGate(Protocol):
     async def check(self, key: str, window: LimitWindow) -> LimitDecision: ...
 ```
@@ -420,6 +420,11 @@ topk(10, sum by (user_id) (rate({app="bot"} |= "rate_limit_first_deny"
 
 ## §9 — Operating recipes
 
+> Команды ниже приведены для топологии `split` (NL-1). В топологии
+> `single` используйте `deploy/single/docker-compose.yml` и
+> `deploy/single/.env` вместо `deploy/nl1/docker-compose.yml` и
+> `deploy/nl1/.env` — имена сервисов (`bot`) те же.
+
 ### 9.1 "Some users complain they hit the limit too often"
 
 ```bash
@@ -449,6 +454,10 @@ Tighten L4 for that domain temporarily:
 # Temporary, takes effect on next request once env is reloaded
 echo 'RL_DOMAIN_BURST=10/60' >> deploy/nl1/.env
 docker compose -f deploy/nl1/docker-compose.yml up -d bot
+
+# single: то же самое через deploy/single/
+echo 'RL_DOMAIN_BURST=10/60' >> deploy/single/.env
+docker compose -f deploy/single/docker-compose.yml up -d bot
 ```
 
 Document the change in the incident ticket and revert once the upstream

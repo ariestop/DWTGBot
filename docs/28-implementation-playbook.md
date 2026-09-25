@@ -64,7 +64,7 @@ DWTGBot looks simple ("download a video, send it") and is not. The
 real complexity lives in the **invariants** that hold the system
 together:
 
-- a two-server topology with a security perimeter;
+- две топологии (`single` — один хост, `split` — NL-1 + NL-2) с общим периметром безопасности;
 - a queue with idempotent retries;
 - a provider abstraction with explicit contracts;
 - a temp-link surface with TTL + counter + path-traversal defence;
@@ -88,7 +88,7 @@ has a checklist that catches the common slips.
 
 | Trait of DWTGBot | Why it makes informal change unsafe |
 |---|---|
-| Two servers, two compose stacks, no shared filesystem | A change in one stack is invisible from the other; you must reason about both |
+| Две топологии (`single` и `split`) из общих фрагментов `deploy/compose/control.yml` + `deploy/compose/media.yml`; в `split` — два хоста без общей файловой системы | Изменение должно работать в обеих топологиях; в `split` изменение на одном хосте не видно с другого — нужно учитывать оба |
 | Public HTTPS surface for big files | Any change to delivery touches authentication, TTL, headers, and Nginx |
 | External binaries (`yt-dlp`, `ffmpeg`) | Output schema drifts; partial failures are normal; subprocess discipline is critical |
 | Idempotent queue with retries | A naive change can produce double sends or orphan jobs |
@@ -262,7 +262,7 @@ Every PR description includes (literal markdown to copy):
 - [x] Unit tests added/updated
 - [x] `pytest -m "not integration"` green locally
 - [ ] Integration smoke (describe)
-- [ ] Manual verification on NL-1 / NL-2 (describe)
+- [ ] Manual verification on `single` или NL-1 / NL-2 (describe)
 
 ## Principles in play (§1.A of 25- / 26-)
 <P1, P3, P4, …>
@@ -1084,7 +1084,7 @@ temp file lifecycle, size/mime checks, timeouts, retries.
 | `app/utils/filenames.py` | Sanitization rules |
 | `app/exceptions.py` | New retryable / permanent failure types |
 | `docs/08-download-pipeline.md` | Pipeline narrative + diagrams |
-| `app/tests/test_download_pipeline.py` | Tests with fakes for both runners |
+| `app/tests/test_process_download_*.py`, `app/tests/test_ytdlp_*.py` | Tests with fakes for both runners |
 
 ### 11.3 Step-by-step procedure
 
@@ -1102,7 +1102,7 @@ temp file lifecycle, size/mime checks, timeouts, retries.
 
 ### 11.4 Validation
 
-- `pytest -m "not integration" app/tests/test_download_pipeline.py` green.
+- `pytest -m "not integration" app/tests/test_process_download_*.py app/tests/test_ytdlp_*.py` green.
 - A manual local run downloads a small file and writes to a job-scoped
   scratch dir.
 - `ensure_within` rejects an attempted path-traversal input (test).
@@ -1191,8 +1191,8 @@ via tokenised HTTPS link, with TTL, max-downloads, and Nginx
 | `deploy/nginx/conf.d/media.conf.template` | Public route, `internal;`, rate limit |
 | `docs/10-temp-links-and-delivery.md` | Narrative + diagrams + token format |
 | `docs/17-security.md` | If auth/header/expiry surface changes |
-| `app/tests/test_temp_link_service.py` | Service tests |
-| `app/tests/test_public_downloads.py` | API tests with fake storage |
+| `app/tests/test_temp_links.py` | Service tests |
+| `app/tests/test_downloads_endpoint.py` | API tests with fake storage |
 
 ### 12.3 Step-by-step procedure
 
@@ -1212,7 +1212,7 @@ via tokenised HTTPS link, with TTL, max-downloads, and Nginx
 
 ### 12.4 Validation
 
-- `pytest -m "not integration" app/tests/test_temp_link_service.py app/tests/test_public_downloads.py` green.
+- `pytest -m "not integration" app/tests/test_temp_links.py app/tests/test_downloads_endpoint.py` green.
 - Manual: issue a token, hit the URL, file downloads via Nginx.
 - `curl -I` against an expired or exhausted link returns the right
   status without leaking storage path.
@@ -1282,7 +1282,7 @@ observability.
 | `docs/14-logging-observability.md` | `worker_*` log events |
 | `docs/24-runbooks.md` | New failure mode |
 | `app/tests/test_<task>.py` | Task unit test with fake `ctx` |
-| `app/tests/test_queue_producer.py` | Idempotency contract |
+| `app/tests/test_enqueue_use_case.py`, `app/tests/test_process_download_replay_guard.py` | Idempotency contract |
 
 ### 13.3 Step-by-step procedure
 
@@ -1308,7 +1308,7 @@ observability.
 
 ### 13.4 Validation
 
-- `pytest -m "not integration" app/tests/test_<task>.py app/tests/test_queue_producer.py` green.
+- `pytest -m "not integration" app/tests/test_<task>.py app/tests/test_enqueue_use_case.py app/tests/test_process_download_replay_guard.py` green.
 - Manual local arq run produces the expected status row and log
   events.
 - A re-run of the same job (same `_job_id`) does not produce duplicate
@@ -1513,8 +1513,8 @@ A new env var **must** be added in all of:
 1. `app/config.py` — typed `Settings` field with validation and
    default.
 2. `.env.example` — repo-root template.
-3. `deploy/nl1/.env.example` and/or `deploy/nl2/.env.example` — per
-   plane.
+3. `deploy/single/.env.example` и `deploy/nl1/.env.example` и/или
+   `deploy/nl2/.env.example` — per topology / plane.
 4. The matching compose fragment's (`deploy/compose/{control,media}.yml`)
    `environment:` block, so the container actually receives it.
 5. `docs/13-config-and-env.md` — variable reference, default,
@@ -1695,7 +1695,7 @@ liveness — without breaking compose / orchestrator probes.
 
 | File / area | Change |
 |---|---|
-| `app/api/health.py` (or per-component) | `/healthz` and `/readyz` logic |
+| `app/api/internal/health.py` (or per-component) | `/healthz` and `/readyz` logic |
 | `app/workers/health.py` (or similar) | Worker self-report |
 | `deploy/compose/{control,media}.yml` | `healthcheck:` block per service |
 | `docs/15-healthchecks.md` | Probe catalogue |
@@ -1785,7 +1785,7 @@ Any compose change must:
 - Preserve named networks and volumes.
 - Pass through env vars consistently with the plane's `.env`
   template.
-- Not expose new ports on NL-1.
+- Not expose new ports on NL-1 (в `single` — не публиковать порты ни у одного сервиса, кроме `nginx` 80/443).
 - Not co-locate stateful services (`postgres`, `redis`) on NL-2.
 - Be accompanied by a one-line "why" in the PR description.
 
@@ -1826,7 +1826,7 @@ Any compose change must:
 |---|---|
 | YAML anchors silently lost during edit | Always diff the rendered config (`docker compose config`) before committing |
 | New service had no healthcheck | Add `healthcheck:`; orchestrator can't reason about readiness without it |
-| Volume path drifted between two stacks | Re-confirm `STORAGE_PATH` mount points in both compose files and `11-storage-strategy.md` |
+| Volume path drifted between two services | Re-confirm `STORAGE_PATH` mount points for `worker` and `nginx` in `deploy/compose/media.yml` and `11-storage-strategy.md` |
 
 ---
 
@@ -1839,7 +1839,7 @@ Any compose change must:
 | ✅ Pin internal images to semver / sha tag | ❌ Use `latest` tag for internal images (P9) |
 | ✅ Multi-stage Dockerfile, non-root user, `tini` as PID 1 | ❌ Run as root with single-stage build (P11) |
 | ✅ Diff `docker compose config` rendered output before commit | ❌ Trust the YAML diff alone (P9) |
-| ✅ Public ports only on NL-2 | ❌ Open a port on NL-1 (P11) |
+| ✅ Public ports only on NL-2 (в `single` — только у `nginx`) | ❌ Open a port on NL-1 / у control-plane сервисов в `single` (P11) |
 | ✅ Stateful services (postgres, redis) only on NL-1 | ❌ Co-locate Postgres or Redis on NL-2 (P2) |
 | ✅ Pass env via compose `environment:` block, not `env_file:` for sensitive | ❌ Reference `env_file:` for secrets (Compose can leak via `inspect`) (P11) |
 | ✅ Mount `STORAGE_PATH` consistently between worker and nginx | ❌ Drift between mount paths in the two services (P9) |
@@ -1847,6 +1847,7 @@ Any compose change must:
 ### 18.9 Pre-commit Compose validation
 
 ```bash
+docker compose -f deploy/single/docker-compose.yml config > /dev/null
 docker compose -f deploy/nl1/docker-compose.yml config > /dev/null
 docker compose -f deploy/nl2/docker-compose.yml config > /dev/null
 ```
@@ -1859,7 +1860,7 @@ slips before the deploy step does.
 - A new compose service has no `healthcheck:` → add one or document why it's not needed.
 - A new env var is in compose but not in `Settings` → P4 violation.
 - The diff renames a network or volume → mounts drift across stacks; halt.
-- A `ports:` entry is added on NL-1 → P11 violation; route via NL-2 instead.
+- A `ports:` entry is added on NL-1 (или у control-plane сервиса в `single`) → P11 violation; route via NL-2 / `nginx` instead.
 
 ---
 
@@ -2023,7 +2024,7 @@ operator safety.
 - `shellcheck --severity=warning deploy/scripts/<file>.sh` clean.
 - Re-run on a healthy system is a no-op.
 - Re-run after manually breaking a post-condition heals the system.
-- Both NL-1 and NL-2 install paths complete (per `20-deployment.md`).
+- Установка проходит в обеих топологиях: `single` и `split` (NL-1 + NL-2) (per `20-deployment.md`).
 
 ### 20.6 Anti-patterns (P9, P11)
 
@@ -2424,7 +2425,7 @@ appropriate.
 - [ ] `healthcheck:` blocks preserved or added.
 - [ ] Named networks / volumes preserved.
 - [ ] Env var passthrough consistent with `.env` template.
-- [ ] No new public port on NL-1.
+- [ ] No new public port on NL-1 (в `single` — только `nginx` публикует 80/443).
 - [ ] Stateful services not co-located on NL-2.
 - [ ] `19-docker-architecture.md` and (if procedure changed)
       `20-deployment.md` updated.
@@ -2472,7 +2473,7 @@ Concrete examples calibrate intuition for "is this PR too wide?".
 **Plan:**
 
 - Class A.
-- Files MODIFY: `app/bot/handlers/start.py` (typo string).
+- Files MODIFY: `app/bot/handlers/commands.py` (typo string).
 - Files NOT touched: anything else.
 - Tests: existing test still green.
 - Docs: none.
@@ -3026,7 +3027,7 @@ def downgrade() -> None:
 ### B.6 — FastAPI healthcheck route
 
 ```python
-# app/api/health.py
+# app/api/internal/health.py (illustrative)
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
@@ -3121,7 +3122,7 @@ class Settings(BaseSettings):
 FEATURE_X_ENABLED=false
 ```
 
-**3. `deploy/nl1/.env.example` and/or `deploy/nl2/.env.example`:**
+**3. `deploy/single/.env.example` и `deploy/nl1/.env.example` и/или `deploy/nl2/.env.example`:**
 
 ```bash
 FEATURE_X_ENABLED=false
@@ -3259,6 +3260,7 @@ git diff --name-only origin/main...HEAD | wc -l
 ### C.12 — Compose / Nginx config sanity (P9)
 
 ```bash
+docker compose -f deploy/single/docker-compose.yml config > /dev/null
 docker compose -f deploy/nl1/docker-compose.yml config > /dev/null
 docker compose -f deploy/nl2/docker-compose.yml config > /dev/null
 docker run --rm \

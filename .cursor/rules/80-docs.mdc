@@ -27,9 +27,12 @@ The `docs/` folder is the technical source of truth. Index:
 - **Locked decisions** flagged with `> 🔒 Locked:` admonitions and
   back-link to an ADR.
 - **Status tags** at the top: `Status: Stable | Evolving | Draft`.
-- **Описания документации — на русском языке**. Технические
-  идентификаторы, команды, env vars, пути, routes, event names и
-  названия библиотек оставляйте без перевода.
+- **Новые и изменяемые описания документации — на русском языке**
+  (как в `docs/25-agent-guide.md` §13.4). Существующий английский текст
+  переводится только вместе с содержательной правкой раздела, а не
+  отдельной массовой заменой. Технические идентификаторы, команды,
+  env vars, пути, routes, event names и названия библиотек оставляйте
+  без перевода.
 
 ## When you change behaviour
 

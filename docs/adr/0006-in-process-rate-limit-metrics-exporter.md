@@ -7,6 +7,15 @@
 - **Supersedes:** —
 - **Superseded by:** —
 
+> **Дополнено ADR-0011:** появилась топология `single` (всё на одном
+> хосте). Решение не меняется: exporter работает внутри процесса `bot`,
+> а сервис `bot` определён во фрагменте `deploy/compose/control.yml`,
+> который подключают оба стека (`deploy/nl1`, `deploy/single`). Блок
+> `METRICS_*` есть в `deploy/nl1/.env.example` и
+> `deploy/single/.env.example`. Правило «порт только в WireGuard-подсети»
+> относится к `split`; в `single` WireGuard нет, и порт метрик, если его
+> публикуют, должен оставаться приватным (не 80/443, не публичный IP).
+
 ---
 
 ## 1. Context
@@ -24,7 +33,8 @@ metrics for the layered limiter:
 right to add a Prometheus exporter when log-based SLI queries become too
 expensive, and gives three acceptance criteria:
 
-1. The exporter lives in `deploy/nl1/docker-compose.yml` (or NL-2 sibling).
+1. The exporter lives in `deploy/compose/control.yml` (or the media-plane
+   sibling `deploy/compose/media.yml`).
 2. `/metrics` is on a **private** port — never 80/443.
 3. An ADR records the decision and updates §3 / §4 / §6 of `35-` with the
    new metric names.
@@ -112,9 +122,9 @@ once Prometheus is provisioned.
 - `Settings.validate_runtime` rejects `METRICS_BIND_HOST=0.0.0.0` in
   production unless explicitly overridden. This enforces the §7
   "private port" rule at startup.
-- `deploy/nl1/docker-compose.yml` does **not** publish the metrics
+- `deploy/compose/control.yml` does **not** publish the metrics
   port to the host by default — operators add a `ports:` line scoped
-  to the WireGuard subnet.
+  to the WireGuard subnet (в `split`; в `single` — на приватный адрес).
 - No change to firewall (`ufw`) — UFW already denies all inbound by
   default. Operators allow the port from the NL-2/Prometheus IP only.
 

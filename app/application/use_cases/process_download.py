@@ -493,7 +493,7 @@ class ProcessDownloadUseCase:
         """Reconcile a cancelled job: DB → FAILED row, Redis → clear flag."""
         # Reuse FAILED status to avoid a DB migration in this PR; the
         # user-visible stage on the reporter is still CANCELLED, which
-        # is the distinction the UI cares about. See docs/tasks/
+        # is the distinction the UI cares about. See docs/tasks/archive/
         # instant-download-ux.md §4 PR 5 "cancel MVP".
         previous = job.status
         job.mark_failed("cancelled by user")

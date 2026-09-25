@@ -81,8 +81,8 @@ services:
       - storage:/var/lib/dwtgbot/storage
       - storage_tmp:/var/lib/dwtgbot/tmp
       # Provider secrets (Instagram cookies, future per-platform auth files).
-      # Read-only bind from host; missing files are handled gracefully by
-      # the providers (cookiefile is dropped from yt-dlp opts when absent).
+      # RW because yt-dlp writes refreshed cookies back; missing files are
+      # handled gracefully (cookiefile is dropped from yt-dlp opts when absent).
       - /srv/dwtgbot/secrets:/srv/dwtgbot/secrets:rw
     # Audit fix A30: use a Python-only liveness probe via /proc so the
     # healthcheck does not depend on ``pgrep`` being present in the

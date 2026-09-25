@@ -107,6 +107,12 @@ sequenceDiagram
     end
 ```
 
+> **Топологии.** Метки NL-1 / NL-2 обозначают роль — control plane /
+> media plane. В `split` это два хоста, связанные WireGuard; в `single`
+> все участники диаграммы работают на одном хосте
+> ([ADR-0011](adr/0011-single-server-topology.md)). В обеих топологиях
+> nginx, api, worker и cleanup делят один том `storage`.
+
 ---
 
 ## 4. The `/d/{token}` endpoint

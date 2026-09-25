@@ -1,9 +1,13 @@
 # TASK: Закрытие TOP-10 проблем аудита 2026-04
 
-Status: **PLANNED — starts after Phase 1 merged**
+> **Архив.** Задача выполнена и выкачена в прод; документ сохранён как
+> историческая спецификация. Чекбоксы ниже не обновлялись после релиза —
+> актуальный статус см. в [`docs/tasks/README.md`](../README.md).
+
+Status: **RELEASED** — Sprint 2.1–2.4 и A30 замёржены и выкачены (см. `docs/tasks/README.md`).
 Source: аудит от 2026-04-20, проведён как команда Staff Architect + Sr. Backend + DevOps + SRE + Security + QA.
-Prerequisite: `docs/tasks/instant-download-ux.md` (Phase 1) должен быть мёржнут и стабилен ≥ 24 ч.
-Related: [`docs/tasks/README.md`](README.md) — master ordering.
+Prerequisite: `docs/tasks/archive/instant-download-ux.md` (Phase 1) должен быть мёржнут и стабилен ≥ 24 ч.
+Related: [`docs/tasks/README.md`](../README.md) — master ordering.
 
 ---
 

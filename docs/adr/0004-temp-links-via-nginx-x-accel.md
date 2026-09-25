@@ -5,6 +5,13 @@
 - **Deciders:** project owner
 - **Tags:** delivery, nginx, security, performance
 
+> **Дополнено ADR-0011:** появилась топология `single` (всё на одном
+> хосте). Решение не меняется: «NL-2» ниже означает media plane — в
+> `split` это отдельный хост, в `single` тот же хост, что и control
+> plane. Сервисы и тома media plane (включая монтирование `storage` в
+> worker и nginx) определены во фрагменте `deploy/compose/media.yml`,
+> который подключают оба стека (`deploy/nl2`, `deploy/single`).
+
 ---
 
 ## 1. Context
@@ -128,7 +135,7 @@ zones declared in `deploy/nginx/nginx.conf`):
 
 - The Nginx config is **part of the contract** with the API; doc
   cross-references in [`10-temp-links-and-delivery.md`](../10-temp-links-and-delivery.md).
-- Volume mounts in `deploy/nl2/docker-compose.yml` must keep worker
+- Volume mounts in `deploy/compose/media.yml` must keep worker
   and nginx aligned (worker rw, nginx ro).
 
 ---
@@ -179,7 +186,7 @@ zones declared in `deploy/nginx/nginx.conf`):
 - Code: `app/api/public/downloads.py`,
   `app/application/services/temp_link_service.py`,
   `deploy/nginx/conf.d/media.conf.template`,
-  `deploy/nl2/docker-compose.yml`.
+  `deploy/compose/media.yml`.
 - Docs: [`10-temp-links-and-delivery.md`](../10-temp-links-and-delivery.md),
   [`11-storage-strategy.md`](../11-storage-strategy.md),
   [`17-security.md`](../17-security.md).

@@ -4,7 +4,7 @@ Post-text side-channel storage (ADR-0010 §2.3).
 Holds the source post's description / caption between "job created" and
 "user taps the button". Deliberately Redis-only — the text is ephemeral
 UX state, not domain data; it does not need to survive a Redis restart
-(see Risk R6 in docs/tasks/instant-download-ux.md) and it MUST NOT get
+(see Risk R6 in docs/tasks/archive/instant-download-ux.md) and it MUST NOT get
 pinned to Postgres where deletion would be a Herculean retention task.
 
 Key shape: ``post_text:{job_id}`` string, TTL

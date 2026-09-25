@@ -1,8 +1,12 @@
 # TASK: Мгновенное скачивание + live-прогресс + описание поста
 
+> **Архив.** Задача выполнена и выкачена в прод; документ сохранён как
+> историческая спецификация. Чекбоксы ниже не обновлялись после релиза —
+> актуальный статус см. в [`docs/tasks/README.md`](../README.md).
+
 Status: **RELEASED** — все 6 PR'ов замёржены в `main` и выкачены в прод.
 Owner: TBD
-ADR: [`docs/adr/0010-instant-download-ux.md`](../adr/0010-instant-download-ux.md) — **must read first**
+ADR: [`docs/adr/0010-instant-download-ux.md`](../../adr/0010-instant-download-ux.md) — **must read first**
 Related code anchors cited below as `startLine:endLine:filepath`.
 
 Post-release carve-out: YouTube per-platform opt-out — `INSTANT_DOWNLOAD_ENABLED=true` включает instant-путь для Instagram/TikTok, но для YT сохраняется legacy picker (пользователь сам выбирает разрешение), см. `c626019`. Глобальный kill-switch `INSTANT_DOWNLOAD_ENABLED=false` всё ещё возвращает всех провайдеров на picker.

@@ -250,9 +250,10 @@ For full incident playbooks see [`24-runbooks.md`](24-runbooks.md).
   re-enqueues the same job during a flap.
 - **Nginx `X-Accel-Redirect`** keeps file-serving in `nginx`, while keeping
   authentication in Python — best of both worlds.
-- **Two-server topology + WireGuard** means the only way into Postgres/Redis
-  is through the private network, period. В `single` ту же гарантию дают
-  внутренняя сеть Docker и отсутствие опубликованных портов данных.
+- **Postgres/Redis недоступны извне в обеих топологиях.** В `split`
+  (NL-1 + NL-2 + WireGuard) к ним можно попасть только через приватную
+  сеть WireGuard. В `single` Postgres/Redis не публикуют порты на хост, а
+  `nginx` подключён только к сети `dwtgbot_media` и не видит внутреннюю сеть.
 
 For the long version: [`02-architecture.md`](02-architecture.md) and the
 ADRs.
@@ -334,7 +335,7 @@ If any box can't be ticked after a reasonable attempt, file an issue tagged `onb
 | Adding business logic to a bot handler ("just a small `if`") | Handlers feel like the natural place because that's where the user interaction is | Put the logic in `app/application/use_cases/`; the handler stays a thin adapter |
 | Importing from `app.infrastructure.*` in `app.application.*` | Copy-pasting a quick fix that "works" | Depend on the protocol in `app.application.services` or `app.domain.repositories`; wire concretes only in `composition.py` |
 | Editing an old Alembic migration to "fix" the schema | Faster than writing a new one | Always write a *new* migration. Old ones may already be applied in prod |
-| Adding an env var only in `.env.example` (or only in compose) | The two surfaces look alike, easy to miss one | Add to **all four**: `app/config.py` Settings model, `.env.example`, the relevant `deploy/nl{1,2}/docker-compose.yml` env block, and `docs/13-config-and-env.md` |
+| Adding an env var only in `.env.example` (or only in compose) | The two surfaces look alike, easy to miss one | Add to **all five**: `app/config.py` Settings model, `.env.example`, the relevant compose fragment's env block (`deploy/compose/{control,media}.yml`), the per-topology `deploy/{single,nl1,nl2}/.env.example`, and `docs/13-config-and-env.md` |
 | Logging a token, password, or full Telegram update payload while debugging | "I'll remove it before commit" | Never log secrets. Use [`14-logging-observability.md`](14-logging-observability.md) — log structured fields, never raw payloads |
 | Writing a test that hits the real Telegram / YouTube / Postgres | The fakes look intimidating | Use the protocol-based fakes from `app/tests/conftest.py`. Real-service tests must be marked `@pytest.mark.integration` |
 | Treating `STORAGE_PATH` like a regular directory (`os.path.join`) | It's just a path, right? | Always go through `LocalStorage.job_dir(...)` and `ensure_within(...)`. Direct `os.path.join` of untrusted input is a path-traversal bug waiting to happen |
