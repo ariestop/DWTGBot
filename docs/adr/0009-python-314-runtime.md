@@ -51,7 +51,8 @@ CI, developer and Docker-image surfaces of `DWTGBot`:
   `[tool.mypy] python_version = "3.14"`.
   **Caveat:** `[tool.ruff] target-version` is intentionally pinned at
   `"py313"` (one minor below the runtime floor), see §3 below.
-- `mypy.ini`: `python_version = 3.14`.
+- `mypy.ini` удалён: единственный источник настроек mypy и pytest —
+  `pyproject.toml` (`[tool.mypy]`, `[tool.pytest.ini_options]`).
 - `.github/workflows/ci.yml`: `python-version: "3.14"` for all jobs.
 - `docker/{bot,api,worker,backup}.Dockerfile`:
   `ARG PYTHON_VERSION=3.14.4` → `python:3.14.4-slim` base.
@@ -134,7 +135,7 @@ For reviewers and AI agents touching the runtime:
 
 - Any change that **lowers** the floor below 3.14 must open a new ADR
   superseding this one. Do not edit the version pin in
-  `pyproject.toml` / `mypy.ini` / Dockerfiles in isolation.
+  `pyproject.toml` / Dockerfiles in isolation.
 - New compiled-dep additions must verify cp314 wheels exist on PyPI
   before being added to `requirements/base.txt`. From-source builds
   in CI are not acceptable.
