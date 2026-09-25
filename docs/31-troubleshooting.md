@@ -785,6 +785,7 @@ $NL2 logs --since=1h --no-color worker \
 | `HTTP Error 429` | `RetryableError("upstream_5xx")` | reduce concurrency |
 | `HTTP Error 5\d\d` | `RetryableError("upstream_5xx")` | wait, retries handle it |
 | `HTTP Error 403`, `Sign in to confirm` | `UserFacingError` (likely needs cookies / IP rotation) | §5 of `24-` |
+| YouTube `HTTP Error 403` on download while `-F` lists formats | JS challenge unsolved (`yt-dlp -v` → `JS runtimes: none`) | image must include `deno` + `yt-dlp-ejs` (`yt-dlp[default,deno]` in `requirements/base.txt`); §5 of `24-` |
 | `GeoRestricted` | `UserFacingError("geo_restricted")` | inform user |
 | `Private video` / `Login required` | `UserFacingError("private_content")` | inform user |
 | `Unsupported URL` | `UserFacingError("unsupported_url")` | URL detection bug or upstream change |

@@ -12,6 +12,16 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — YouTube downloads failing with HTTP 403
+
+yt-dlp without a JavaScript runtime cannot solve YouTube's JS challenge:
+extraction works, but every media URL answers 403 and the bot replied
+"Не удалось скачать файл". `requirements/base.txt` now installs
+`yt-dlp[default,deno]` (adds `yt-dlp-ejs` and the `deno` runtime,
+hash-pinned in `requirements/*.lock`); bot and worker images set
+`DENO_DIR=/tmp/deno` because `$HOME` is not writable.
+`app/tests/test_requirements_ytdlp.py` guards the extras.
+
 ### Added — yt-dlp auto-update with Telegram notifications
 
 yt-dlp bumped 2026.3.17 → 2026.8.19 (includes the Instagram logged-in

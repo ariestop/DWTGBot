@@ -9,7 +9,10 @@ python-telegram-bot[ext]==21.11.1
 # *.lock and is bumped by .github/workflows/yt-dlp-update.yml
 # (``make lock-bump PKG=yt-dlp``). Older 2024 releases used the
 # removed-in-3.14 ``imp`` stdlib module.
-yt-dlp>=2026.3.17
+# ``default`` brings yt-dlp-ejs and ``deno`` the JS runtime it runs on:
+# without them YouTube's JS challenge stays unsolved and media URLs
+# answer 403 even though extraction succeeds.
+yt-dlp[default,deno]>=2026.3.17
 
 # --- Async / queue ---
 arq==0.26.1

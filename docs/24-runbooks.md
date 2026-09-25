@@ -501,6 +501,7 @@ bash deploy/scripts/healthcheck.sh nl1                              # all green
 |---|---|
 | Upstream site HTML / API changed | one platform broken; others fine; pinned yt-dlp version |
 | yt-dlp version too old | `Unsupported URL` for URLs that worked yesterday |
+| YouTube JS challenge unsolved | extraction OK, download `HTTP Error 403: Forbidden`; `-v` shows `JS runtimes: none` — the image lacks `deno` / `yt-dlp-ejs` (`requirements/base.txt` must keep `yt-dlp[default,deno]`) |
 | Cookies expired (auth-gated platform) | `Login required to access` / 403 |
 | Geo / IP block tightened | `GeoRestrictedError` or `Sign in to confirm you're not a bot` from NL-2 IP |
 | Rate-limited by upstream | bursts of `HTTP Error 429` |
@@ -516,6 +517,8 @@ $NL2 logs --since=30m --no-color worker \
 
 # Pinned yt-dlp version inside the worker
 docker exec dwtgbot_worker yt-dlp --version
+# YouTube needs a JS runtime: expect "JS runtimes: deno-<ver>", not "none"
+docker exec dwtgbot_worker yt-dlp -v -s 'https://www.youtube.com/watch?v=<id>' 2>&1 | grep -E 'JS runtimes|JS Challenge'
 
 # Confirm against latest upstream release
 curl -fsS https://pypi.org/pypi/yt-dlp/json | jq -r '.info.version'

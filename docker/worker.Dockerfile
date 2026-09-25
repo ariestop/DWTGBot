@@ -39,8 +39,10 @@ ARG APP_USER
 ARG APP_UID
 ARG APP_GID
 
+# DENO_DIR: deno (yt-dlp's JS runtime for YouTube) needs a writable cache;
+# $HOME (/app) is root-owned.
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH" APP_HOME=/app
+    PATH="/opt/venv/bin:$PATH" APP_HOME=/app DENO_DIR=/tmp/deno
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg tini ca-certificates curl procps \
