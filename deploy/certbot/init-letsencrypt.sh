@@ -2,9 +2,10 @@
 # =====================================================================
 # Bootstrap Let's Encrypt certificates for the media-plane nginx.
 #
-# Pattern adapted from https://github.com/wmnnd/nginx-certbot — we drop a
-# self-signed dummy cert first so nginx can start, then ask certbot for
-# the real one over HTTP-01, then reload nginx.
+# First issue: drop a self-signed dummy cert so nginx can start with the
+# HTTPS server block, then remove the dummy and ask certbot for the real
+# one over HTTP-01, then reload nginx. Re-run with an existing lineage:
+# force-renew it in place.
 #
 # Usage (from deploy/single or deploy/nl2):
 #   DOMAIN=media.example.com EMAIL=admin@example.com \
@@ -15,76 +16,88 @@ set -Eeuo pipefail
 DOMAIN="${DOMAIN:?DOMAIN must be set, e.g. media.example.com}"
 EMAIL="${EMAIL:?EMAIL must be set}"
 STAGING="${STAGING:-0}"          # 1 = use Let's Encrypt staging
+ASSUME_YES="${ASSUME_YES:-0}"
 COMPOSE="${COMPOSE:-docker compose -f docker-compose.yml --env-file .env}"
 
-DATA_PATH="${DATA_PATH:-./certbot}"
 RSA_KEY_SIZE=4096
+LIVE="/etc/letsencrypt/live/${DOMAIN}"
 
-echo "Bootstrapping certs for ${DOMAIN}"
+# Runs a command inside the certbot image with the letsencrypt volumes
+# mounted. --no-deps: nginx is managed explicitly below.
+certbot_run() {
+  $COMPOSE run --rm --no-deps --entrypoint "$1" certbot
+}
 
-if [[ -d "${DATA_PATH}/conf/live/${DOMAIN}" ]]; then
-  read -r -p "Existing data found for ${DOMAIN}. Continue and replace? (y/N) " ans
-  [[ "${ans,,}" == "y" ]] || exit 0
-fi
+create_dummy_cert() {
+  certbot_run "mkdir -p '${LIVE}'"
+  certbot_run "openssl req -x509 -nodes -newkey rsa:${RSA_KEY_SIZE} -days 1 \
+    -keyout '${LIVE}/privkey.pem' \
+    -out    '${LIVE}/fullchain.pem' \
+    -subj '/CN=localhost'"
+}
 
-mkdir -p "${DATA_PATH}/conf/live/${DOMAIN}" "${DATA_PATH}/www"
-
-# Pre-create the target directories inside the ``letsencrypt_conf`` volume
-# before openssl tries to write into them. The certbot image runs openssl
-# with a minimal shell, so mkdir has to happen in its own ``run`` call —
-# piggy-backing on the openssl one-liner below would execute inside quoted
-# context and no longer be a separate command. Without this step openssl
-# fails with ``Can't open .../privkey.pem for writing, No such file``.
-$COMPOSE run --rm --entrypoint "mkdir -p \
-  '/etc/letsencrypt/live/${DOMAIN}' \
-  '/etc/letsencrypt/archive/${DOMAIN}'" certbot
-
-if [[ ! -f "${DATA_PATH}/conf/options-ssl-nginx.conf" ]]; then
-  curl -sSL https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf \
-    > "${DATA_PATH}/conf/options-ssl-nginx.conf"
-fi
-if [[ ! -f "${DATA_PATH}/conf/ssl-dhparams.pem" ]]; then
-  curl -sSL https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem \
-    > "${DATA_PATH}/conf/ssl-dhparams.pem"
-fi
-
-echo "Creating self-signed dummy cert"
-$COMPOSE run --rm --entrypoint "\
-  openssl req -x509 -nodes -newkey rsa:${RSA_KEY_SIZE} -days 1 \
-    -keyout '/etc/letsencrypt/live/${DOMAIN}/privkey.pem' \
-    -out    '/etc/letsencrypt/live/${DOMAIN}/fullchain.pem' \
-    -subj '/CN=localhost'" certbot
-
-echo "Starting nginx with dummy cert"
-$COMPOSE up -d nginx
-
-# Give nginx a couple of seconds to bind :80 before certbot tries to reach
-# /.well-known/acme-challenge through it.
-sleep 3
+wait_for_nginx() {
+  local _
+  for _ in $(seq 1 15); do
+    if $COMPOSE exec -T nginx wget -qO- http://127.0.0.1/healthz >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "nginx did not become ready on :80" >&2
+  return 1
+}
 
 STAGING_FLAG=""
 [[ "$STAGING" == "1" ]] && STAGING_FLAG="--staging"
 
-# Note: we deliberately do NOT delete the dummy cert before calling certbot.
-# The previous version removed it first, which left nginx with missing cert
-# files — and on the next restart (healthcheck/live-restore/etc.) nginx
-# crash-looped with ``cannot load certificate``, which then caused Let's
-# Encrypt HTTP-01 to fail with Connection refused. ``--force-renewal`` makes
-# certbot overwrite the dummy cert in-place, so nginx can be reloaded
-# cleanly afterwards without any window where the cert files are absent.
-echo "Requesting real cert from Let's Encrypt"
-$COMPOSE run --rm --entrypoint "\
-  certbot certonly --webroot -w /var/www/certbot \
+request_cert() {
+  certbot_run "certbot certonly --webroot -w /var/www/certbot \
     ${STAGING_FLAG} \
-    --email ${EMAIL} \
+    --cert-name ${DOMAIN} \
     -d ${DOMAIN} \
+    --email ${EMAIL} \
     --rsa-key-size ${RSA_KEY_SIZE} \
     --agree-tos \
     --no-eff-email \
-    --force-renewal \
-    --non-interactive" certbot
+    --non-interactive $*"
+}
+
+echo "Bootstrapping certs for ${DOMAIN}"
+
+if certbot_run "test -f /etc/letsencrypt/renewal/${DOMAIN}.conf"; then
+  # A lineage certbot manages already exists: renew it in place. Each
+  # forced renewal counts against Let's Encrypt's duplicate-cert limit.
+  if [[ "${ASSUME_YES}" != "1" ]]; then
+    read -r -p "Certificate for ${DOMAIN} already exists. Force renewal? (y/N) " ans
+    [[ "${ans,,}" == "y" ]] || exit 0
+  fi
+  $COMPOSE up -d nginx
+  wait_for_nginx
+  echo "Renewing existing cert"
+  request_cert --force-renewal
+else
+  echo "Creating self-signed dummy cert"
+  create_dummy_cert
+
+  echo "Starting nginx with dummy cert"
+  $COMPOSE up -d nginx
+  wait_for_nginx
+
+  # certbot refuses to create a lineage over a live/ directory it does not
+  # manage ("live directory exists"). nginx already holds the dummy in
+  # memory, so the files can go; on failure the dummy is recreated so a
+  # later nginx restart still finds a certificate.
+  certbot_run "rm -rf '${LIVE}' '/etc/letsencrypt/archive/${DOMAIN}'"
+  echo "Requesting real cert from Let's Encrypt"
+  if ! request_cert; then
+    echo "certbot failed; restoring the dummy cert" >&2
+    create_dummy_cert
+    exit 1
+  fi
+fi
 
 echo "Reloading nginx"
-$COMPOSE exec nginx nginx -s reload || $COMPOSE restart nginx
+$COMPOSE exec -T nginx nginx -s reload || $COMPOSE restart nginx
 
 echo "Done."

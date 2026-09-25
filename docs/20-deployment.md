@@ -734,19 +734,29 @@ Startup order (driven by compose `depends_on`):
 ### 6.6 Issue TLS cert
 
 ```bash
-sudo bash deploy/scripts/certbot_init.sh \
-     --domain media.example.com \
-     --email ops@example.com
+sudo bash deploy/scripts/certbot_init.sh      # домен из SERVER_NAME, email спросит
+# без вопросов: sudo EMAIL=ops@example.com ASSUME_YES=1 bash deploy/scripts/certbot_init.sh
 ```
 
 The script:
 1. Reads `SERVER_NAME` / `DOMAIN` and `EMAIL` from `deploy/single/.env` or `deploy/nl2/.env` — whichever media-plane stack is configured, `single` first (or prompts).
-2. Creates a short-lived self-signed dummy cert so nginx can start with the
-   HTTPS server block from `deploy/nginx/conf.d/media.conf.template`.
-3. Runs certbot in webroot mode (`/var/www/certbot`) against the running nginx.
-4. On success, force-renews the real cert in place and reloads nginx.
+2. **Первый выпуск** (в volume нет `renewal/<domain>.conf`): кладёт
+   самоподписанную заглушку, чтобы nginx стартовал с HTTPS-блоком из
+   `deploy/nginx/conf.d/media.conf.template`, ждёт nginx на `:80`, удаляет
+   заглушку (иначе certbot падает с `live directory exists`) и запрашивает
+   настоящий сертификат через webroot (`/var/www/certbot`). Если certbot
+   упал, заглушка восстанавливается — nginx переживёт перезапуск.
+3. **Повторный запуск** (сертификат уже есть): после подтверждения
+   (`ASSUME_YES=1` — без вопроса) делает `--force-renewal` на месте. Каждый
+   такой запуск расходует лимит Let's Encrypt на дубликаты (5 в неделю).
+4. Reloads nginx.
 
 After that, `:80` redirects to `:443`.
+
+Продление автоматическое: контейнер `certbot` раз в 12 ч запускает
+`certbot renew` (обновляет файлы за 30 дней до истечения), а nginx раз в 6 ч
+делает `nginx -s reload` и подхватывает новый сертификат. Cron на хосте не
+нужен.
 
 > Equivalent: installer option **12) Obtain SSL cert (single / NL-2)**.
 

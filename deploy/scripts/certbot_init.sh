@@ -22,5 +22,5 @@ cd "$(stack_dir "${STACK}")" || {
   log_error "Cannot cd into $(stack_dir "${STACK}")"
   exit 1
 }
-DOMAIN="${DOMAIN}" EMAIL="${EMAIL}" STAGING="${STAGING:-0}" \
+DOMAIN="${DOMAIN}" EMAIL="${EMAIL}" STAGING="${STAGING:-0}" ASSUME_YES="${ASSUME_YES:-0}" \
   bash "${DEPLOY_DIR}/certbot/init-letsencrypt.sh"

@@ -131,6 +131,10 @@ All overridable from the compose / build CLI. **Do not** change
 - Templates: `media.conf.template` is rendered at start via nginx's
   `envsubst` mechanism (`SERVER_NAME`, `API_PORT`).
 - Mounts: nginx conf RO, snippets RO, storage RO, letsencrypt RO.
+- `entrypoint: /bin/sh -c` запускает фоновый цикл `nginx -s reload` раз в
+  6 ч (подхватывает продлённые certbot'ом сертификаты), затем
+  `exec /docker-entrypoint.sh nginx -g "daemon off;"` — штатный entrypoint
+  обязателен, иначе шаблоны из `/etc/nginx/templates` не рендерятся.
 - **Edge protections** (declared in `nginx.conf`, applied in
   `media.conf.template`):
   - `limit_req_zone` per `$binary_remote_addr` for `/d/` (10 r/s,
@@ -145,7 +149,8 @@ All overridable from the compose / build CLI. **Do not** change
 
 ### `certbot`
 - Upstream image; we override `entrypoint` to run a renewal loop
-  (`renew --webroot ...; sleep 12h`).
+  (`renew --webroot ...; sleep 12h`). Сигнализировать nginx он не может
+  (docker socket не монтируется) — перезагрузку делает сам nginx, см. выше.
 - Restart-on-failure; volumes for `letsencrypt_conf` and `letsencrypt_www`.
 
 ### `postgres` / `redis`

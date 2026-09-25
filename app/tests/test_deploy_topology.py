@@ -134,6 +134,17 @@ def test_nginx_has_no_route_to_data_plane(stack: str) -> None:
     assert _services(stack)["nginx"]["networks"] == ["dwtgbot_media"]
 
 
+@pytest.mark.parametrize("stack", ["single", "nl2"])
+def test_nginx_reloads_to_pick_up_renewed_certs(stack: str) -> None:
+    nginx = _services(stack)["nginx"]
+    (script,) = nginx["command"]
+    assert nginx["entrypoint"] == ["/bin/sh", "-c"]
+    assert "nginx -s reload" in script
+    # The stock entrypoint renders /etc/nginx/templates; bypassing it would
+    # leave the media vhost unconfigured.
+    assert "exec /docker-entrypoint.sh nginx" in script
+
+
 def test_single_app_services_join_both_networks() -> None:
     services = _services("single")
     for name in ("api", "worker", "cleanup"):

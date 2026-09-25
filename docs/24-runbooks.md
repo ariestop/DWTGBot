@@ -928,6 +928,8 @@ curl -I --max-time 5 https://media.example.com/d/<active-token>      # 200
 | DNS A/AAAA changed | challenge resolves to wrong IP |
 | Rate-limit hit (Let's Encrypt) | `too many certificates already issued` |
 | Cert files removed (manual cleanup) | nginx logs say `cannot open certificate file` |
+| Файлы продлены, но nginx отдаёт старый сертификат | `notAfter` снаружи раньше, чем у `/etc/letsencrypt/live/<domain>/fullchain.pem`; nginx запущен со старым `command` без цикла `reload` — пересоздайте: `docker compose up -d nginx` |
+| Первый выпуск: `live directory exists for <domain>` | старая версия `init-letsencrypt.sh` не удаляла заглушку; обновите репозиторий и повторите `certbot_init.sh` |
 
 ### 10.3 Quick diagnosis
 
@@ -979,7 +981,8 @@ docker exec dwtgbot_nginx nginx -t                                   # ok
 
 ### 10.6 Prevent
 
-- `certbot` container with `--keep-until-expiring` runs daily.
+- `certbot` container runs `certbot renew` every 12 h; nginx reloads every
+  6 h to pick up renewed files (`deploy/compose/media.yml`).
 - Alert at 30 / 14 / 7 / 1 days to expiry.
 - Off-host backup of `/etc/letsencrypt/` weekly (it's tiny).
 - DNS records under config management (Terraform / similar).
