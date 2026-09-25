@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import mimetypes
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from app.config import Settings
@@ -12,9 +13,13 @@ from app.domain.entities.media_info import (
     DownloadResult,
     MediaInfo,
 )
-from app.domain.enums import Platform
+from app.domain.enums import MediaKind, Platform
+from app.exceptions import DownloadError
 from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
 from app.infrastructure.storage.local_storage import LocalStorage
+from app.logging_config import get_logger
+
+_logger = get_logger(__name__)
 
 
 class BaseProvider(ABC):
@@ -70,3 +75,59 @@ class BaseProvider(ABC):
     @staticmethod
     def _target_path(target_dir: str) -> Path:
         return Path(target_dir)
+
+    @staticmethod
+    def _cookie_extra_opts(configured: str | None, *, missing_event: str) -> dict[str, str] | None:
+        """``{"cookiefile": path}`` for yt-dlp, or ``None`` when unset / missing.
+
+        A configured-but-absent file logs ``missing_event`` and falls back to
+        anonymous access instead of failing the request.
+        """
+        cookiefile = (configured or "").strip()
+        if not cookiefile:
+            return None
+        cookie_path = Path(cookiefile)
+        if not cookie_path.is_file():
+            _logger.warning(missing_event, path=cookiefile)
+            return None
+        return {"cookiefile": str(cookie_path)}
+
+    @staticmethod
+    def _merge_extra_opts(
+        extra_opts: Mapping[str, str] | None, auth_opts: Mapping[str, str] | None
+    ) -> dict[str, str] | None:
+        """Auth options win over per-call options on key clashes."""
+        if extra_opts is None and auth_opts is None:
+            return None
+        return {**(extra_opts or {}), **(auth_opts or {})}
+
+    @staticmethod
+    def _result_from_files(
+        files: list[Path],
+        *,
+        title: str,
+        kind: MediaKind,
+        done_event: str,
+        empty_error: str,
+    ) -> DownloadResult:
+        """Build the ``DownloadResult`` for the files yt-dlp left in the job dir."""
+        if not files:
+            raise DownloadError(empty_error)
+        total = sum(f.stat().st_size for f in files if f.exists())
+        primary = files[0]
+        mime = mimetypes.guess_type(primary.name)[0] or "application/octet-stream"
+        _logger.info(
+            done_event,
+            files=len(files),
+            total_bytes=total,
+            primary=primary.name,
+            mime=mime,
+            kind=kind.value,
+        )
+        return DownloadResult(
+            files=tuple(str(f) for f in files),
+            total_size_bytes=total,
+            primary_mime=mime,
+            title=title,
+            kind=kind,
+        )
