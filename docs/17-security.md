@@ -100,7 +100,7 @@ non-root, отсутствие `--privileged` / `cap_add`, закреплённ�
 | **Stolen bot token** | bot impersonation | rotate via `@BotFather`; secret kept in `.env` only |
 | **DB credential leak** | compromised NL-1 → admin access | strong password, private VLAN only, no public listen |
 | **Container escape** | yt-dlp parser exploit | non-root `app:1000`, minimal base image, no `--privileged` |
-| **Supply chain (yt-dlp/ffmpeg)** | malicious dependency update | pinned versions, GHCR image digests, manual yt-dlp bumps |
+| **Supply chain (yt-dlp/ffmpeg)** | malicious dependency update | hash-pinned `requirements/*.lock`, GHCR image digests; yt-dlp auto-bumped from PyPI stable releases by `yt-dlp-update.yml` only after unit tests + full CI, one package per commit (auditable, revertable) |
 | **Malicious URL → SSRF / RCE** | yt-dlp following redirects to internal / metadata hosts | yt-dlp is constrained by `allowed_extractors` + `match_filter` host allowlist; optional `HTTPS_PROXY_URL` adds outbound ACL on NL-2 |
 | **Cookie / session leak** | Instagram cookies in logs | bind-mounted at `/srv/dwtgbot/secrets/cookies-instagram.txt` (`root:1000 0660`), never logged; only the file path is emitted, file content stays inside yt-dlp; `cookies_setup.sh` reads secrets without echo and never logs them |
 | **Replay of expired link** | resharing public URL | TTL + counter; `is_active=false` after exhaustion |
@@ -420,7 +420,7 @@ universe.
 | Exposed Postgres on public IP "for psql access" | external scanners notice in hours | Tunnel via SSH; never expose 5432 publicly |
 | Mounted `letsencrypt` as RW into nginx | risk of accidental cert overwrite | We mount `:ro` into nginx; certbot is the only writer |
 | Built worker as root | container can write outside the volume | Build with `USER app`; verify with `docker exec` |
-| Updated yt-dlp without releasing | yt-dlp pulls untrusted plugins on the fly | Pin in `requirements/base.txt`; audit the changelog |
+| Updated yt-dlp without releasing | yt-dlp pulls untrusted plugins on the fly | Never `pip install -U` in a container; the exact version is in `requirements/*.lock`, bumped by `yt-dlp-update.yml` (or `make lock-bump PKG=yt-dlp`) and shipped as a new image |
 | Set `cookiefile` to a globally-readable path | other system users can read it | `chmod 600`, `chown app:app`; never world-readable |
 | Uploaded `cookiefile` to only one host | extract_info on NL-1 succeeds, download on NL-2 (or vice-versa) falls back anonymous and Instagram returns login-required | Cookies must live on **both** NL-1 (bot does `extract_info`) and NL-2 (worker does the actual download); paths bind-mounted RO into both |
 | Allowed `0.0.0.0` on the SSH `AllowUsers` | brute-force lockouts | Restrict via firewall + key-only auth |

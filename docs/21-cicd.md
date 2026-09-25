@@ -43,6 +43,9 @@ flowchart LR
     BUILD -->|green on main| DEP[deploy.yml]
     Manual[workflow_dispatch] --> BUILD
     ManualDeploy[workflow_dispatch] --> DEP
+    Cron[daily cron] --> UPD[yt-dlp-update.yml]
+    UPD -->|lock bump to main + dispatch| CI
+    UPD -. follows CI / build / deploy .-> TG[Telegram]
   end
 
   DEP -- SSH (DEPLOY_TOPOLOGY=single) --> SGL[single: deploy_update.sh single]
@@ -73,6 +76,7 @@ flowchart LR
 | Roll out (automatic) | `deploy.yml` | successful `build-images.yml` on `main` | running new images on the single host (`DEPLOY_TOPOLOGY=single`) or on NL-1, then NL-2 |
 | Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | selected ref/target deployed over SSH |
 | Roll out (automatic) | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
+| Dependency refresh | `yt-dlp-update.yml` | daily cron + manual | yt-dlp lock bump on `main` → the chain above; Telegram report (§4b) |
 
 Canonical GitHub-side order for `main` is:
 
@@ -95,7 +99,8 @@ Rolling restart with current .env` вызывает низкоуровневый
 
 | File | Trigger | Concurrency | Permissions | Purpose |
 |---|---|---|---|---|
-| `.github/workflows/ci.yml` | `push`, `pull_request` to `main`/`develop` | `ci-${{ github.ref }}`, `cancel-in-progress: true` | `contents: read` | Lint, type-check, unit + integration tests, scanners, shellcheck |
+| `.github/workflows/ci.yml` | `push`, `pull_request` to `main`/`develop`, `workflow_dispatch` (used by `yt-dlp-update.yml`) | `ci-${{ github.ref }}`, `cancel-in-progress: true` | `contents: read` | Lint, type-check, unit + integration tests, scanners, shellcheck |
+| `.github/workflows/yt-dlp-update.yml` | `schedule` (daily 04:23 UTC), `workflow_dispatch` | `yt-dlp-update`, `cancel-in-progress: false` | `contents: write`, `actions: write` | Bump yt-dlp in `requirements/*.lock`, test, push to `main`, dispatch CI, follow CI → build → deploy, report to Telegram (§4b) |
 | `.github/workflows/build-images.yml` | successful `CI` run on `main`, tags `v*.*.*`, `workflow_dispatch` | `build-images-${{ github.event.workflow_run.head_sha || github.ref }}` | `contents: read`, `packages: write` | Build & push 4 images to GHCR |
 | `.github/workflows/deploy.yml` | successful `Build & push images` run on `main`, `workflow_dispatch` (target + ref) | `deploy-<target>` (manual) or `deploy-single` / `deploy-both` by `DEPLOY_TOPOLOGY`, `cancel-in-progress: false` | `contents: read`, `packages: read` | SSH into the single host, or NL-1 then NL-2, run `deploy_update.sh` |
 | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | systemd timer on each host | `flock` lock per target (`single` / `nl1` / `nl2`) | GitHub token on host (`Actions: read`, `Contents: read`, `Deployments: read/write`) | Wait for green `ci.yml` + `build-images.yml`, then run host-side deploy |
@@ -310,6 +315,44 @@ docker manifest inspect ghcr.io/<org>/<repo>-bot:sha-abc1234
 
 ---
 
+## §4b — `yt-dlp-update.yml` (yt-dlp auto-update)
+
+Сайты регулярно ломают старые экстракторы, поэтому yt-dlp обновляется
+автоматически. В `requirements/base.txt` стоит только нижняя граница
+(`yt-dlp>=…`); точная версия с хешами живёт в `requirements/*.lock`, так
+что образы остаются воспроизводимыми, а обновление — обычный коммит.
+
+Раз в сутки (и по кнопке Run workflow):
+
+1. Версия из `requirements/prod.lock` сравнивается с `info.version` на
+   PyPI (стабильные релизы; nightly-сборки не берутся). Нет новой — выход
+   без уведомлений.
+2. Telegram: «вышла yt-dlp X (сейчас Y), запускаю автообновление».
+3. `make lock-bump PKG=yt-dlp` (снимает пин только с yt-dlp, остальные
+   версии не двигаются), затем `make lock-check`.
+4. `pytest -m "not integration"` на новой версии. Упало — Telegram
+   «ошибка…, main не изменён», сервер не трогается.
+5. Коммит `chore(deps): bump yt-dlp Y -> X` пушится в `main` и CI
+   запускается через `workflow_dispatch`: push с `GITHUB_TOKEN` не
+   порождает `push`-запусков.
+6. `.github/scripts/follow-deploy.sh` ждёт для этого коммита `CI` →
+   `Build & push images` → `Deploy` (до ~30 мин на появление каждого
+   запуска). Итог в Telegram: «yt-dlp X установлен на сервере» или
+   «ошибка на этапе …» со ссылкой на упавший run.
+
+Если новая версия ломает тесты, попытка и уведомление об ошибке
+повторяются каждый день, пока не выйдет исправленный релиз или пока пин
+не поправят вручную. GitHub отключает `schedule` в репозитории без
+активности 60 дней — тогда включите workflow в Actions заново.
+
+**Секреты** (repository secrets, §7.2): `TELEGRAM_BOT_TOKEN` — токен
+бота, от имени которого идут уведомления; `TELEGRAM_CHAT_ID` — id
+получателя (или несколько через запятую). Получатель должен хотя бы раз
+написать боту `/start`. Без секретов обновление работает, уведомления
+пропускаются с warning в логе.
+
+---
+
 ## §5 — `deploy.yml` (orchestration)
 
 ### 5.1 Trigger
@@ -518,7 +561,15 @@ All secrets live in **GitHub → Settings → Secrets and variables**. Use **Env
 
 Repository **variable** (не secret): `DEPLOY_TOPOLOGY` = `single` | `split`.
 
-> **Not** in CI: `BOT_TOKEN`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `API_INTERNAL_TOKEN` — these live **only** on the hosts (`deploy/<host>/.env`). The pipeline never sees them.
+Repository secrets for `yt-dlp-update.yml` (optional — without them
+notifications are skipped):
+
+| Secret | Where | Used by | Notes |
+|---|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | repository | `yt-dlp-update.yml` | token of the bot that sends notices (the production `BOT_TOKEN` or a separate notifier bot) |
+| `TELEGRAM_CHAT_ID` | repository | same | recipient chat id(s), comma-separated; usually the ids from `BOT_ADMIN_IDS` |
+
+> **Not** in CI: `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `API_INTERNAL_TOKEN` — these live **only** on the hosts (`deploy/<host>/.env`). The pipeline never sees them. `BOT_TOKEN` is in CI only if you choose to reuse it as `TELEGRAM_BOT_TOKEN`; a separate notifier bot keeps the production token host-only.
 
 ### 7.3 Optional (future / extensions)
 
@@ -606,7 +657,7 @@ The pipeline is designed so **every step can be re-run safely** with no extra si
 |---|---|
 | `docker exec bot sed -i ...` to "fix" a bug in prod | branch → PR → CI → build → deploy |
 | Edit `docker-compose.yml` on the host | edit in repo, PR, deploy |
-| Bump yt-dlp via `docker exec worker pip install` | bump in `requirements/base.txt`, rebuild image, deploy |
+| Bump yt-dlp via `docker exec worker pip install` | let `yt-dlp-update.yml` run (or `make lock-bump PKG=yt-dlp` + push), rebuild image, deploy |
 | Apply migration via `psql` directly | always via `migrate` container |
 
 Live edits drift; the next deploy reverts them silently.

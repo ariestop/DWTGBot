@@ -1,0 +1,134 @@
+name: yt-dlp auto-update
+
+# Daily check of the yt-dlp pin in requirements/*.lock against PyPI. On a
+# new release: Telegram notice → ``make lock-bump PKG=yt-dlp`` → unit
+# tests → push to main → follow CI → Build & push images → Deploy for
+# that commit and report success or the failed stage to Telegram.
+# Docs: docs/21-cicd.md §yt-dlp auto-update.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: yt-dlp-update
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push the lock bump to main
+  actions: write # dispatch CI: pushes made with GITHUB_TOKEN trigger no workflows
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Compare pinned and latest yt-dlp
+        id: ver
+        run: |
+          set -euo pipefail
+          current="$(sed -n 's/^yt-dlp==\([^ ]*\).*/\1/p' requirements/prod.lock)"
+          latest="$(curl -fsS --retry 3 https://pypi.org/pypi/yt-dlp/json \
+            | python -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])')"
+          for v in "${current}" "${latest}"; do
+            [[ "${v}" =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "::error::unexpected version '${v}'"; exit 1; }
+          done
+          echo "CURRENT=${current}" >> "$GITHUB_ENV"
+          echo "LATEST=${latest}" >> "$GITHUB_ENV"
+          newest="$(printf '%s\n' "${current}" "${latest}" | sort -V | tail -n1)"
+          if [[ "${latest}" != "${current}" && "${newest}" == "${latest}" ]]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+            echo "yt-dlp ${current} -> ${latest}"
+          else
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "yt-dlp ${current} is up to date"
+          fi
+
+      - name: Notify about the new release
+        if: steps.ver.outputs.update == 'true'
+        run: |
+          bash .github/scripts/telegram-notify.sh "DWTGBot: вышла yt-dlp ${LATEST} (сейчас ${CURRENT}). Запускаю автообновление.
+          https://github.com/yt-dlp/yt-dlp/releases"
+
+      - name: Install uv and ffmpeg
+        if: steps.ver.outputs.update == 'true'
+        run: |
+          pip install 'uv==0.11.7'
+          sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Bump yt-dlp in requirements/*.lock
+        if: steps.ver.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          make lock-bump PKG=yt-dlp
+          got="$(sed -n 's/^yt-dlp==\([^ ]*\).*/\1/p' requirements/prod.lock)"
+          if [[ "${got}" != "${LATEST}" ]]; then
+            echo "::error::lock resolved yt-dlp ${got}, expected ${LATEST}"
+            exit 1
+          fi
+          make lock-check
+          git diff --stat
+
+      - name: Unit tests against the new version
+        if: steps.ver.outputs.update == 'true'
+        env:
+          BOT_TOKEN: "0000000000:test-token"
+          APP_ENV: development
+          LOG_LEVEL: WARNING
+          LOG_JSON: "false"
+          PUBLIC_BASE_URL: http://localhost:8080
+          STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
+          STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
+        run: |
+          pip install -r requirements/dev.lock
+          python -c "import yt_dlp; print('yt-dlp', yt_dlp.version.__version__)"
+          pytest -m "not integration"
+
+      - name: Commit and push to main
+        id: push
+        if: steps.ver.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(deps): bump yt-dlp ${CURRENT} -> ${LATEST}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Start CI for the bump commit
+        if: steps.ver.outputs.update == 'true'
+        run: gh workflow run ci.yml --ref main
+
+      - name: Follow CI, build and deploy
+        id: follow
+        if: steps.ver.outputs.update == 'true'
+        env:
+          SHA: ${{ steps.push.outputs.sha }}
+        run: LABEL="yt-dlp ${LATEST}" bash .github/scripts/follow-deploy.sh
+
+      # follow-deploy.sh reports its own failures; this covers every step
+      # before it (lock bump, tests, push, CI dispatch).
+      - name: Report a failure before the deploy chain
+        if: failure() && steps.ver.outputs.update == 'true' && steps.follow.outcome != 'failure'
+        run: |
+          if [[ "${{ steps.push.outcome }}" == "success" ]]; then
+            where="коммит уже в main, но CI не запустился"
+          else
+            where="не прошли lock-файлы или тесты, main не изменён"
+          fi
+          bash .github/scripts/telegram-notify.sh "DWTGBot: ошибка обновления yt-dlp ${LATEST}: ${where}. Сервер не обновлялся.
+          ${RUN_URL}"

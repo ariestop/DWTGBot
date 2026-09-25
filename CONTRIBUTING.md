@@ -46,7 +46,10 @@ make lock
 ```
 
 To pull in the newest allowed versions of all transitive dependencies,
-run `make lock-upgrade` in a dedicated `chore:` commit.
+run `make lock-upgrade` in a dedicated `chore:` commit. To move a single
+package, run `make lock-bump PKG=<name>`. yt-dlp needs no manual bumps:
+`base.txt` only sets a floor and `.github/workflows/yt-dlp-update.yml`
+bumps the lock daily (see `docs/21-cicd.md` §4b).
 
 CI's `lockfile-check` job reruns `uv pip compile` on a clean runner,
 seeded with the committed `*.lock` so existing pins are preferred, and

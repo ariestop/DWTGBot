@@ -12,6 +12,19 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Added — yt-dlp auto-update with Telegram notifications
+
+yt-dlp bumped 2026.3.17 → 2026.8.19 (includes the Instagram logged-in
+extraction fix). `requirements/base.txt` now sets only a floor
+(`yt-dlp>=2026.3.17`); the exact hash-pinned version stays in
+`requirements/*.lock`. New daily `.github/workflows/yt-dlp-update.yml`:
+on a new PyPI release it notifies Telegram, runs `make lock-bump
+PKG=yt-dlp` (new target: re-resolve one package, keep every other pin)
+and the unit tests, pushes the bump to `main`, dispatches CI (now also
+`workflow_dispatch`) and follows CI → build → deploy, reporting success
+or the failed stage to Telegram (secrets `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`). Docs: 21 §4b, 17, 24 §5, CONTRIBUTING.
+
 ### Added — `cookies_setup.sh` and cookies step in the installer
 
 `deploy/scripts/cookies_setup.sh instagram|youtube` installs a Netscape

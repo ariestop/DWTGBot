@@ -529,13 +529,17 @@ docker exec dwtgbot_worker yt-dlp -j --no-warnings 'https://www.youtube.com/watc
 
 1. **Confirm scope** — one platform, not all? If all platforms are
    broken, the worker itself is unhealthy → §2.
-2. **Bump yt-dlp** if you're behind:
-   - Edit `app/requirements.txt` or worker Dockerfile
-     (`yt-dlp==<latest>`).
-   - Build + push image; deploy via §16 (don't `pip install` in a
-     live container — drift).
+2. **Bump yt-dlp** if you're behind. Normally
+   `.github/workflows/yt-dlp-update.yml` does it within a day of a
+   release and reports to Telegram ([`21-cicd.md`](21-cicd.md) §4b);
+   to force it now: Actions → **yt-dlp auto-update** → Run workflow
+   (`gh workflow run yt-dlp-update.yml`). If that run failed, read its
+   Telegram message / run log; to bump by hand:
+   `make lock-bump PKG=yt-dlp`, commit the `requirements/*.lock`
+   change, push — CI → build → deploy follows (don't `pip install` in
+   a live container — drift).
    - For an emergency hotfix only: `docker exec dwtgbot_worker
-     pip install -U yt-dlp` AND open a same-day PR with the pin.
+     pip install -U yt-dlp` AND land the lock bump the same day.
 3. **Site change requires upstream fix** → temporarily disable the
    platform:
    - Set `PROVIDER_<X>_DISABLED=1` in `deploy/nl2/.env`;
@@ -585,7 +589,8 @@ $NL2 logs --since=5m --no-color worker | jq -c 'select(.event=="<x>_classified_e
 
 ### 5.6 Prevent
 
-- Pin `yt-dlp` exactly in image; weekly CI job opens a PR to bump.
+- `yt-dlp` is exact only in `requirements/*.lock` (floor in `base.txt`);
+  the daily `yt-dlp-update.yml` bumps, tests and deploys new releases.
 - Alert on `<platform>_classified_error` rate > N/min for 5 min.
 - Per-platform kill switch (`PROVIDER_<X>_DISABLED`) wired to
   config so you can disable in one redeploy.

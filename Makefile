@@ -13,7 +13,7 @@ COMPOSE_NL1    := docker compose -f deploy/nl1/docker-compose.yml --env-file dep
 COMPOSE_NL2    := docker compose -f deploy/nl2/docker-compose.yml --env-file deploy/nl2/.env
 
 .PHONY: help venv install dev-install lint fmt typecheck test \
-        lock lock-upgrade lock-check \
+        lock lock-upgrade lock-bump lock-check \
         up down logs ps restart \
         single-up single-down single-logs \
         nl1-up nl1-down nl1-logs nl2-up nl2-down nl2-logs \
@@ -74,6 +74,21 @@ lock-upgrade: ## Re-resolve requirements/*.lock to the newest allowed versions
 	@tmpdir=$$(mktemp -d); \
 	mkdir -p $$tmpdir/requirements; \
 	cp requirements/*.txt $$tmpdir/requirements/; \
+	for r in base dev prod; do \
+	  (cd $$tmpdir && $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o requirements/$$r.lock $(LOCK_FLAGS)); \
+	  cp $$tmpdir/requirements/$$r.lock requirements/$$r.lock; \
+	done; \
+	rm -rf $$tmpdir
+
+# Dropping PKG's pin from the seeded locks leaves uv no preference for it,
+# so it resolves to the newest version *.txt allows; every other pin stays
+# and the header matches ``lock-check`` (unlike ``--upgrade-package``).
+lock-bump: ## Bump one package to its newest allowed version (PKG=yt-dlp)
+	@test -n "$(PKG)" || { echo "usage: make lock-bump PKG=<name>"; exit 2; }
+	@tmpdir=$$(mktemp -d); \
+	mkdir -p $$tmpdir/requirements; \
+	cp requirements/*.txt requirements/*.lock $$tmpdir/requirements/; \
+	sed -i '/^$(PKG)==/,/^    #/d' $$tmpdir/requirements/*.lock; \
 	for r in base dev prod; do \
 	  (cd $$tmpdir && $(PY_LOCK) -m uv pip compile requirements/$$r.txt -o requirements/$$r.lock $(LOCK_FLAGS)); \
 	  cp $$tmpdir/requirements/$$r.lock requirements/$$r.lock; \

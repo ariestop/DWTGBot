@@ -323,6 +323,12 @@ make worker    # python -m app.main_worker
 - `.github/workflows/deploy.yml` запускается после сборки образов или вручную;
   подключается по SSH к single-хосту или к NL-1/NL-2 (по `DEPLOY_TOPOLOGY`) и
   выполняет `deploy_update.sh`.
+- `.github/workflows/yt-dlp-update.yml` раз в сутки проверяет новый релиз
+  yt-dlp. Если он вышел, workflow пишет об этом в Telegram, обновляет
+  `requirements/*.lock`, прогоняет тесты и пушит в `main`, а затем ждёт CI,
+  сборку и деплой. Итог (успех или этап, на котором упало) тоже приходит
+  в Telegram. Нужны секреты `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID`,
+  см. [`docs/21-cicd.md`](docs/21-cicd.md) §4b.
 - Задача `compose-validate` проверяет `docker compose config` для всех трёх
   стеков, а `app/tests/test_deploy_topology.py` проверяет инварианты топологий.
 
@@ -363,7 +369,9 @@ docs/
 migrations/
   env.py  script.py.mako  versions/
 .github/workflows/
-  ci.yml  build-images.yml  deploy.yml
+  ci.yml  build-images.yml  deploy.yml  yt-dlp-update.yml
+.github/scripts/
+  telegram-notify.sh  follow-deploy.sh
 ```
 
 ---
