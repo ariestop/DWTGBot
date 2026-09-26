@@ -167,9 +167,15 @@ ffmpeg encodes to MP3 at the user-selected bitrate (192 kbps default).
 отвечает «There is no video in this post», а с флагом всё равно не
 скачивает картинку. Поэтому все вызовы `extract_info` / `probe_size`
 Instagram идут с `ignore_no_formats_error=True`, фото-элемент получает
-URL из `thumbnail` (самый крупный кандидат `image_versions2`), а
-`download()` перед скачиванием заново извлекает пост (подписанные
-URL CDN истекают). `HttpImageFetcher`
+URL из `thumbnail` (самый крупный кандидат `image_versions2`).
+`download()` получает `MediaInfo` задачи (`info=`) и для фото-опций
+качает картинки по уже известным URL CDN, не обращаясь к
+`www.instagram.com`; если URL не отвечает (подписи истекают), пост
+извлекается заново. Воркер берёт `MediaInfo` из свежей записи
+`media_cache` (её пишет бот при анализе) и зовёт `get_info` только при
+промахе: Instagram придерживает соединения с IP, который часто
+запрашивает метаданные, и повторный запрос через секунды после бота
+заканчивался тайм-аутом. `HttpImageFetcher`
 (`app/infrastructure/downloader/http_image.py`) проверяет хост по тому же
 allowlist, что и yt-dlp (включая каждый редирект), принимает только
 `image/*`, ограничивает размер `MAX_FILE_SIZE_MB` и использует

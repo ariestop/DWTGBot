@@ -159,7 +159,9 @@ class YouTubeProvider(BaseProvider):
         *,
         target_dir: str,
         on_progress: Callable[[float], None] | None = None,
+        info: MediaInfo | None = None,
     ) -> DownloadResult:
+        del info
         out_dir = self._target_path(target_dir)
 
         if option.kind is MediaKind.AUDIO:

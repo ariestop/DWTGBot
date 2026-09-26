@@ -17,6 +17,9 @@ from app.infrastructure.cache.redis_job_cancellation import RedisJobCancellation
 from app.infrastructure.cache.redis_post_text_store import RedisPostTextStore
 from app.infrastructure.cache.redis_progress_reporter import RedisProgressReporter
 from app.infrastructure.db.repositories.jobs_repo_impl import SqlAlchemyJobsRepository
+from app.infrastructure.db.repositories.media_cache_repo_impl import (
+    SqlAlchemyMediaCacheRepository,
+)
 from app.infrastructure.db.repositories.temp_links_repo_impl import SqlAlchemyTempLinksRepository
 from app.infrastructure.storage.local_storage import LocalStorage
 from app.infrastructure.telegram.sender import TelegramSender
@@ -117,6 +120,7 @@ def build_worker(settings: Settings) -> WorkerComposition:
         metrics=job_metrics,
         progress_reporter=progress_reporter,
         cancellation=cancellation,
+        media_cache=SqlAlchemyMediaCacheRepository(core.sessionmaker),
     )
     return WorkerComposition(
         core=core,

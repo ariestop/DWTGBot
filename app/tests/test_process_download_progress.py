@@ -131,8 +131,9 @@ class _FakeProvider:
         *,
         target_dir: str,
         on_progress: Callable[[float], None] | None = None,
+        info: MediaInfo | None = None,
     ) -> DownloadResult:
-        del url, option, target_dir
+        del url, option, target_dir, info
         # Simulate yt-dlp calling progress hook 3 times.
         if on_progress is not None:
             for p in (0.0, 50.0, 100.0):
@@ -189,6 +190,9 @@ class _FakeStorage:
         p = Path(self._tmp) / str(job_id)
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    def reset_job_dir(self, job_id: int) -> Any:
+        return self.job_dir(job_id)
 
     def assert_free_space(self) -> None:
         return None

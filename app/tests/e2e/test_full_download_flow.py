@@ -250,8 +250,9 @@ class _FakeYtDlpProvider:
         *,
         target_dir: str,
         on_progress: Any = None,
+        info: MediaInfo | None = None,
     ) -> DownloadResult:
-        del url, option
+        del url, option, info
         if self._mode == "timeout":
             raise DownloadTimeoutError("fake yt-dlp timed out")
 

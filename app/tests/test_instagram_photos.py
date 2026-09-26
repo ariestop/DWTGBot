@@ -10,6 +10,7 @@ import pytest
 from app.config import get_settings
 from app.domain.entities.media_info import DownloadOption
 from app.domain.enums import MediaKind
+from app.exceptions import DownloadError
 from app.infrastructure.providers import instagram as instagram_module
 from app.infrastructure.providers.instagram import InstagramProvider
 from app.infrastructure.storage.local_storage import LocalStorage
@@ -169,6 +170,58 @@ async def test_carousel_video_only_option_skips_photos(tmp_path: Path) -> None:
     assert images.calls == []
     assert [(call or {}).get("playlist_items") for call in ytdlp.download_calls] == ["2"]
     assert [Path(f).name for f in result.files] == ["02_vid.mp4"]
+
+
+@pytest.mark.asyncio
+async def test_photo_downloads_from_analysed_info_without_extraction(tmp_path: Path) -> None:
+    provider, ytdlp, images = _provider(_photo("DdrzVBqDScp"))
+    info = await provider.get_info("https://www.instagram.com/p/DdrzVBqDScp/")
+    ytdlp.extract_calls.clear()
+
+    result = await provider.download(
+        "https://www.instagram.com/p/DdrzVBqDScp/",
+        provider.default_option(info),
+        target_dir=str(tmp_path / "job_4"),
+        info=info,
+    )
+
+    assert ytdlp.extract_calls == []
+    assert images.calls == [(_IMG.format("DdrzVBqDScp"), "DdrzVBqDScp")]
+    assert [Path(f).name for f in result.files] == ["DdrzVBqDScp.jpg"]
+
+
+class _ExpiredThenOkImages(_FakeImages):
+    async def fetch(self, url: str, *, target_dir: Path, stem: str) -> Path:
+        if not self.calls:
+            self.calls.append((url, stem))
+            raise DownloadError("Image download failed: 403 Forbidden")
+        return await super().fetch(url, target_dir=target_dir, stem=stem)
+
+
+@pytest.mark.asyncio
+async def test_expired_analysed_image_url_falls_back_to_fresh_extraction(tmp_path: Path) -> None:
+    settings = get_settings()
+    ytdlp = _FakeYtDlp(_photo("DdrzVBqDScp"))
+    images = _ExpiredThenOkImages()
+    provider = InstagramProvider(
+        settings=settings,
+        ytdlp=ytdlp,  # type: ignore[arg-type]
+        storage=LocalStorage(settings),
+        image_fetcher=images,  # type: ignore[arg-type]
+    )
+    info = await provider.get_info("https://www.instagram.com/p/DdrzVBqDScp/")
+    ytdlp.extract_calls.clear()
+
+    result = await provider.download(
+        "https://www.instagram.com/p/DdrzVBqDScp/",
+        provider.default_option(info),
+        target_dir=str(tmp_path / "job_5"),
+        info=info,
+    )
+
+    assert len(ytdlp.extract_calls) == 1
+    assert len(images.calls) == 2
+    assert [Path(f).name for f in result.files] == ["DdrzVBqDScp.jpg"]
 
 
 @pytest.mark.asyncio
