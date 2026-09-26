@@ -234,7 +234,12 @@ the provider does **not** unlink files.
   Instagram now serves the login wall to non-residential egress IPs.
   Missing file → provider logs `instagram_cookiefile_missing` and falls
   through to anonymous fetch (which usually surfaces `MediaPrivateError`
-  to the user). Setup: [`20-deployment.md` §5.1.2](20-deployment.md);
+  to the user). A session Instagram rejects (logged-in API answers HTTP
+  400 or stalls until the 30 s socket timeout) → provider logs
+  `instagram_cookies_rejected`, retries the same call anonymously and
+  stops sending cookies for 10 minutes (`_COOKIES_SUSPEND_S`). Only bare
+  `DownloadError` / `ProviderError` trigger this; private / not-found /
+  rate-limit errors do not. Setup: [`20-deployment.md` §5.1.2](20-deployment.md);
   rotation: [`24-runbooks.md` §5.4 step 4](24-runbooks.md).
 - **Carousels**: `download()` produces multiple files; `DownloadResult.kind`
   is `MediaKind.GALLERY`.

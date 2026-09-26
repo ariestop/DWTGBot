@@ -12,6 +12,16 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — a rejected Instagram session broke every Instagram link
+
+With `INSTAGRAM_COOKIES_FILE` set, yt-dlp calls Instagram's logged-in
+API; for a session Instagram no longer accepts it answered HTTP 400 or
+stalled until the 30 s socket timeout, and yt-dlp falls back to
+anonymous extraction only on a login redirect. Every link failed with
+"Не удалось скачать файл". `InstagramProvider` now retries such a
+generic failure without cookies, logs `instagram_cookies_rejected` and
+skips cookies for 10 minutes.
+
 ### Fixed — upstream rate-limits reported as a generic or "private" failure
 
 `classify_error` now maps throttle-shaped yt-dlp errors (HTTP 429,
