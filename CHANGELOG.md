@@ -12,6 +12,20 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — Instagram photo posts failed with "Не удалось скачать файл"
+
+yt-dlp has no formats for Instagram photos and raised "There is no
+video in this post", so every photo post (and every carousel with a
+photo) failed at analysis. The bare `DownloadError` also tripped the
+rejected-cookies fallback and suspended `INSTAGRAM_COOKIES_FILE` for
+10 minutes for all users. Instagram calls now pass
+`ignore_no_formats_error`, photo items resolve to their largest
+`thumbnail`, and `download()` fetches them from the CDN with the new
+`HttpImageFetcher` (host allowlist on every redirect, `image/*` only,
+`MAX_FILE_SIZE_MB` cap); yt-dlp downloads only the video positions of a
+carousel. Photo sizes are probed with HEAD. Carousel files are now named
+`NN_<item_id>.<ext>` so the album keeps post order.
+
 ### Fixed — Instagram reels rejected with "Не удалось заранее определить размер файла"
 
 Anonymous Instagram extraction returns DASH formats without `filesize`

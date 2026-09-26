@@ -157,13 +157,23 @@ ffmpeg encodes to MP3 at the user-selected bitrate (192 kbps default).
 
 ## 4. Format-spec patterns (Instagram)
 
-Instagram is simpler — yt-dlp does most of the work:
-
-| Option kind | Format spec | Postprocessors |
+| Option kind | Как скачивается | Postprocessors |
 |---|---|---|
-| Video | `best` | none |
-| Image | yt-dlp returns image directly | none |
-| Carousel (gallery) | iterate entries; same per-item logic | none |
+| Video | yt-dlp, `bestvideo*+bestaudio/best` | forced mobile transcode |
+| Image | прямой GET картинки с CDN (`HttpImageFetcher`) | none |
+| Carousel (gallery) | фото — прямой GET, видео — yt-dlp с `playlist_items` = позиции видео | transcode только для видео |
+
+Для фото у yt-dlp нет форматов: без `ignore_no_formats_error` он
+отвечает «There is no video in this post», а с флагом всё равно не
+скачивает картинку. Поэтому все вызовы `extract_info` / `probe_size`
+Instagram идут с `ignore_no_formats_error=True`, фото-элемент получает
+URL из `thumbnail` (самый крупный кандидат `image_versions2`), а
+`download()` перед скачиванием заново извлекает пост (подписанные
+URL CDN истекают). `HttpImageFetcher`
+(`app/infrastructure/downloader/http_image.py`) проверяет хост по тому же
+allowlist, что и yt-dlp (включая каждый редирект), принимает только
+`image/*`, ограничивает размер `MAX_FILE_SIZE_MB` и использует
+`HTTPS_PROXY_URL`. Размер фото до скачивания — HEAD `Content-Length`.
 
 The provider may pass `INSTAGRAM_COOKIES_FILE` via `extra_opts={"cookiefile": ...}`
 to access auth-required posts. See [`13-config-and-env.md`](13-config-and-env.md).
@@ -245,8 +255,9 @@ $STORAGE_PATH/
 └── <job_id>/                        # prepared by LocalStorage
     ├── <title> [<media_id>].mp4     # YouTube video
     ├── <title> [<media_id>].mp3     # YouTube audio (alt)
-    ├── <title> [<media_id>].jpg     # Instagram image
-    └── <title>_carousel_NN.<ext>    # Instagram carousel items
+    ├── <title> [<media_id>].mp4     # Instagram reel / video post
+    ├── <media_id>.jpg               # Instagram photo post (HttpImageFetcher)
+    └── NN_<item_id>.<ext>           # Instagram carousel item, NN = позиция в посте
 ```
 
 Rules:

@@ -241,6 +241,10 @@ the provider does **not** unlink files.
   `DownloadError` / `ProviderError` trigger this; private / not-found /
   rate-limit errors do not. Setup: [`20-deployment.md` §5.1.2](20-deployment.md);
   rotation: [`24-runbooks.md` §5.4 step 4](24-runbooks.md).
+- **Фото**: yt-dlp не скачивает картинки, поэтому фото-посты и
+  фото-элементы каруселей качаются напрямую с CDN через
+  `HttpImageFetcher`, а yt-dlp получает только позиции видео
+  (`playlist_items`). Подробно: [`08-download-pipeline.md`](08-download-pipeline.md) §4.
 - **Carousels**: `download()` produces multiple files; `DownloadResult.kind`
   is `MediaKind.GALLERY`.
 - **Stories/Reels**: handled as videos.

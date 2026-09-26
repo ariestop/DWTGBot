@@ -14,16 +14,24 @@ Galleries are downloaded into a per-job directory, then either sent
 file-by-file (handled in delivery service) or packaged as one ZIP if there
 are several files — that decision is made by the delivery service based on
 size and Telegram limits.
+
+yt-dlp has no formats for photos: it raises "There is no video in this
+post" unless ``ignore_no_formats_error`` is set, and even then it cannot
+download them. Photo items therefore resolve to their best
+``thumbnail`` (the largest ``image_versions2`` candidate) and are fetched
+from the CDN by ``HttpImageFetcher``; only video items go through yt-dlp.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from app.config import Settings
 from app.domain.entities.media_info import (
     DownloadOption,
     DownloadResult,
@@ -33,11 +41,20 @@ from app.domain.entities.media_info import (
 from app.domain.enums import MediaKind, Platform
 from app.domain.text_utils import truncate_description
 from app.exceptions import DownloadError, ProviderError
+from app.infrastructure.downloader.http_image import HttpImageFetcher
 from app.infrastructure.downloader.http_probe import head_content_length
+from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
 from app.infrastructure.providers.base import BaseProvider
+from app.infrastructure.storage.local_storage import LocalStorage
 from app.logging_config import get_logger
 
 _logger = get_logger(__name__)
+
+_VIDEO_FORMAT = "bestvideo*+bestaudio/best"
+_EXTRACT_OPTS: dict[str, Any] = {"ignore_no_formats_error": True}
+# Position-first names keep a mixed carousel in post order once yt-dlp's
+# videos and the fetched photos share the job directory.
+_GALLERY_OUTTMPL = "%(playlist_index)02d_%(id)s.%(ext)s"
 
 # How long to stop sending cookies after Instagram rejected the session.
 # A flagged session answers the logged-in API with HTTP 400 or never
@@ -52,10 +69,23 @@ class InstagramProvider(BaseProvider):
 
     _cookies_suspended_until: float = 0.0
 
-    async def get_info(self, url: str) -> MediaInfo:
-        raw = await self._with_cookie_fallback(
-            lambda opts: self._ytdlp.extract_info(url, extra_opts=opts), None
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        ytdlp: YtDlpRunner,
+        storage: LocalStorage,
+        image_fetcher: HttpImageFetcher | None = None,
+    ) -> None:
+        super().__init__(settings=settings, ytdlp=ytdlp, storage=storage)
+        self._images = image_fetcher or HttpImageFetcher(
+            proxy_url=settings.HTTPS_PROXY_URL,
+            max_bytes=settings.max_file_size_bytes,
+            headers={"Referer": "https://www.instagram.com/"},
         )
+
+    async def get_info(self, url: str) -> MediaInfo:
+        raw = await self._extract(url)
 
         entries = raw.get("entries")
         if entries:
@@ -150,16 +180,21 @@ class InstagramProvider(BaseProvider):
         info: MediaInfo,
         option: DownloadOption,
     ) -> int | None:
-        playlist_items = self._compute_playlist_items(option, url=url)
-        probed = await self._with_cookie_fallback(
-            lambda opts: self._ytdlp.probe_size(
-                url, format_spec="bestvideo*+bestaudio/best", extra_opts=opts
-            ),
-            {"playlist_items": playlist_items} if playlist_items else None,
-        )
-        if probed is not None:
-            return probed
-        urls = [item.url for item in self._items_for_option(info, option) if item.url]
+        items = self._items_for_option(info, option)
+        if not items or any(item.kind is not MediaKind.PHOTO for item in items):
+            playlist_items = self._compute_playlist_items(option, url=url)
+            extra: dict[str, Any] = dict(_EXTRACT_OPTS)
+            if playlist_items:
+                extra["playlist_items"] = playlist_items
+            probed = await self._with_cookie_fallback(
+                lambda opts: self._ytdlp.probe_size(
+                    url, format_spec=_VIDEO_FORMAT, extra_opts=opts
+                ),
+                extra,
+            )
+            if probed is not None:
+                return probed
+        urls = [item.url for item in items if item.url]
         if not urls:
             return None
         lengths = await asyncio.gather(
@@ -187,26 +222,10 @@ class InstagramProvider(BaseProvider):
     ) -> DownloadResult:
         out_dir = self._target_path(target_dir)
 
-        playlist_items = self._compute_playlist_items(option, url=url)
-        # Instagram's MP4s routinely pass the ffprobe "looks H.264/AAC"
-        # check yet still freeze on mobile Telegram -- typical culprits
-        # are fragmented/segmented mp4 (pulled from a DASH manifest),
-        # High@5.x profile, or unusual GOP spacing. A forced transcode
-        # flattens the output to a known-good H.264 Main@4.0 mp4 that
-        # mobile hardware decoders handle reliably. The slow path is
-        # only invoked for the video items inside the batch.
-        files = await self._with_cookie_fallback(
-            lambda opts: self._ytdlp.download(
-                url,
-                format_spec="bestvideo*+bestaudio/best",
-                target_dir=out_dir,
-                merge_output_format="mp4",
-                extra_opts=opts,
-                force_transcode=True,
-                on_progress=on_progress,
-            ),
-            {"playlist_items": playlist_items} if playlist_items else None,
-        )
+        if option.key == "single_video":
+            files = await self._download_videos(url, out_dir, None, on_progress=on_progress)
+        else:
+            files = await self._download_post(url, option, out_dir, on_progress=on_progress)
 
         if option.kind is MediaKind.PHOTO:
             files = [f for f in files if _looks_like_image(f)]
@@ -222,6 +241,79 @@ class InstagramProvider(BaseProvider):
             kind=kind_out,
             done_event="instagram_download_done",
             empty_error="Instagram download produced no matching files",
+        )
+
+    async def _download_post(
+        self,
+        url: str,
+        option: DownloadOption,
+        out_dir: Path,
+        *,
+        on_progress: Callable[[float], None] | None,
+    ) -> list[Path]:
+        """Photos straight from the CDN, videos through yt-dlp by position.
+
+        Re-extracts instead of reusing ``MediaInfo.items``: CDN image URLs
+        are signed and may have expired since the link was analysed.
+        """
+        raw = await self._extract(url)
+        is_gallery = bool(raw.get("entries"))
+        entries: list[dict[str, Any]] = raw.get("entries") or [raw]
+        photos: list[tuple[int, dict[str, Any], str]] = []
+        video_positions: list[int] = []
+        for position, entry in enumerate(entries, start=1):
+            item = _item_from_entry(entry)
+            if item.kind is MediaKind.PHOTO:
+                if option.kind is not MediaKind.VIDEO:
+                    photos.append((position, entry, item.url))
+            elif option.kind is not MediaKind.PHOTO:
+                video_positions.append(position)
+
+        files: list[Path] = []
+        # Videos first: the runner returns every file in the job directory.
+        if video_positions:
+            extra: dict[str, Any] | None = None
+            if is_gallery:
+                extra = {
+                    "playlist_items": ",".join(str(p) for p in video_positions),
+                    "outtmpl": str(out_dir / _GALLERY_OUTTMPL),
+                }
+            files.extend(await self._download_videos(url, out_dir, extra, on_progress=on_progress))
+        for position, entry, image_url in photos:
+            stem = f"{position:02d}_{_safe_id(entry)}" if is_gallery else _safe_id(entry)
+            files.append(await self._images.fetch(image_url, target_dir=out_dir, stem=stem))
+        return sorted(files)
+
+    async def _download_videos(
+        self,
+        url: str,
+        out_dir: Path,
+        extra_opts: dict[str, Any] | None,
+        *,
+        on_progress: Callable[[float], None] | None,
+    ) -> list[Path]:
+        # Instagram's MP4s routinely pass the ffprobe "looks H.264/AAC"
+        # check yet still freeze on mobile Telegram -- typical culprits
+        # are fragmented/segmented mp4 (pulled from a DASH manifest),
+        # High@5.x profile, or unusual GOP spacing. A forced transcode
+        # flattens the output to a known-good H.264 Main@4.0 mp4 that
+        # mobile hardware decoders handle reliably.
+        return await self._with_cookie_fallback(
+            lambda opts: self._ytdlp.download(
+                url,
+                format_spec=_VIDEO_FORMAT,
+                target_dir=out_dir,
+                merge_output_format="mp4",
+                extra_opts=opts,
+                force_transcode=True,
+                on_progress=on_progress,
+            ),
+            extra_opts,
+        )
+
+    async def _extract(self, url: str) -> dict[str, Any]:
+        return await self._with_cookie_fallback(
+            lambda opts: self._ytdlp.extract_info(url, extra_opts=opts), dict(_EXTRACT_OPTS)
         )
 
     def _compute_playlist_items(self, option: DownloadOption, *, url: str) -> str | None:
@@ -247,8 +339,8 @@ class InstagramProvider(BaseProvider):
 
     async def _with_cookie_fallback[T](
         self,
-        call: Callable[[dict[str, str] | None], Awaitable[T]],
-        extra_opts: dict[str, str] | None,
+        call: Callable[[dict[str, Any] | None], Awaitable[T]],
+        extra_opts: dict[str, Any] | None,
     ) -> T:
         """Run ``call`` with cookies; on a generic failure retry anonymously.
 
@@ -278,18 +370,41 @@ class InstagramProvider(BaseProvider):
 
 
 def _item_from_entry(entry: dict[str, Any]) -> MediaItem:
-    kind = (
-        MediaKind.VIDEO
-        if entry.get("vcodec") not in (None, "none") or entry.get("ext") in {"mp4", "mov", "webm"}
-        else MediaKind.PHOTO
+    is_video = (
+        bool(entry.get("formats"))
+        or entry.get("vcodec") not in (None, "none")
+        or entry.get("ext") in {"mp4", "mov", "webm"}
     )
+    if is_video:
+        kind = MediaKind.VIDEO
+        url = str(entry.get("url") or entry.get("webpage_url") or "")
+    else:
+        kind = MediaKind.PHOTO
+        url = _best_image_url(entry)
     return MediaItem(
         kind=kind,
-        url=str(entry.get("url") or entry.get("webpage_url") or ""),
+        url=url,
         width=entry.get("width"),
         height=entry.get("height"),
         duration_sec=float(entry["duration"]) if entry.get("duration") else None,
     )
+
+
+def _best_image_url(entry: dict[str, Any]) -> str:
+    """yt-dlp's ``thumbnail`` is its top-ranked candidate, i.e. the largest."""
+    thumbnail = entry.get("thumbnail")
+    if isinstance(thumbnail, str) and thumbnail:
+        return thumbnail
+    thumbnails = entry.get("thumbnails") or []
+    for candidate in reversed(thumbnails):
+        candidate_url = candidate.get("url") if isinstance(candidate, dict) else None
+        if isinstance(candidate_url, str) and candidate_url:
+            return candidate_url
+    return ""
+
+
+def _safe_id(entry: dict[str, Any]) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "", str(entry.get("id") or "")) or "photo"
 
 
 def _items_from_entries(
