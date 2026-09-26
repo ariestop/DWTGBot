@@ -12,6 +12,15 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — Instagram reels rejected with "Не удалось заранее определить размер файла"
+
+Anonymous Instagram extraction returns DASH formats without `filesize`
+or `duration`, so `probe_size` returned `None` and the worker refused
+the video with `SizeUnknownError`; the provider's HEAD fallback probed
+the post page instead of the media. `YtDlpRunner.probe_size` now HEADs
+the selected format URLs on the CDN and sums `Content-Length`
+(`http_probe.head_content_length`, shared with the Instagram provider).
+
 ### Fixed — a rejected Instagram session broke every Instagram link
 
 With `INSTAGRAM_COOKIES_FILE` set, yt-dlp calls Instagram's logged-in

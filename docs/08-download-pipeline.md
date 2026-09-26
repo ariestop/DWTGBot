@@ -45,7 +45,8 @@ Component responsibilities:
 |---|---|
 | `ytdlp_runner.py` | `YtDlpRunner` — асинхронный фасад: `to_thread`, circuit breaker, таймаут загрузки, общий `_guarded` для всех вызовов |
 | `ytdlp_opts.py` | чистые сборщики опций (`extract_opts` / `probe_opts` / `download_opts`), `apply_source_guards`, `apply_proxy`, `host_of`, хук прогресса (`ProgressEvent` TypedDict) |
-| `ytdlp_results.py` | `classify_error`, `looks_like_throttle`, `extract_known_size` |
+| `ytdlp_results.py` | `classify_error`, `looks_like_throttle`, `extract_known_size`, `selected_media_urls` |
+| `http_probe.py` | `head_content_length` — HEAD по разрешённому хосту (allowlist + `HTTPS_PROXY_URL`) |
 | `mobile_compat.py` | пост-обработка MP4 для мобильного Telegram через ffprobe/ffmpeg (§5) |
 
 ```python
@@ -70,6 +71,16 @@ class YtDlpRunner:
   (`allowed_extractors`, `match_filter`) and proxy wiring.
 - Runs `ydl.sanitize_info(...)` so what we cache is JSON-safe.
 - All exceptions normalised through `classify_error(...)` (`ytdlp_results.py`).
+
+### `probe_size`
+- Same extraction as `extract_info` with the requested `format_spec`;
+  returns `extract_known_size(...)` — the sum of `filesize` /
+  `filesize_approx` of the selected formats.
+- When yt-dlp reports no size (Instagram's anonymous DASH formats carry
+  neither `filesize` nor `duration`), it HEADs the selected format URLs
+  (`selected_media_urls`) and sums `Content-Length`; logs
+  `ytdlp_size_from_head`. Any missing length → `None`, and the worker
+  rejects a video of unknown size with `SizeUnknownError`.
 
 ### `download`
 - Hard-coded options:
