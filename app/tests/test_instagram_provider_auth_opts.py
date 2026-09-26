@@ -111,7 +111,10 @@ async def test_get_info_uses_instagram_cookiefile(
 
     await provider.get_info("https://instagram.com/reel/ig_1/")
 
-    assert fake.extract_calls[0]["extra_opts"] == {"cookiefile": str(cookie_path)}
+    assert fake.extract_calls[0]["extra_opts"] == {
+        "cookiefile": str(cookie_path),
+        "ignore_no_formats_error": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -132,7 +135,7 @@ async def test_probe_size_uses_instagram_cookiefile(
     )
 
     assert size == 123
-    assert fake.probe_calls[0]["extra_opts"] == {"cookiefile": str(cookie_path)}
+    assert fake.probe_calls[0]["extra_opts"]["cookiefile"] == str(cookie_path)
 
 
 @pytest.mark.asyncio
@@ -168,7 +171,7 @@ async def test_cookiefile_missing_falls_back_to_no_auth(monkeypatch: pytest.Monk
 
     await provider.get_info("https://instagram.com/reel/ig_1/")
 
-    assert fake.extract_calls[0]["extra_opts"] is None
+    assert fake.extract_calls[0]["extra_opts"] == {"ignore_no_formats_error": True}
 
 
 class _RejectingCookiesYtDlp(_FakeYtDlp):
@@ -214,8 +217,8 @@ async def test_rejected_cookies_fall_back_to_anonymous_and_are_suspended(
     await provider.get_info("https://instagram.com/reel/ig_1/")
 
     assert info.media_id == "ig_1"
-    assert [call["extra_opts"] for call in fake.extract_calls] == [
-        {"cookiefile": str(tmp_path / "ig.cookies.txt")},
+    assert [call["extra_opts"].get("cookiefile") for call in fake.extract_calls] == [
+        str(tmp_path / "ig.cookies.txt"),
         None,
         None,
     ]

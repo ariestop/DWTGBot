@@ -6,6 +6,7 @@ import mimetypes
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 from app.config import Settings
 from app.domain.entities.media_info import (
@@ -94,8 +95,8 @@ class BaseProvider(ABC):
 
     @staticmethod
     def _merge_extra_opts(
-        extra_opts: Mapping[str, str] | None, auth_opts: Mapping[str, str] | None
-    ) -> dict[str, str] | None:
+        extra_opts: Mapping[str, Any] | None, auth_opts: Mapping[str, str] | None
+    ) -> dict[str, Any] | None:
         """Auth options win over per-call options on key clashes."""
         if extra_opts is None and auth_opts is None:
             return None
