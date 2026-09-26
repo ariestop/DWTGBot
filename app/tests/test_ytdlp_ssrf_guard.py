@@ -10,7 +10,7 @@ import pytest
 from yt_dlp.utils import DownloadError as YtDlpDownloadError
 
 from app.config import Settings
-from app.exceptions import MediaPrivateError
+from app.exceptions import DownloadError, MediaPrivateError, UpstreamUnavailableError
 from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
 from app.utils.url import is_allowed_host
 
@@ -124,3 +124,25 @@ def test_age_gate_error_is_classified_as_private() -> None:
     classified = YtDlpRunner._classify(exc)
 
     assert isinstance(classified, MediaPrivateError)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "[Instagram] DdtwUhXxEV3: The webpage request was redirected to the login page. "
+        "You have exceeded the rate-limit for accessing posts anonymously. "
+        "Use --cookies-from-browser or --cookies for the authentication.",
+        "[Instagram] abc: Unable to download webpage: HTTP Error 429: Too Many Requests",
+    ],
+)
+def test_throttle_error_is_classified_as_upstream_unavailable(message: str) -> None:
+    classified = YtDlpRunner._classify(YtDlpDownloadError(message))
+
+    assert isinstance(classified, UpstreamUnavailableError)
+    assert "временно ограничивает" in classified.user_message
+
+
+def test_unknown_error_stays_generic_download_error() -> None:
+    classified = YtDlpRunner._classify(YtDlpDownloadError("Unable to extract video data"))
+
+    assert type(classified) is DownloadError

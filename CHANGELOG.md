@@ -12,6 +12,15 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — upstream rate-limits reported as a generic or "private" failure
+
+`classify_error` now maps throttle-shaped yt-dlp errors (HTTP 429,
+"rate-limit", "too many requests") to `UpstreamUnavailableError`
+("Источник временно ограничивает скачивание. Попробуйте через несколько
+минут.") before checking the private markers. Previously a 429 surfaced
+as "Не удалось скачать файл", and Instagram's anonymous rate-limit
+redirect as "Контент приватный". See `docs/08-download-pipeline.md` §2.
+
 ### Fixed — large-file temp links break playback and "expire" after one tap
 
 Every request to `/d/{token}` spent a `downloads_count` slot, including

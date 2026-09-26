@@ -282,7 +282,7 @@ that the bot can render meaningful messages.
 | URL is well-formed but yt-dlp says "Unsupported URL" | `UnsupportedPlatformError` | yt-dlp `UnsupportedError` |
 | Geo-block, private, removed | `MediaUnavailableError` | yt-dlp `DownloadError` with specific phrases |
 | Network failures (DNS, TCP timeout) | `NetworkError` (subclass of `ProviderError`) | `aiohttp.ClientError`, `socket.gaierror` |
-| Rate limit (429) | `RateLimitError` (subclass of `ProviderError`) | yt-dlp HTTP 429 |
+| Rate limit (429, "rate-limit") | `UpstreamUnavailableError` (subclass of `DownloadError`) | yt-dlp HTTP 429 / Instagram anonymous rate-limit |
 | Anything else | `ProviderError("yt-dlp failed: ...")` | catch-all |
 
 The provider must **not** swallow errors. If unsure, escalate to

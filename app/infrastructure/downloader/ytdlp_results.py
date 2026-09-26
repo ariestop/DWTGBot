@@ -7,7 +7,13 @@ from typing import Any
 
 from yt_dlp.utils import DownloadError as YtDlpDownloadError
 
-from app.exceptions import DownloadError, MediaNotFoundError, MediaPrivateError, ProviderError
+from app.exceptions import (
+    DownloadError,
+    MediaNotFoundError,
+    MediaPrivateError,
+    ProviderError,
+    UpstreamUnavailableError,
+)
 
 # Narrow on purpose: counting generic 5xx / network errors as throttles
 # would open the circuit breaker on unrelated blips.
@@ -38,6 +44,11 @@ def looks_like_throttle(exc: YtDlpDownloadError) -> bool:
 def classify_error(exc: YtDlpDownloadError) -> ProviderError | DownloadError:
     """Map a yt-dlp error onto the project's exception hierarchy."""
     msg = str(exc).lower()
+    # Before the private markers: Instagram's anonymous rate-limit answer
+    # ("redirected to the login page. You have exceeded the rate-limit...
+    # Use --cookies") is about our egress IP, not about the post.
+    if looks_like_throttle(exc):
+        return UpstreamUnavailableError(str(exc))
     if any(marker in msg for marker in _PRIVATE_MARKERS):
         return MediaPrivateError(str(exc))
     if any(marker in msg for marker in _NOT_FOUND_MARKERS):
