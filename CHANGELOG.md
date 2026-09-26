@@ -12,6 +12,16 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — deploys filled the disk with old release images
+
+Every deploy pulls new immutable `*-{bot,api,worker,backup}:sha-*`
+images and nothing removed the previous ones, so the host disk shrank
+with each release until `STORAGE_MIN_FREE_MB` made the worker reject
+every download with "Сервис временно перегружен (нет свободного места)".
+`deploy_update.sh` now removes old release images after a green
+healthcheck, keeping the images of the new release and of the release
+that ran before the deploy (rollback without a re-pull).
+
 ### Fixed — Instagram photo posts failed with "Не удалось скачать файл"
 
 yt-dlp has no formats for Instagram photos and raised "There is no

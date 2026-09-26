@@ -1094,6 +1094,12 @@ sudo bash deploy/scripts/deploy_update.sh nl2
    resolution are refreshed.
 8. Wait for healthchecks to report green; abort + log if anything stays
    `unhealthy` longer than the timeout.
+9. После успешного healthcheck удалить старые образы релизов
+   (`*-{bot,api,worker,backup}:sha-*`): остаются образы текущих
+   контейнеров и релиза, который работал до деплоя (для отката без
+   повторного pull). Без этого каждый деплой добавлял на диск новые
+   образы, пока `STORAGE_MIN_FREE_MB` не начинал отклонять все загрузки
+   («Сервис временно перегружен (нет свободного места)»).
 
 Idempotent and safe to re-run.
 

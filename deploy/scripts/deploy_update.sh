@@ -17,7 +17,8 @@
 #   6. (control plane) run alembic migrate one-shot
 #   7. (media plane: single / NL-2) restart nginx
 #   8. healthcheck
-#   9. on failure → print rollback hint
+#   9. remove old *:sha-* release images (keeps current + previous)
+#  10. on failure → print rollback hint
 # =====================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
@@ -121,9 +122,40 @@ ensure_secrets_dir() {
   done
 }
 
+PREVIOUS_IMAGES=()
+
+remember_previous_images() {
+  mapfile -t PREVIOUS_IMAGES < <(docker ps -a --filter "name=^dwtgbot_" --format '{{.Image}}' 2>/dev/null || true)
+}
+
 pull_images() {
   log_step "Pulling images"
   run_compose pull
+}
+
+# Every deploy pulls new immutable ``*-{bot,api,worker,backup}:sha-*``
+# images; left alone they fill the disk until STORAGE_MIN_FREE_MB makes
+# the worker refuse every download. Keeps images of existing containers
+# (the new release) and of the release that ran before this deploy, so
+# the rollback hint still works without a re-pull.
+prune_old_images() {
+  log_step "Pruning old release images"
+  local -A keep=()
+  local image removed=0
+  local current=()
+  mapfile -t current < <(docker ps -a --format '{{.Image}}' 2>/dev/null || true)
+  for image in "${current[@]}" "${PREVIOUS_IMAGES[@]}"; do
+    [[ -n "${image}" ]] && keep["${image}"]=1
+  done
+  while IFS= read -r image; do
+    [[ "${image}" =~ -(bot|api|worker|backup):sha-[0-9a-f]+$ ]] || continue
+    [[ -n "${keep[${image}]:-}" ]] && continue
+    if docker image rm "${image}" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+    fi
+  done < <(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)
+  docker image prune -f >/dev/null 2>&1 || true
+  log_ok "Removed ${removed} old image(s)"
 }
 
 apply() {
@@ -186,11 +218,13 @@ main() {
   ensure_secrets_dir
   validate_config
   pre_backup
+  remember_previous_images
   pull_images
   apply
   run_migrations
   restart_nginx_if_present
   verify
+  prune_old_images
   log_ok "Deploy ${TARGET} finished"
 }
 
