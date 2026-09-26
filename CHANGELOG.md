@@ -12,6 +12,28 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — worker jobs were never retried
+
+arq re-runs a job only when it raises `arq.Retry`, and it does not put
+`max_tries` into the per-job ctx. `process_download_job` re-raised the
+original exception and read `max_tries` from ctx, so the first attempt
+was always terminal: `JOB_MAX_RETRIES` was effectively 0 and any
+transient upstream stall reached the user as «Не удалось скачать файл».
+The task now raises `Retry(defer=20 s × attempt)` on non-final attempts,
+`on_startup` puts `max_tries` into ctx, the attempt number reaches the
+use case (a retry accepts its own `PROCESSING` row; attempt 1 still
+ignores replays) and the job directory is reset before each download.
+
+### Fixed — worker asked Instagram again right after the bot did
+
+Instagram stalls connections from an IP that requests post metadata in
+bursts; the worker's `get_info` seconds after the bot's analysis timed
+out (30 s read / TLS handshake), which also suspended the cookies. The
+worker now takes `MediaInfo` from a fresh `media_cache` row, and
+`Provider.download(..., info=)` lets Instagram fetch photos straight
+from the analysed CDN URLs (re-extracting only if they expired), so a
+photo job no longer touches `www.instagram.com` at all.
+
 ### Fixed — deploys filled the disk with old release images
 
 Every deploy pulls new immutable `*-{bot,api,worker,backup}:sha-*`

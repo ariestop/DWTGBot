@@ -225,6 +225,7 @@ One root cause looks like ten symptoms. Recognize the pattern by
 | Disk full on NL-2 | worker fails on download → ffmpeg fails → temp link writes fail → cleanup also fails |
 | yt-dlp upstream change (one platform) | spike of `<x>_classified_error` for that platform → workers seem busy → users on **other** platforms unaffected |
 | Worker hung on one job | repeated `Retry` for one job_id → queue grows → other users wait → arq finally times out the job |
+| Instagram придерживает IP хоста | `Read timed out` / `handshake operation timed out` на `www.instagram.com` → `instagram_cookies_rejected` → `job_will_retry` (20 с, 40 с) → «Не удалось скачать файл» после последней попытки. Фото из свежего `media_cache` при этом скачиваются (CDN — другой хост); видео и холодные ссылки ждут, пока Instagram отпустит IP, или нужен `HTTPS_PROXY_URL` |
 
 **Diagnosis tip:** sort log lines by `timestamp`, find the
 **earliest** ERROR/WARNING — that's usually the root.

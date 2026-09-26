@@ -41,6 +41,7 @@ _logger = get_logger(__name__)
 class ProcessDownloadInput:
     job_id: int
     correlation_id: str
+    attempt: int = 1
 
 
 class ProcessDownloadUseCase:
@@ -94,20 +95,24 @@ class ProcessDownloadUseCase:
             request_id=payload.correlation_id,
             platform=job.platform.value,
         ):
-            await self._run(job)
+            await self._run(job, attempt=payload.attempt)
 
-    async def _run(self, job: DownloadJob) -> None:
+    async def _run(self, job: DownloadJob, *, attempt: int = 1) -> None:
         # Monotonic clock — immune to wall-clock jumps from NTP. Used
         # for ``job_duration_seconds`` (ADR-0007 §2.1, A4/A5 SLO).
         started_monotonic = time.monotonic()
 
-        if self._guard_replay(job):
-            return
-
-        transitioned = await self._transition_to(job, JobStatus.PROCESSING, ReasonClass.OK)
-        if transitioned is None:
-            return
-        job = transitioned
+        if attempt > 1 and job.status is JobStatus.PROCESSING:
+            # arq retry of a transient failure: the row stayed PROCESSING
+            # on purpose (see docs/09-queue-and-workers.md §8).
+            _logger.info("job_retry_attempt", attempt=attempt)
+        else:
+            if self._guard_replay(job):
+                return
+            transitioned = await self._transition_to(job, JobStatus.PROCESSING, ReasonClass.OK)
+            if transitioned is None:
+                return
+            job = transitioned
 
         try:
             await self._download_and_deliver(job, started_monotonic=started_monotonic)
@@ -267,7 +272,7 @@ class ProcessDownloadUseCase:
         info: MediaInfo,
         option: DownloadOption,
     ) -> DownloadResult:
-        target = self._storage.job_dir(job.id or 0)
+        target = self._storage.reset_job_dir(job.id or 0)
         result = await provider.download(
             job.source_url,
             option,

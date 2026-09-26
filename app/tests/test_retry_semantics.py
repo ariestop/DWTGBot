@@ -21,6 +21,7 @@ recover, and SLO A2 (failure rate) would silently under-count.
 from __future__ import annotations
 
 import pytest
+from arq import Retry
 
 from app.application.use_cases.process_download import (
     ProcessDownloadInput,
@@ -200,8 +201,10 @@ class _StubUseCase:
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
         self.terminal_calls: list[tuple[int, BaseException]] = []
+        self.payloads: list[ProcessDownloadInput] = []
 
-    async def execute(self, _payload):
+    async def execute(self, payload: ProcessDownloadInput):
+        self.payloads.append(payload)
         raise self._exc
 
     async def mark_terminally_failed(self, job_id: int, exc: BaseException) -> None:
@@ -242,11 +245,52 @@ async def test_task_does_not_mark_when_more_attempts_remain() -> None:
     metrics = _NoopMetrics()
     ctx = {"use_case": uc, "job_metrics": metrics, "job_try": 1, "max_tries": 3}
 
-    with pytest.raises(DownloadError):
+    with pytest.raises(Retry) as raised:
         await process_download_job(ctx, job_id=42, correlation_id="c")
 
+    assert raised.value.__cause__ is boom
     assert uc.terminal_calls == []
     assert metrics.active == 0
+
+
+@pytest.mark.asyncio
+async def test_task_retry_delay_grows_with_attempt_and_attempt_reaches_use_case() -> None:
+    """arq only re-runs a job that raised ``Retry``; the use case needs the
+    attempt number to accept its own PROCESSING row on the re-run."""
+    uc = _StubUseCase(DownloadError("transient"))
+    ctx = {"use_case": uc, "job_metrics": _NoopMetrics(), "job_try": 2, "max_tries": 3}
+
+    with pytest.raises(Retry) as raised:
+        await process_download_job(ctx, job_id=42, correlation_id="c")
+
+    assert raised.value.defer_score == 40_000
+    assert [payload.attempt for payload in uc.payloads] == [2]
+
+
+@pytest.mark.asyncio
+async def test_retry_attempt_runs_job_left_processing_by_previous_attempt() -> None:
+    job = _make_job()
+    job.mark_processing()
+    repo = _RecordingJobsRepo(job)
+    uc = _make_use_case(repo, DownloadError("still failing"))
+
+    with pytest.raises(DownloadError):
+        await uc.execute(ProcessDownloadInput(job_id=1, correlation_id="c", attempt=2))
+
+    assert repo.update_statuses == []
+
+
+@pytest.mark.asyncio
+async def test_first_attempt_still_ignores_job_already_processing() -> None:
+    """A duplicate delivery of attempt 1 must not run a job twice."""
+    job = _make_job()
+    job.mark_processing()
+    repo = _RecordingJobsRepo(job)
+    uc = _make_use_case(repo, AssertionError("provider must not be called"))
+
+    await uc.execute(ProcessDownloadInput(job_id=1, correlation_id="c"))
+
+    assert repo.update_statuses == []
 
 
 @pytest.mark.asyncio
