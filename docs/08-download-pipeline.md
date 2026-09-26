@@ -90,8 +90,11 @@ class YtDlpRunner:
 
 `classify_error` (`ytdlp_results.py`) maps yt-dlp's `DownloadError` to our hierarchy:
 
+Rows are checked top to bottom; the first match wins.
+
 | Substring in error message | Mapped exception |
 |---|---|
+| "http error 429" / "too many requests" / "rate limit" / "rate-limit" / "rate limited" | `UpstreamUnavailableError` ("Источник временно ограничивает скачивание…") |
 | "private" / "login required" / "sign in to confirm" / "use --cookies" | `MediaPrivateError` |
 | "not found" / "does not exist" / "removed" / "404" | `MediaNotFoundError` |
 | "unsupported url" | `ProviderError` |
@@ -102,7 +105,11 @@ re-raised after a full `_logger.exception(...)`: as
 `ProviderError("yt-dlp failure: ...")` from `extract_info`, as
 `DownloadError` from `probe_size` / `download`. Throttle-shaped messages
 (`HTTP Error 429`, "too many requests", "rate limit") also count towards
-the per-host circuit breaker (`looks_like_throttle`).
+the per-host circuit breaker (`looks_like_throttle`). They are checked
+before the private markers because Instagram answers an IP that hit its
+anonymous rate-limit with "redirected to the login page … exceeded the
+rate-limit … Use --cookies": the fix is cookies or another egress IP
+(`INSTAGRAM_COOKIES_FILE`, `HTTPS_PROXY_URL`), not a private post.
 
 ---
 

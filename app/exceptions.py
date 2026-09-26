@@ -151,7 +151,8 @@ class TooManyJobsError(AppError):
 
 class UpstreamUnavailableError(DownloadError):
     """Raised by the yt-dlp circuit breaker when the per-host breaker is
-    open. Inherits ``is_retryable=True`` from ``DownloadError`` so arq
+    open, and by ``classify_error`` for throttle-shaped yt-dlp errors
+    (HTTP 429, "rate-limit"). Inherits ``is_retryable=True`` from ``DownloadError`` so arq
     will reschedule — by the time the next attempt runs the breaker
     may already have closed."""
 
