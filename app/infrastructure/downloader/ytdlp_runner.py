@@ -39,12 +39,14 @@ from app.exceptions import (
 )
 from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.infrastructure.downloader import ytdlp_opts
+from app.infrastructure.downloader.http_probe import head_content_length
 from app.infrastructure.downloader.mobile_compat import make_mobile_compatible
 from app.infrastructure.downloader.ytdlp_opts import YtDlpOpts, host_of, make_progress_hook
 from app.infrastructure.downloader.ytdlp_results import (
     classify_error,
     extract_known_size,
     looks_like_throttle,
+    selected_media_urls,
 )
 from app.logging_config import get_logger
 
@@ -93,7 +95,25 @@ class YtDlpRunner:
             unexpected_event="ytdlp_probe_unexpected",
             wrap_unexpected=lambda exc: DownloadError(f"yt-dlp size probe failed: {exc}"),
         )
-        return extract_known_size(result)
+        known = extract_known_size(result)
+        if known is not None:
+            return known
+        return await self._head_probe_size(result)
+
+    async def _head_probe_size(self, result: dict[str, Any]) -> int | None:
+        """Sum ``Content-Length`` of the selected format URLs; any miss → ``None``."""
+        urls = selected_media_urls(result)
+        if not urls:
+            return None
+        proxy_url = (self._settings.HTTPS_PROXY_URL or "").strip() or None
+        lengths = await asyncio.gather(
+            *(asyncio.to_thread(head_content_length, u, proxy_url=proxy_url) for u in urls)
+        )
+        if any(length is None for length in lengths):
+            return None
+        total = sum(length for length in lengths if length is not None)
+        _logger.info("ytdlp_size_from_head", urls=len(urls), size_bytes=total)
+        return total
 
     async def download(
         self,

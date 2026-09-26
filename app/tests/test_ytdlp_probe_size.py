@@ -7,7 +7,8 @@ import shutil
 import pytest
 
 from app.config import Settings
-from app.infrastructure.downloader.ytdlp_results import extract_known_size
+from app.infrastructure.downloader import ytdlp_runner as runner_module
+from app.infrastructure.downloader.ytdlp_results import extract_known_size, selected_media_urls
 from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
 
 
@@ -63,3 +64,57 @@ async def test_probe_size_passes_format_and_guards(monkeypatch: pytest.MonkeyPat
     assert opts["simulate"] is True
     assert opts["allowed_extractors"] == ["Youtube", "YoutubeTab", "Instagram"]
     assert callable(opts["match_filter"])
+
+
+_V = "https://scontent-iad3-2.cdninstagram.com/v.mp4"
+_A = "https://scontent-iad6-1.cdninstagram.com/a.m4a"
+
+
+def test_selected_media_urls_uses_requested_formats() -> None:
+    payload = {"url": None, "requested_formats": [{"url": _V}, {"url": _A}]}
+
+    assert selected_media_urls(payload) == [_V, _A]
+
+
+def test_selected_media_urls_is_empty_when_an_entry_has_no_url() -> None:
+    payload = {"entries": [{"url": _V}, {"webpage_url": "https://instagram.com/p/x/"}]}
+
+    assert selected_media_urls(payload) == []
+
+
+@pytest.mark.asyncio
+async def test_probe_size_falls_back_to_head_of_selected_formats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Instagram's anonymous DASH formats carry no filesize/duration; the
+    CDN still answers HEAD with Content-Length."""
+    runner = _make_runner(monkeypatch)
+    payload = {
+        "requested_formats": [
+            {"url": _V, "filesize": None, "tbr": 1372.8},
+            {"url": _A, "filesize": None, "tbr": 68.3},
+        ]
+    }
+    monkeypatch.setattr(runner, "_extract_sync", staticmethod(lambda _u, _o: payload))
+    sizes = {_V: 5_811_387, _A: 289_965}
+    monkeypatch.setattr(runner_module, "head_content_length", lambda url, *, proxy_url: sizes[url])
+
+    size = await runner.probe_size("https://www.instagram.com/reel/x/", format_spec="best")
+
+    assert size == 5_811_387 + 289_965
+
+
+@pytest.mark.asyncio
+async def test_probe_size_head_fallback_unknown_when_any_head_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _make_runner(monkeypatch)
+    payload = {"requested_formats": [{"url": _V}, {"url": _A}]}
+    monkeypatch.setattr(runner, "_extract_sync", staticmethod(lambda _u, _o: payload))
+    monkeypatch.setattr(
+        runner_module,
+        "head_content_length",
+        lambda url, *, proxy_url: 100 if url == _V else None,
+    )
+
+    assert await runner.probe_size("https://www.instagram.com/reel/x/", format_spec="b") is None

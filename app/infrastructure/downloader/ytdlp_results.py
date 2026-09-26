@@ -76,6 +76,28 @@ def extract_known_size(payload: Mapping[str, Any]) -> int | None:
     return _single_known_size(entry)
 
 
+def selected_media_urls(payload: Mapping[str, Any]) -> list[str]:
+    """Direct URLs of the formats yt-dlp selected, across all entries.
+
+    Used to HEAD-probe sizes when the extractor reports none (Instagram's
+    anonymous DASH formats carry neither ``filesize`` nor ``duration``).
+    Returns ``[]`` when any entry has no direct URL, because a partial
+    sum would understate the size.
+    """
+    entries = payload.get("entries") or [payload]
+    urls: list[str] = []
+    for entry in entries:
+        selected = entry.get("requested_downloads") or entry.get("requested_formats")
+        if isinstance(selected, list) and selected:
+            entry_urls = [item.get("url") for item in selected]
+        else:
+            entry_urls = [entry.get("url")]
+        if not all(isinstance(u, str) and u for u in entry_urls):
+            return []
+        urls.extend(entry_urls)
+    return urls
+
+
 def _sum_known_sizes(items: Sequence[Mapping[str, Any]]) -> int | None:
     total = 0
     for item in items:

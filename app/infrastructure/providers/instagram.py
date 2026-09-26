@@ -23,8 +23,6 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import ProxyHandler, Request, build_opener
 
 from app.domain.entities.media_info import (
     DownloadOption,
@@ -35,9 +33,9 @@ from app.domain.entities.media_info import (
 from app.domain.enums import MediaKind, Platform
 from app.domain.text_utils import truncate_description
 from app.exceptions import DownloadError, ProviderError
+from app.infrastructure.downloader.http_probe import head_content_length
 from app.infrastructure.providers.base import BaseProvider
 from app.logging_config import get_logger
-from app.utils.url import is_allowed_host
 
 _logger = get_logger(__name__)
 
@@ -167,7 +165,7 @@ class InstagramProvider(BaseProvider):
         lengths = await asyncio.gather(
             *(
                 asyncio.to_thread(
-                    _head_content_length,
+                    head_content_length,
                     media_url,
                     proxy_url=(self._settings.HTTPS_PROXY_URL or "").strip() or None,
                 )
@@ -316,25 +314,3 @@ def _looks_like_image(path: Path) -> bool:
 
 def _looks_like_video(path: Path) -> bool:
     return path.suffix.lower() in _VIDEO_EXTS
-
-
-def _head_content_length(url: str, *, proxy_url: str | None) -> int | None:
-    if not is_allowed_host(url):
-        return None
-    handlers = []
-    if proxy_url:
-        handlers.append(ProxyHandler({"http": proxy_url, "https": proxy_url}))
-    opener = build_opener(*handlers)
-    request = Request(url, method="HEAD")  # noqa: S310 - host allowlist enforced above
-    try:
-        with opener.open(request, timeout=30) as response:
-            value = response.headers.get("Content-Length")
-    except (HTTPError, URLError, OSError, ValueError):
-        return None
-    if value is None:
-        return None
-    try:
-        parsed = int(value)
-    except ValueError:
-        return None
-    return parsed if parsed > 0 else None
