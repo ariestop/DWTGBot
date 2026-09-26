@@ -19,7 +19,8 @@ size and Telegram limits.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -33,19 +34,30 @@ from app.domain.entities.media_info import (
 )
 from app.domain.enums import MediaKind, Platform
 from app.domain.text_utils import truncate_description
-from app.exceptions import DownloadError
+from app.exceptions import DownloadError, ProviderError
 from app.infrastructure.providers.base import BaseProvider
 from app.logging_config import get_logger
 from app.utils.url import is_allowed_host
 
 _logger = get_logger(__name__)
 
+# How long to stop sending cookies after Instagram rejected the session.
+# A flagged session answers the logged-in API with HTTP 400 or never
+# answers at all (30 s socket timeout), and yt-dlp only falls back to
+# anonymous extraction on a login redirect — so without this every
+# request would fail or stall until the operator rotates the cookies.
+_COOKIES_SUSPEND_S = 600
+
 
 class InstagramProvider(BaseProvider):
     platform = Platform.INSTAGRAM
 
+    _cookies_suspended_until: float = 0.0
+
     async def get_info(self, url: str) -> MediaInfo:
-        raw = await self._ytdlp.extract_info(url, extra_opts=self._auth_extra_opts())
+        raw = await self._with_cookie_fallback(
+            lambda opts: self._ytdlp.extract_info(url, extra_opts=opts), None
+        )
 
         entries = raw.get("entries")
         if entries:
@@ -141,12 +153,11 @@ class InstagramProvider(BaseProvider):
         option: DownloadOption,
     ) -> int | None:
         playlist_items = self._compute_playlist_items(option, url=url)
-        probed = await self._ytdlp.probe_size(
-            url,
-            format_spec="bestvideo*+bestaudio/best",
-            extra_opts=self._with_auth_extra_opts(
-                {"playlist_items": playlist_items} if playlist_items else None
+        probed = await self._with_cookie_fallback(
+            lambda opts: self._ytdlp.probe_size(
+                url, format_spec="bestvideo*+bestaudio/best", extra_opts=opts
             ),
+            {"playlist_items": playlist_items} if playlist_items else None,
         )
         if probed is not None:
             return probed
@@ -186,16 +197,17 @@ class InstagramProvider(BaseProvider):
         # flattens the output to a known-good H.264 Main@4.0 mp4 that
         # mobile hardware decoders handle reliably. The slow path is
         # only invoked for the video items inside the batch.
-        files = await self._ytdlp.download(
-            url,
-            format_spec="bestvideo*+bestaudio/best",
-            target_dir=out_dir,
-            merge_output_format="mp4",
-            extra_opts=self._with_auth_extra_opts(
-                {"playlist_items": playlist_items} if playlist_items else None
+        files = await self._with_cookie_fallback(
+            lambda opts: self._ytdlp.download(
+                url,
+                format_spec="bestvideo*+bestaudio/best",
+                target_dir=out_dir,
+                merge_output_format="mp4",
+                extra_opts=opts,
+                force_transcode=True,
+                on_progress=on_progress,
             ),
-            force_transcode=True,
-            on_progress=on_progress,
+            {"playlist_items": playlist_items} if playlist_items else None,
         )
 
         if option.kind is MediaKind.PHOTO:
@@ -235,8 +247,33 @@ class InstagramProvider(BaseProvider):
             self._settings.INSTAGRAM_COOKIES_FILE, missing_event="instagram_cookiefile_missing"
         )
 
-    def _with_auth_extra_opts(self, extra_opts: dict[str, str] | None) -> dict[str, str] | None:
-        return self._merge_extra_opts(extra_opts, self._auth_extra_opts())
+    async def _with_cookie_fallback[T](
+        self,
+        call: Callable[[dict[str, str] | None], Awaitable[T]],
+        extra_opts: dict[str, str] | None,
+    ) -> T:
+        """Run ``call`` with cookies; on a generic failure retry anonymously.
+
+        Only the bare ``DownloadError`` / ``ProviderError`` classes trigger
+        the fallback: private / not-found / rate-limit / timeout subclasses
+        describe the post or our IP, not the session, and must not
+        suspend cookies for everyone else.
+        """
+        auth = None if time.monotonic() < self._cookies_suspended_until else self._auth_extra_opts()
+        if auth is None:
+            return await call(extra_opts)
+        try:
+            return await call(self._merge_extra_opts(extra_opts, auth))
+        except (DownloadError, ProviderError) as exc:
+            if type(exc) not in (DownloadError, ProviderError):
+                raise
+            self._cookies_suspended_until = time.monotonic() + _COOKIES_SUSPEND_S
+            _logger.warning(
+                "instagram_cookies_rejected",
+                error=str(exc),
+                suspend_s=_COOKIES_SUSPEND_S,
+            )
+        return await call(extra_opts)
 
 
 # -------------------------- helpers --------------------------

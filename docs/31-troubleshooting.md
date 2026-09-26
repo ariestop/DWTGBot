@@ -998,6 +998,7 @@ yt-dlp -j --no-warnings '<failing url>' 2>&1 | tail -30
 | `HTTP Error 403` | auth required / cookies expired | rotate cookies: `sudo bash deploy/scripts/cookies_setup.sh instagram` on every host running bot/worker (see [`24-runbooks.md` §5.4 step 4](24-runbooks.md)) |
 | `Private video` | user pasted a private link | clean user message |
 | `Sign in required to access this content` | age-gate / login required (Instagram public posts now hit this when the egress IP is bot-flagged) | install Instagram cookies with `deploy/scripts/cookies_setup.sh instagram` (single host, or NL-1 + NL-2); provider auto-passes them as `cookiefile` — see [`20-deployment.md`](20-deployment.md) §4a.5 |
+| bot/worker log: `instagram_cookies_rejected` (yt-dlp `Video info extraction failed: HTTP Error 400` or `Read timed out`) | Instagram rejects the session in the cookies file (checkpoint, login from another IP) | requests already fall back to anonymous for 10 min; log in to the account in a browser, clear any checkpoint, re-export and run `deploy/scripts/cookies_setup.sh instagram` |
 | worker log: `instagram_cookiefile_missing` | `INSTAGRAM_COOKIES_FILE` set but file absent inside the container | check the bind-mount (`docker exec dwtgbot_worker ls -l /srv/dwtgbot/secrets/`) and that `/srv/dwtgbot/secrets` is `root:1000 0750` and the file `root:1000 0660` (container runs as uid/gid 1000) |
 | `This live event will begin in N hours` | live stream | reject in `get_info` |
 | `DRM` | DRM-protected | reject in `get_info` |

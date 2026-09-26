@@ -467,6 +467,18 @@ docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env
 Cookies живут недели-месяцы. Когда Instagram снова начнёт отвечать «требует
 авторизации», повторите шаги 1–2 ([`24-runbooks.md`](24-runbooks.md) §5.4).
 
+Если сессию Instagram не принимает (например, вход был с другого IP и
+аккаунт ждёт подтверждения), API с cookies отвечает `HTTP Error 400` или
+молчит до таймаута. Бот тогда пишет в лог `instagram_cookies_rejected`,
+повторяет запрос анонимно и 10 минут не использует cookies. Увидели это
+событие — войдите в аккаунт в браузере, пройдите проверки и повторите
+шаги 1–2:
+
+```bash
+docker compose -f deploy/single/docker-compose.yml --env-file deploy/single/.env \
+  logs --since 1h bot worker | grep instagram_cookies_rejected
+```
+
 ---
 
 ## §5 — NL-1 deployment (control plane, `split`)

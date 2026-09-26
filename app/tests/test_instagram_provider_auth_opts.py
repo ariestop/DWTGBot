@@ -10,6 +10,7 @@ import pytest
 from app.config import get_settings
 from app.domain.entities.media_info import DownloadOption, MediaInfo, MediaItem
 from app.domain.enums import MediaKind, Platform
+from app.exceptions import DownloadError, MediaPrivateError
 from app.infrastructure.providers.instagram import InstagramProvider
 from app.infrastructure.storage.local_storage import LocalStorage
 
@@ -168,3 +169,66 @@ async def test_cookiefile_missing_falls_back_to_no_auth(monkeypatch: pytest.Monk
     await provider.get_info("https://instagram.com/reel/ig_1/")
 
     assert fake.extract_calls[0]["extra_opts"] is None
+
+
+class _RejectingCookiesYtDlp(_FakeYtDlp):
+    """Instagram answering a flagged session with 400 (or a stall)."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    async def extract_info(
+        self,
+        url: str,
+        *,
+        extra_opts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if extra_opts and "cookiefile" in extra_opts:
+            self.extract_calls.append({"url": url, "extra_opts": extra_opts})
+            raise self._error
+        return await super().extract_info(url, extra_opts=extra_opts)
+
+
+def _provider_with_cookies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: _FakeYtDlp
+) -> InstagramProvider:
+    cookie_path = tmp_path / "ig.cookies.txt"
+    cookie_path.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    monkeypatch.setenv("INSTAGRAM_COOKIES_FILE", str(cookie_path))
+    get_settings.cache_clear()
+    settings = get_settings()
+    return InstagramProvider(settings=settings, ytdlp=fake, storage=LocalStorage(settings))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_rejected_cookies_fall_back_to_anonymous_and_are_suspended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _RejectingCookiesYtDlp(
+        DownloadError("[Instagram] x: Video info extraction failed: HTTP Error 400: Bad Request")
+    )
+    provider = _provider_with_cookies(tmp_path, monkeypatch, fake)
+
+    info = await provider.get_info("https://instagram.com/reel/ig_1/")
+    await provider.get_info("https://instagram.com/reel/ig_1/")
+
+    assert info.media_id == "ig_1"
+    assert [call["extra_opts"] for call in fake.extract_calls] == [
+        {"cookiefile": str(tmp_path / "ig.cookies.txt")},
+        None,
+        None,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_private_error_with_cookies_is_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _RejectingCookiesYtDlp(MediaPrivateError("private account"))
+    provider = _provider_with_cookies(tmp_path, monkeypatch, fake)
+
+    with pytest.raises(MediaPrivateError):
+        await provider.get_info("https://instagram.com/reel/ig_1/")
+
+    assert len(fake.extract_calls) == 1
