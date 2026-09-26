@@ -13,6 +13,7 @@ from app.application.ports.progress_reporter import NoopProgressReporter, Progre
 from app.application.services.delivery_service import DeliveryOutcome, DeliveryService
 from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
+from app.application.services.media_cache_codec import info_from_cache, is_stale_youtube_cache
 from app.application.services.providers import Provider, ProviderRegistry
 from app.config import Settings
 from app.domain.entities.download_job import DownloadJob
@@ -21,6 +22,7 @@ from app.domain.enums import JobStatus, MediaKind, ProgressStage
 from app.domain.observability import ReplayIgnoreReason, file_size_class
 from app.domain.reason_class import ReasonClass, classify_exception
 from app.domain.repositories.jobs_repo import JobsRepository
+from app.domain.repositories.media_cache_repo import MediaCacheRepository
 from app.exceptions import (
     AppError,
     FileTooLargeError,
@@ -39,6 +41,7 @@ _logger = get_logger(__name__)
 class ProcessDownloadInput:
     job_id: int
     correlation_id: str
+    attempt: int = 1
 
 
 class ProcessDownloadUseCase:
@@ -54,6 +57,7 @@ class ProcessDownloadUseCase:
         metrics: JobMetrics | None = None,
         progress_reporter: ProgressReporter | None = None,
         cancellation: JobCancellationStore | None = None,
+        media_cache: MediaCacheRepository | None = None,
     ) -> None:
         self._jobs = jobs_repo
         self._providers = providers
@@ -76,6 +80,7 @@ class ProcessDownloadUseCase:
         # no-op, the worker keeps running the classic flow. Production
         # wires a ``RedisJobCancellationStore``.
         self._cancellation = cancellation
+        self._media_cache = media_cache
 
     async def execute(self, payload: ProcessDownloadInput) -> None:
         job = await self._jobs.get(payload.job_id)
@@ -90,20 +95,24 @@ class ProcessDownloadUseCase:
             request_id=payload.correlation_id,
             platform=job.platform.value,
         ):
-            await self._run(job)
+            await self._run(job, attempt=payload.attempt)
 
-    async def _run(self, job: DownloadJob) -> None:
+    async def _run(self, job: DownloadJob, *, attempt: int = 1) -> None:
         # Monotonic clock — immune to wall-clock jumps from NTP. Used
         # for ``job_duration_seconds`` (ADR-0007 §2.1, A4/A5 SLO).
         started_monotonic = time.monotonic()
 
-        if self._guard_replay(job):
-            return
-
-        transitioned = await self._transition_to(job, JobStatus.PROCESSING, ReasonClass.OK)
-        if transitioned is None:
-            return
-        job = transitioned
+        if attempt > 1 and job.status is JobStatus.PROCESSING:
+            # arq retry of a transient failure: the row stayed PROCESSING
+            # on purpose (see docs/09-queue-and-workers.md §8).
+            _logger.info("job_retry_attempt", attempt=attempt)
+        else:
+            if self._guard_replay(job):
+                return
+            transitioned = await self._transition_to(job, JobStatus.PROCESSING, ReasonClass.OK)
+            if transitioned is None:
+                return
+            job = transitioned
 
         try:
             await self._download_and_deliver(job, started_monotonic=started_monotonic)
@@ -216,7 +225,7 @@ class ProcessDownloadUseCase:
 
     async def _analyze(self, job: DownloadJob) -> tuple[Provider, MediaInfo, DownloadOption]:
         provider = self._providers.get(job.platform)
-        info = await provider.get_info(job.source_url)
+        info = await self._cached_info(job) or await provider.get_info(job.source_url)
         selected = self._pick_option(provider.build_options(info), job.selected_option_key)
         if selected is None:
             raise AppError(
@@ -232,6 +241,29 @@ class ProcessDownloadUseCase:
         self._reject_if_estimate_exceeds_cap(selected, estimate_bytes=estimate_bytes)
         return provider, info, selected
 
+    async def _cached_info(self, job: DownloadJob) -> MediaInfo | None:
+        """The analysis the bot cached for this URL, if still fresh.
+
+        The bot analysed the link moments ago; asking the platform again
+        doubles the metadata requests per link, and Instagram answers
+        bursts from one IP by stalling connections until they time out.
+        Cache errors fall back to the provider.
+        """
+        if self._media_cache is None:
+            return None
+        try:
+            record = await self._media_cache.get_fresh(job.source_url)
+        except Exception:  # pragma: no cover  best-effort cache read
+            _logger.exception("media_cache_read_failed", url=job.source_url)
+            return None
+        if record is None:
+            return None
+        info = info_from_cache(record, platform=job.platform)
+        if is_stale_youtube_cache(info):
+            return None
+        _logger.info("job_info_from_cache", platform=job.platform.value)
+        return info
+
     async def _download(
         self,
         job: DownloadJob,
@@ -240,12 +272,13 @@ class ProcessDownloadUseCase:
         info: MediaInfo,
         option: DownloadOption,
     ) -> DownloadResult:
-        target = self._storage.job_dir(job.id or 0)
+        target = self._storage.reset_job_dir(job.id or 0)
         result = await provider.download(
             job.source_url,
             option,
             target_dir=str(target),
             on_progress=self._scaled_download_hook(job.id, provider=provider),
+            info=info,
         )
         # Providers fall back to ``out_dir.name`` (= the numeric job id)
         # when they have no better title — that would surface the

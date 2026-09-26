@@ -49,6 +49,12 @@ class LocalStorage:
         target.mkdir(parents=True, exist_ok=True)
         return target
 
+    def reset_job_dir(self, job_id: int) -> Path:
+        target = self.job_dir(job_id)
+        shutil.rmtree(target, ignore_errors=True)
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
     def make_tmp_workdir(self, prefix: str = "dl-") -> Path:
         self._tmp_root.mkdir(parents=True, exist_ok=True)
         return Path(tempfile.mkdtemp(prefix=prefix, dir=self._tmp_root))

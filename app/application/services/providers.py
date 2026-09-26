@@ -64,6 +64,7 @@ class Provider(Protocol):
         *,
         target_dir: str,
         on_progress: Callable[[float], None] | None = None,
+        info: MediaInfo | None = None,
     ) -> DownloadResult:
         """Download the media into ``target_dir``.
 
@@ -72,6 +73,11 @@ class Provider(Protocol):
         as the download advances. Must be thread-safe and
         non-blocking; providers pass it through unchanged. See
         ADR-0010 §2.2.
+
+        ``info`` — the ``MediaInfo`` the job was analysed with. Providers
+        may use its direct item URLs to skip another metadata request to
+        the platform; they must fall back to their own extraction when
+        those URLs no longer work.
         """
         ...
 

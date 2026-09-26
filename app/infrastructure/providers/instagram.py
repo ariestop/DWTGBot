@@ -40,7 +40,7 @@ from app.domain.entities.media_info import (
 )
 from app.domain.enums import MediaKind, Platform
 from app.domain.text_utils import truncate_description
-from app.exceptions import DownloadError, ProviderError
+from app.exceptions import DownloadError, FileTooLargeError, ProviderError
 from app.infrastructure.downloader.http_image import HttpImageFetcher
 from app.infrastructure.downloader.http_probe import head_content_length
 from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
@@ -219,13 +219,18 @@ class InstagramProvider(BaseProvider):
         *,
         target_dir: str,
         on_progress: Callable[[float], None] | None = None,
+        info: MediaInfo | None = None,
     ) -> DownloadResult:
         out_dir = self._target_path(target_dir)
 
         if option.key == "single_video":
             files = await self._download_videos(url, out_dir, None, on_progress=on_progress)
         else:
-            files = await self._download_post(url, option, out_dir, on_progress=on_progress)
+            cached = await self._download_photos_from_info(info, option, out_dir) if info else None
+            if cached is not None:
+                files = cached
+            else:
+                files = await self._download_post(url, option, out_dir, on_progress=on_progress)
 
         if option.kind is MediaKind.PHOTO:
             files = [f for f in files if _looks_like_image(f)]
@@ -243,6 +248,41 @@ class InstagramProvider(BaseProvider):
             empty_error="Instagram download produced no matching files",
         )
 
+    async def _download_photos_from_info(
+        self, info: MediaInfo, option: DownloadOption, out_dir: Path
+    ) -> list[Path] | None:
+        """Fetch photo-only options from the analysed image URLs.
+
+        Skips another request to instagram.com, which throttles repeated
+        metadata calls from one IP by stalling connections. Returns
+        ``None`` (caller re-extracts) when the option includes videos or
+        a CDN URL no longer works — the URLs are signed and expire.
+        """
+        if option.kind is MediaKind.VIDEO:
+            return None
+        is_gallery = info.kind is MediaKind.GALLERY
+        wanted = list(enumerate(info.items, start=1))
+        if option.key == "gallery_photos":
+            wanted = [(position, item) for position, item in wanted if item.kind is MediaKind.PHOTO]
+        if not wanted or any(
+            item.kind is not MediaKind.PHOTO or not item.url for _, item in wanted
+        ):
+            return None
+        media_id = _safe_id({"id": info.media_id})
+        files: list[Path] = []
+        try:
+            for position, item in wanted:
+                stem = f"{position:02d}_{media_id}" if is_gallery else media_id
+                files.append(await self._images.fetch(item.url, target_dir=out_dir, stem=stem))
+        except FileTooLargeError:
+            raise
+        except DownloadError as exc:
+            _logger.warning("instagram_cached_image_failed", error=str(exc))
+            for path in files:
+                path.unlink(missing_ok=True)
+            return None
+        return files
+
     async def _download_post(
         self,
         url: str,
@@ -253,8 +293,7 @@ class InstagramProvider(BaseProvider):
     ) -> list[Path]:
         """Photos straight from the CDN, videos through yt-dlp by position.
 
-        Re-extracts instead of reusing ``MediaInfo.items``: CDN image URLs
-        are signed and may have expired since the link was analysed.
+        Re-extracts for fresh CDN URLs: they are signed and expire.
         """
         raw = await self._extract(url)
         is_gallery = bool(raw.get("entries"))

@@ -136,7 +136,7 @@ stateDiagram-v2
     Queued --> Running: worker pop + use_case.execute
     Running --> Succeeded: mark_done, no exception
     Running --> Retrying: AppError or unexpected exc + tries < max_tries
-    Retrying --> Queued: arq backoff (default exponential)
+    Retrying --> Queued: raise arq.Retry(defer=20 s × attempt)
     Running --> Failed: tries == max_tries
     Failed --> [*]
     Succeeded --> [*]
@@ -205,12 +205,13 @@ sequenceDiagram
     UC ->> DB: mark_processing
     UC ->> UC: provider raises ProviderError (is_retryable=True)
     UC -->> W: re-raise (no DB write; row stays PROCESSING)
-    W ->> W: ctx["job_try"]=1 < max_tries → log "job_will_retry"
-    W -->> Pool: nack → exponential backoff → re-enqueue (try 2)
+    W ->> W: ctx["job_try"]=1 < ctx["max_tries"] → log "job_will_retry"
+    W -->> Pool: raise arq.Retry(defer=20 s) → re-enqueue (try 2)
 
     Pool ->> W: task (try 2)
-    W ->> UC: execute()
-    UC ->> UC: succeeds
+    W ->> UC: execute(attempt=2)
+    UC ->> UC: row is PROCESSING + attempt > 1 → run (not a replay)
+    UC ->> UC: reset job dir, succeeds
     UC ->> DB: mark_done
 ```
 
@@ -249,11 +250,28 @@ sequenceDiagram
 
 ## 9. Backoff and retries
 
-arq defaults are sane and we don't override them:
+arq повторяет задачу **только** если она бросила `arq.Retry`; любое
+другое исключение завершает её окончательно, а `max_tries` arq в
+per-job `ctx` не передаёт. Поэтому:
 
-- **Backoff**: exponential with jitter, capped (~10s, 30s, 60s, ...).
-- **Max tries**: `JOB_MAX_RETRIES + 1` (initial attempt counted).
+- `process_download_job` на не последней попытке бросает
+  `Retry(defer=20 s × attempt)` (20 с, затем 40 с) с исходной ошибкой в
+  `__cause__`; на последней — `mark_terminally_failed` и исходное
+  исключение.
+- **Max tries**: `JOB_MAX_RETRIES + 1` (первая попытка считается);
+  `WorkerSettings.on_startup` кладёт значение в `ctx["max_tries"]`.
+  Без ключей `job_try` / `max_tries` задача считает попытку последней
+  (fail closed).
+- Номер попытки передаётся в `ProcessDownloadInput.attempt`. Повторная
+  попытка принимает свою строку в `PROCESSING` (защита от повторов
+  `_guard_replay` действует только для первой попытки) и очищает
+  каталог задачи (`MediaStorage.reset_job_dir`), чтобы не подхватить
+  файлы прошлой попытки.
 - **Job timeout**: `JOB_TIMEOUT_SECONDS` per attempt.
+
+До этого исправления задача бросала исходное исключение, arq её не
+повторял, а отсутствующий `ctx["max_tries"]` превращал первую же
+попытку в последнюю: `JOB_MAX_RETRIES` фактически был равен 0.
 
 Total worst case: `(JOB_MAX_RETRIES + 1) * JOB_TIMEOUT_SECONDS` plus
 backoff.

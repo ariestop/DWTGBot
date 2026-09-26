@@ -71,6 +71,7 @@ class BaseProvider(ABC):
         *,
         target_dir: str,
         on_progress: Callable[[float], None] | None = None,
+        info: MediaInfo | None = None,
     ) -> DownloadResult: ...
 
     @staticmethod

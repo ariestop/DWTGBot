@@ -15,6 +15,9 @@ class MediaStorage(Protocol):
     def job_dir(self, job_id: int) -> Path:
         """Return (creating if needed) the per-job artefact directory."""
 
+    def reset_job_dir(self, job_id: int) -> Path:
+        """Empty the per-job directory (left over from a failed attempt) and return it."""
+
     def assert_free_space(self) -> None:
         """Raise ``StorageError`` when free disk is below ``STORAGE_MIN_FREE_MB``."""
 
