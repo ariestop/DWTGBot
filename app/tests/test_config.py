@@ -70,6 +70,56 @@ def test_production_requires_internal_token(monkeypatch: pytest.MonkeyPatch) -> 
     assert any("API_INTERNAL_TOKEN" in e for e in errors)
 
 
+def _production_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
+    monkeypatch.setenv("API_INTERNAL_TOKEN", "x")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+
+
+def _redis_errors(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    get_settings.cache_clear()
+    errors = get_settings().validate_runtime(require_storage=False, require_tools=False)
+    return [e for e in errors if "Redis must require a password" in e]
+
+
+def test_production_requires_redis_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    _production_env(monkeypatch)
+    monkeypatch.setenv("REDIS_PASSWORD", "")
+    assert _redis_errors(monkeypatch)
+
+
+def test_production_accepts_redis_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    _production_env(monkeypatch)
+    monkeypatch.setenv("REDIS_PASSWORD", "s3cret")
+    assert _redis_errors(monkeypatch) == []
+
+
+def test_production_accepts_password_in_redis_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    _production_env(monkeypatch)
+    monkeypatch.setenv("REDIS_URL", "redis://:s3cret@redis:6379/0")
+    assert _redis_errors(monkeypatch) == []
+
+
+def test_production_redis_url_without_password_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # REDIS_URL takes precedence over REDIS_PASSWORD in ``redis_url``, so a
+    # password-less URL is unauthenticated even when REDIS_PASSWORD is set.
+    _production_env(monkeypatch)
+    monkeypatch.setenv("REDIS_PASSWORD", "s3cret")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    assert _redis_errors(monkeypatch)
+
+
+def test_dev_allows_redis_without_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setenv("REDIS_PASSWORD", "")
+    assert _redis_errors(monkeypatch) == []
+
+
 def test_production_rejects_internal_test_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")

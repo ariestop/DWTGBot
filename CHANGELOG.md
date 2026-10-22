@@ -12,6 +12,31 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Security — the cancel button could cancel another user's job
+
+The live-progress cancel button carries `cj|<job_id>`, and `job_id` is a
+sequential database id. Telegram does not bind `callback_data` to the
+button it came from, so a client could send `cj|<any id>` and cancel
+other users' downloads (and flip their progress message to «Отменено»).
+The handler now loads the job and cancels only when `job.user_id` is the
+caller; a missing job, a foreign job or a failed lookup answer «Эту
+загрузку нельзя отменить.» and change nothing. `BotContainer` gains
+`jobs_repo` for this check.
+
+### Security — production now requires a Redis password
+
+`validate_runtime` refuses to start in `APP_ENV=production` when the
+effective Redis connection (`REDIS_URL` if set, otherwise built from
+`REDIS_*`) carries no password. In the split topology Redis listens on
+the private network and holds the job queue, so running it without auth
+let any host on that network enqueue work for the worker.
+
+**Upgrade note:** single-host `.env` files created by `install.sh`
+already have a password. For a hand-written `.env` (nl1 / nl2), set
+`REDIS_PASSWORD` and put the same password into `REDIS_URL`
+(`redis://:PASSWORD@host:6379/0`) before deploying; otherwise bot, api
+and worker stop at startup with an explicit error.
+
 ### Fixed — worker jobs were never retried
 
 arq re-runs a job only when it raises `arq.Retry`, and it does not put
