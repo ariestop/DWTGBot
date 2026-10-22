@@ -209,9 +209,9 @@ cachetools==5.5.2 \
     --hash=sha256:1a661caa9175d26759571b2e19580f9d6393969e5dfca11fdb1f947a23e640d4 \
     --hash=sha256:d26a22bcc62eb95c3beabd9f1ee5e820d3d2704fe2967cbe350e20c8ffcd3f0a
     # via python-telegram-bot
-certifi==2026.5.20 \
-    --hash=sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897 \
-    --hash=sha256:69dea482ab64caa7b9f6aba1c6bf48bb6a5448d1c0f1b17ab42ad8c763a5344d
+certifi==2026.10.19 \
+    --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
     # via
     #   httpcore
     #   httpx
@@ -658,13 +658,13 @@ cryptography==48.0.0 \
     # via
     #   types-pyopenssl
     #   types-redis
-deno==2.9.7 \
-    --hash=sha256:79f4b7acdd9a37e98a4d1e0ca08d71c4e55f6c0cb13bd1e0946fa9b5497be2d9 \
-    --hash=sha256:80b90a0aad3f167ffbfefe55830b7b14e9d49865eed741c013bb48f1c5996681 \
-    --hash=sha256:826634a6719f0183d85ef33f702de4388adb47d1f097b0732f70e033599a43c2 \
-    --hash=sha256:836f2ab5918723b47b638a05bc4fdac99fc35e69b49a6771c24e32b19dff5d8a \
-    --hash=sha256:adc015b5630572c06d04d28741e6ac9eed8b053c501d0ae776bfb155f5b7204b \
-    --hash=sha256:d8f4622774a5bed3a6b6305340495abe699f09c99b70d2882f52abc1ff23321a
+deno==2.9.8 \
+    --hash=sha256:338245af268724ae55ebebdb81270a0553b665affde8bdd80b01b8f1c07c7163 \
+    --hash=sha256:3e286918a36f436134336c5c6ef37dfe3a27f16ea22cd6af452ab7daa4ef1da4 \
+    --hash=sha256:60dd97e612b8bab67c8080712646a821071e3809909489f853763cea19617700 \
+    --hash=sha256:b1d1318e7deda8efd593aefa8b565a827fe71cf83aeff09d3a5ceb047444ca18 \
+    --hash=sha256:b82eac91d3e3f6fe37d94a12f833550e05029274cb9020b1e3f0f61e1678dc24 \
+    --hash=sha256:f050f14d259f1e6f39a86aa8dd85f787df2311fc8ceb0be57485a127567ae137
     # via yt-dlp
 distlib==0.4.0 \
     --hash=sha256:9659f7d87e46584a30b5780e43ac7a2143098441670ff0a49d5f9034c54a6c16 \
@@ -1807,9 +1807,9 @@ websockets==16.0 \
     # via
     #   uvicorn
     #   yt-dlp
-yt-dlp==2026.8.19 \
-    --hash=sha256:1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf \
-    --hash=sha256:9e213e48cea35c66b378e4447903f118f6392a5fa380a2b6d7070ec86f4e0af1
+yt-dlp==2026.10.21 \
+    --hash=sha256:94a3a3e2c423129d0bbd2f1be000c4171fa1226c29e251c84aff868f2851c247 \
+    --hash=sha256:cbf748d7d17cd37647c4b9f07b6c25f24384bfd4361407ee5ec519e753d22539
     # via -r requirements/base.txt
 yt-dlp-ejs==0.8.0 \
     --hash=sha256:79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4 \
