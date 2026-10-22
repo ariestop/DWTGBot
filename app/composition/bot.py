@@ -161,6 +161,7 @@ async def build_bot(settings: Settings) -> BotComposition:
         progress_reporter=bot_progress_reporter,
         job_cancellation=job_cancellation,
         post_text_store=post_text_store,
+        jobs_repo=jobs_repo,
     )
 
     queue_sampler = _build_queue_sampler(settings, pool=arq_pool, metrics=job_metrics)

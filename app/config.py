@@ -10,7 +10,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from functools import lru_cache
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from pydantic import ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -223,6 +223,15 @@ class Settings(
         if self.is_production and not self.API_INTERNAL_TOKEN:
             errors.append("API_INTERNAL_TOKEN must be set in production")
 
+        if self.is_production and not self._redis_has_password():
+            # In the split topology Redis listens on the private network,
+            # and the queue it holds drives the worker: no auth means any
+            # host on that network can enqueue jobs or read job state.
+            errors.append(
+                "Redis must require a password in production: set REDIS_PASSWORD "
+                "(or put the password into REDIS_URL)"
+            )
+
         if self.is_production and self.PUBLIC_BASE_URL.startswith("http://"):
             errors.append("PUBLIC_BASE_URL must be HTTPS in production")
 
@@ -245,6 +254,18 @@ class Settings(
         errors.extend(self._validate_metrics_runtime())
 
         return errors
+
+    def _redis_has_password(self) -> bool:
+        """Whether the effective Redis connection carries a password.
+
+        An explicit ``REDIS_URL`` wins over ``REDIS_PASSWORD`` in
+        ``redis_url``, so the URL is what gets checked.
+        """
+        try:
+            password = urlparse(self.redis_url).password
+        except ValueError:
+            return False
+        return bool(password)
 
     def _validate_metrics_runtime(self) -> list[str]:
         """Refuse to expose /metrics on a public bind in production.

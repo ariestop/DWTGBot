@@ -23,6 +23,7 @@ from app.application.use_cases.analyze_link import AnalyzeLinkUseCase
 from app.application.use_cases.auto_enqueue_download import AutoEnqueueDownloadUseCase
 from app.application.use_cases.enqueue_download import EnqueueDownloadUseCase
 from app.config import Settings
+from app.domain.repositories.jobs_repo import JobsRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,9 @@ class BotContainer:
     # needs ``get`` for the handler; the writer lives in the
     # auto-enqueue use case.
     post_text_store: PostTextStore
+    # Read-only here: the cancel callback checks that the job belongs to
+    # the caller before setting the flag (``callback_data`` is untrusted).
+    jobs_repo: JobsRepository
 
 
 CONTAINER_KEY = "container"

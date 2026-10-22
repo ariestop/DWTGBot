@@ -109,7 +109,7 @@ Grouped by concern. **Bold** = required, no safe default.
 |---|---|---|---|
 | `REDIS_HOST` | str | `redis` | Same dual-use pattern as Postgres |
 | `REDIS_PORT` | int | `6379` | |
-| `REDIS_PASSWORD` | str | empty | Set in production |
+| `REDIS_PASSWORD` | str | empty | Required in production: `validate_runtime` refuses to start when the effective Redis URL (`REDIS_URL`, else built from `REDIS_*`) carries no password |
 | `REDIS_DB` | int | `0` | |
 | `REDIS_URL` | str | computed | Overrides if set |
 
