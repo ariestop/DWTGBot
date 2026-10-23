@@ -1,0 +1,88 @@
+name: Restore drill (server)
+
+# Weekly proof that the newest real backup restores. Over SSH (the same
+# secrets and environments as deploy.yml) the control-plane host runs
+# deploy/scripts/restore_drill.sh from its checkout — the deployed
+# version — against a throwaway Postgres; the result goes to Telegram
+# (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID, as in yt-dlp-update.yml).
+#
+# The job log is public: restore_drill.sh prints dump names, ages, row
+# counts and psql ERROR lines with quoted values masked — never rows.
+# restore-drill.yml is the separate CI check of migrations on an empty DB.
+
+on:
+  schedule:
+    - cron: "41 3 * * 0" # Sundays 03:41 UTC, after the nightly backup
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Host with Postgres (auto: single if DEPLOY_TOPOLOGY=single, else nl1)"
+        type: choice
+        required: true
+        options: [auto, single, nl1]
+        default: auto
+      from_offsite:
+        description: "Pull dumps from BACKUP_S3_BUCKET / BACKUP_RCLONE_REMOTE first"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: restore-drill-server
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    name: Restore drill on ${{ (inputs.target == 'single' || inputs.target == 'nl1') && inputs.target || (vars.DEPLOY_TOPOLOGY == 'single' && 'single' || 'nl1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Postgres runs on single, or on NL-1 in the split topology (ADR-0011).
+    environment: ${{ (inputs.target == 'single' || inputs.target == 'nl1') && inputs.target || (vars.DEPLOY_TOPOLOGY == 'single' && 'single' || 'nl1') }}
+    env:
+      TARGET: ${{ (inputs.target == 'single' || inputs.target == 'nl1') && inputs.target || (vars.DEPLOY_TOPOLOGY == 'single' && 'single' || 'nl1') }}
+      # deploy.yml secret prefix for the target.
+      PREFIX: ${{ ((inputs.target == 'single' || inputs.target == 'nl1') && inputs.target || (vars.DEPLOY_TOPOLOGY == 'single' && 'single' || 'nl1')) == 'single' && 'SINGLE' || 'NL1' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run restore_drill.sh over SSH
+        id: drill
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          DEPLOY_REPO_PATH: ${{ secrets[format('{0}_REPO_PATH', env.PREFIX)] }}
+          DRILL_FROM_OFFSITE: ${{ inputs.from_offsite && 'true' || 'false' }}
+        with:
+          host: ${{ secrets[format('{0}_HOST', env.PREFIX)] }}
+          username: ${{ secrets[format('{0}_SSH_USER', env.PREFIX)] }}
+          key: ${{ secrets[format('{0}_SSH_KEY', env.PREFIX)] }}
+          port: ${{ secrets[format('{0}_SSH_PORT', env.PREFIX)] || 22 }}
+          # set -Eeuo pipefail stops on the first error (no script_stop in v1.2).
+          command_timeout: 15m
+          envs: DEPLOY_REPO_PATH,DRILL_FROM_OFFSITE
+          script: |
+            set -Eeuo pipefail
+            if [[ "${DRILL_FROM_OFFSITE}" == "true" ]]; then
+              set -- --from-offsite
+            fi
+            sudo -E bash "${DEPLOY_REPO_PATH}/deploy/scripts/restore_drill.sh" "$@"
+
+      - name: Report to Telegram
+        if: always()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OUTCOME: ${{ steps.drill.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "${OUTCOME}" == "success" ]]; then
+            text="DWTGBot: restore drill на ${TARGET} прошёл — свежий бэкап восстанавливается.
+          ${RUN_URL}"
+          else
+            text="DWTGBot: restore drill на ${TARGET} НЕ прошёл (${OUTCOME}): бэкап устарел, не восстанавливается или drill не запустился. Проверьте лог.
+          ${RUN_URL}"
+          fi
+          bash .github/scripts/telegram-notify.sh "${text}"

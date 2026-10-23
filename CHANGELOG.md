@@ -12,6 +12,36 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Added — еженедельный restore drill реальных бэкапов
+
+`.github/workflows/restore-drill-server.yml` по воскресеньям (и вручную)
+по SSH запускает на хосте с Postgres `deploy/scripts/restore_drill.sh` и
+шлёт результат в Telegram. Скрипт переписан:
+- берёт самый свежий дамп из тома `dwtgbot_backups` (ежедневные дампы
+  контейнера `backup`) и из `/var/backups/dwtgbot` (дампы перед деплоем);
+  раньше видел только второй каталог;
+- падает, если свежему дампу больше `DRILL_MAX_AGE_HOURS` (48 ч);
+- `gunzip | psql` выполняются внутри одноразового контейнера с
+  `--network none`: не нужен psql на хосте и больше не публикуется порт
+  55432 на всех интерфейсах;
+- из ошибок psql в (публичный) лог попадают только строки `ERROR:` с
+  замаскированными значениями;
+- при `--from-offsite` логи больше не попадают в путь к дампу.
+
+### Changed — `healthcheck.sh`: общий бюджет ожидания
+
+Ожидающие проверки (bot, `/healthz`, `/readyz`) делят один бюджет
+`HEALTHCHECK_BUDGET_SECONDS` (90 с) вместо 45 с каждая: лежащий стек
+диагностируется за ~1,5 мин, а не за минуты, и автооткат быстрее.
+
+### Removed — `app/utils/retries.py` и `tenacity`
+
+Модуль нигде не использовался; `tenacity` больше ничем не требуется.
+
+### Tests — `backup_worker` и цикл `cleanup_worker`
+
+`backup_worker` 0 → 98 %, `cleanup_worker` 35 → 61 %.
+
 ### Security — сторонние GitHub Actions закреплены по SHA, Node 24
 
 - Все `uses:` в `.github/workflows/*` и `.github/actions/setup-python-deps`

@@ -274,7 +274,6 @@ through the composition root.
 app/utils/
 ├── correlation.py        # request_id generation, structlog binding
 ├── filenames.py          # sanitize_filename, ensure_within
-├── retries.py            # tenacity policies
 └── url.py                # extract_first_url, detect_platform, detect
 ```
 

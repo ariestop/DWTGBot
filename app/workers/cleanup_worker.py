@@ -47,7 +47,7 @@ async def _run_cycle(
             try:
                 composition.storage.remove_path(path)
                 removed_files += 1
-            except Exception:  # pragma: no cover  best-effort
+            except Exception:  # best-effort: one bad file must not stop the sweep
                 log.exception("temp_link_file_remove_failed", path=str(path))
     if removed_files:
         log.info("temp_link_files_removed", count=removed_files)
