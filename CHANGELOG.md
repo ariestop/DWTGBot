@@ -12,6 +12,23 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — прод на single-хосте не стартовал без пароля Redis
+
+После PR #17 `validate_runtime` в `APP_ENV=production` требовал пароль
+Redis во всех топологиях, и стек `single` без `REDIS_PASSWORD` ушёл в
+restart-loop (`startup_check_failed`, api/bot/cleanup, с 2026-10-22).
+Новая настройка `DEPLOY_TOPOLOGY` (`single` / `split`, по умолчанию
+`split`): `deploy/single/single.override.yml` выставляет `single` всем
+app-сервисам, и там пароль не обязателен — Redis не публикует порт и
+доступен только контейнерам в `dwtgbot_internal`. В split (`nl1`/`nl2`)
+проверка прежняя. Перед переходом `single → split` задайте
+`REDIS_PASSWORD`.
+
+### Fixed — «Server diagnostics» с окном в днях
+
+`docker logs --since` принимает Go-длительности без единицы `d`, поэтому
+`since=1d` не собирал логи. `diagnostics.sh` переводит `Nd` в `N*24h`.
+
 ### Added — workflow «Server diagnostics»
 
 `.github/workflows/diagnostics.yml` (ручной запуск) по тем же SSH-секретам,

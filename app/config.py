@@ -25,6 +25,7 @@ from app.config_groups import (
     CleanupSettings,
     DatabaseSettings,
     DeliverySettings,
+    DeployTopology,
     InstantDownloadSettings,
     MetricsSettings,
     ProgressSettings,
@@ -42,6 +43,7 @@ from app.domain.rate_limit import LimitLayer, LimitWindow
 __all__ = [
     "AppEnv",
     "AppRole",
+    "DeployTopology",
     "RateLimitWindows",
     "Settings",
     "get_settings",
@@ -223,10 +225,17 @@ class Settings(
         if self.is_production and not self.API_INTERNAL_TOKEN:
             errors.append("API_INTERNAL_TOKEN must be set in production")
 
-        if self.is_production and not self._redis_has_password():
+        if (
+            self.is_production
+            and self.DEPLOY_TOPOLOGY is not DeployTopology.SINGLE
+            and not self._redis_has_password()
+        ):
             # In the split topology Redis listens on the private network,
             # and the queue it holds drives the worker: no auth means any
             # host on that network can enqueue jobs or read job state.
+            # On a single host Redis has no published port and only the
+            # app containers on dwtgbot_internal reach it, so a password
+            # stays optional there.
             errors.append(
                 "Redis must require a password in production: set REDIS_PASSWORD "
                 "(or put the password into REDIS_URL)"

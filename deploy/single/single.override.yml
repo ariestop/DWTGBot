@@ -4,8 +4,13 @@
 #
 # Invariants (enforced by app/tests/test_deploy_topology.py):
 #   * no ``ports:`` on postgres/redis;
-#   * nginx is NOT attached to dwtgbot_internal.
+#   * nginx is NOT attached to dwtgbot_internal;
+#   * every app service runs with DEPLOY_TOPOLOGY=single (no Redis
+#     password required: Redis has no published port on this host).
 # =====================================================================
+
+x-single-topology: &single-topology
+  DEPLOY_TOPOLOGY: single
 
 services:
 
@@ -18,7 +23,17 @@ services:
     # arq queue keys have no TTL — keep Redis alive over media workloads.
     oom_score_adj: -300
 
+  migrate:
+    environment: *single-topology
+
+  bot:
+    environment: *single-topology
+
+  backup:
+    environment: *single-topology
+
   api:
+    environment: *single-topology
     networks:
       - dwtgbot_internal
       - dwtgbot_media
@@ -54,10 +69,12 @@ services:
     # All services share one .env here; the worker needs a bigger pool
     # than bot/api, and Postgres' default max_connections is 100.
     environment:
+      <<: *single-topology
       DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-10}
       DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-10}
 
   cleanup:
+    environment: *single-topology
     networks:
       - dwtgbot_internal
       - dwtgbot_media

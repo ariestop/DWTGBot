@@ -76,6 +76,7 @@ def _production_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_INTERNAL_TOKEN", "x")
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    monkeypatch.delenv("DEPLOY_TOPOLOGY", raising=False)
 
 
 def _redis_errors(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -110,6 +111,22 @@ def test_production_redis_url_without_password_is_rejected(
     _production_env(monkeypatch)
     monkeypatch.setenv("REDIS_PASSWORD", "s3cret")
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    assert _redis_errors(monkeypatch)
+
+
+def test_single_topology_allows_redis_without_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ADR-0011 single host: Redis publishes no port, only app containers
+    # on dwtgbot_internal reach it.
+    _production_env(monkeypatch)
+    monkeypatch.setenv("DEPLOY_TOPOLOGY", "single")
+    assert _redis_errors(monkeypatch) == []
+
+
+def test_split_topology_requires_redis_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    _production_env(monkeypatch)
+    monkeypatch.setenv("DEPLOY_TOPOLOGY", "split")
     assert _redis_errors(monkeypatch)
 
 

@@ -28,11 +28,19 @@ class AppRole(str, Enum):
     ALL = "all"
 
 
+class DeployTopology(str, Enum):
+    SINGLE = "single"
+    SPLIT = "split"
+
+
 class AppSettings(BaseModel):
     """Role, environment and logging."""
 
     APP_ROLE: AppRole = AppRole.ALL
     APP_ENV: AppEnv = AppEnv.DEVELOPMENT
+    # ADR-0011. deploy/single/single.override.yml sets ``single`` for the
+    # app services; the default keeps the stricter split-topology checks.
+    DEPLOY_TOPOLOGY: DeployTopology = DeployTopology.SPLIT
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = False
 
