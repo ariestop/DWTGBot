@@ -74,7 +74,7 @@ class AnalyzeLinkUseCase:
         info: MediaInfo | None = None
         served_from_cache = False
         if self._cache is not None:
-            cached = await self._cache.get_fresh(detected.normalized)
+            cached = await self._read_cache(detected.normalized)
             if cached is not None:
                 candidate = info_from_cache(cached, platform=detected.platform)
                 # Legacy entries written before YouTube provider learned
@@ -112,6 +112,16 @@ class AnalyzeLinkUseCase:
             cache_hit=served_from_cache,
         )
         return AnalyzeLinkOutput(request_id=request_id, analyzed=analyzed)
+
+    async def _read_cache(self, source_url: str) -> MediaCacheRecord | None:
+        """Best-effort read, like the write below: a cache outage must
+        not fail the user — the provider answers instead."""
+        assert self._cache is not None
+        try:
+            return await self._cache.get_fresh(source_url)
+        except Exception:
+            _logger.exception("media_cache_read_failed")
+            return None
 
     async def _upsert_cache(self, source_url: str, info: MediaInfo) -> None:
         """Best-effort write-back. Cache failures must NOT fail the user."""
