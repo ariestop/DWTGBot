@@ -46,7 +46,7 @@ jobs:
       # deploy.yml secret prefix for each target.
       PREFIX: ${{ fromJSON('{"single":"SINGLE","nl1":"NL1","nl2":"NL2"}')[inputs.target] }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate inputs and bundle the scripts
         env:
@@ -64,7 +64,7 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Run diagnostics over SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           DIAG_TARGET: ${{ inputs.target }}
           DEPLOY_REPO_PATH: ${{ secrets[format('{0}_REPO_PATH', env.PREFIX)] }}
@@ -73,7 +73,9 @@ jobs:
           username: ${{ secrets[format('{0}_SSH_USER', env.PREFIX)] }}
           key: ${{ secrets[format('{0}_SSH_KEY', env.PREFIX)] }}
           port: ${{ secrets[format('{0}_SSH_PORT', env.PREFIX)] || 22 }}
-          script_stop: true
+          # The script runs under ``set -Eeuo pipefail`` (no ``script_stop``
+          # in ssh-action v1.2); healthcheck.sh alone may take 5 minutes.
+          command_timeout: 12m
           envs: DIAG_TARGET,DIAG_SINCE,DIAG_LAST,DIAG_BUNDLE,DEPLOY_REPO_PATH
           script: |
             set -Eeuo pipefail
