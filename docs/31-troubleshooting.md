@@ -744,8 +744,10 @@ Cure path: §15 of `24-`.
 - `unrecognized option`
 - `subprocess.TimeoutExpired` (wrapper around ffmpeg)
 
-**Origin**: `app/infrastructure/postprocess/ffmpeg_runner.py`
-called from a provider's `download`.
+**Origin**: yt-dlp's own ffmpeg post-processors (merge, audio
+extraction) inside a provider's `download`, then the mobile-compat pass
+in `app/infrastructure/downloader/mobile_compat.py`, which logs a
+failure and keeps the original file.
 
 **Confirmation**:
 

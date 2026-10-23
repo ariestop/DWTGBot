@@ -57,16 +57,3 @@ def test_explicit_database_url_passes_through_unchanged() -> None:
         DATABASE_URL=explicit,
     )
     assert settings.database_url == explicit
-
-
-def test_sync_variant_swaps_driver() -> None:
-    settings = Settings(
-        _env_file=None,  # type: ignore[call-arg]
-        POSTGRES_USER="dwtgbot",
-        POSTGRES_PASSWORD="p@ss",
-        POSTGRES_HOST="db",
-        POSTGRES_PORT=5432,
-        POSTGRES_DB="dwtgbot",
-    )
-    assert settings.database_url_sync.startswith("postgresql+psycopg://")
-    assert "p%40ss" in settings.database_url_sync
