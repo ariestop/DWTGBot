@@ -8,9 +8,23 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Architectural rationale lives in `docs/adr/`. Each entry below links to
 the relevant ADR when one applies.
 
+An entry that needs work on the servers (a new or newly required
+environment variable, a migration, files or secrets on the host) ends
+with a **Действия оператора** block: what to set, on which stacks, and
+whether before or after the deploy. Entries without such a block need
+none.
+
 ---
 
 ## [Unreleased]
+
+### Added — шаблон PR с разделом «Действия оператора» (D3)
+
+`.github/pull_request_template.md` (Зачем / Изменения / Проверка /
+Действия оператора), правило в `CONTRIBUTING.md` и соглашение в шапке
+этого файла: новая обязательная переменная, миграция или изменение на
+хосте перечисляются в PR и в записи CHANGELOG, чтобы оператор узнал о
+них до деплоя (preflight его остановит, но уже после merge).
 
 ### Fixed — `deploy.yml` больше не глотает ошибки обновления checkout'а (C6)
 

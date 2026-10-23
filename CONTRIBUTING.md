@@ -83,6 +83,14 @@ See [`docs/30-add-new-provider-guide.md`](docs/30-add-new-provider-guide.md)
 - Update the relevant doc (`README.md`, `docs/*.md`) if behaviour or config
   changes.
 - Make sure the PR description explains **why**, not just what.
+- Fill in **«Действия оператора»** in the PR template
+  (`.github/pull_request_template.md`). A new or newly required
+  environment variable, a migration or a host-side change must be listed
+  there, added to every `.env.example` and `docs/13-config-and-env.md`,
+  and repeated in the CHANGELOG entry under **Действия оператора**.
+  `deploy_update.sh`'s preflight stops a deploy whose config the new
+  release rejects, but the operator should learn about it from the PR,
+  not from a failed deploy (the 2026-10-22 outage).
 
 ## Reporting security issues
 
