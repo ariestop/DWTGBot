@@ -11,6 +11,7 @@ from app.application.dto.jobs import EnqueueDownloadInput
 from app.application.dto.media import AnalyzedMedia
 from app.bot.callbacks.codec import PREFIX_CANCEL, SEP, DownloadCallback
 from app.bot.container import get_container
+from app.bot.services.fallback_text import unexpected_error_text
 from app.exceptions import AppError
 from app.logging_config import get_logger
 from app.utils.correlation import bind_context, new_request_id
@@ -82,7 +83,9 @@ async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT
         except Exception as exc:
             _logger.exception("enqueue_unexpected_error", error=str(exc))
             if query.message is not None:
-                await query.edit_message_text("Не удалось поставить задачу в очередь.")
+                await query.edit_message_text(
+                    unexpected_error_text(exc, "Не удалось поставить задачу в очередь.")
+                )
             return
 
         await container.request_state.delete(parsed.request_id)
