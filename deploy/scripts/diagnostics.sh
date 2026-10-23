@@ -23,6 +23,10 @@ LOG_TAIL_PER_CONTAINER=5000
 [[ "${TARGET}" =~ ^(single|nl1|nl2)$ ]] || { echo "Usage: diagnostics.sh single|nl1|nl2 [SINCE] [LAST]" >&2; exit 2; }
 [[ "${SINCE}" =~ ^[0-9]{1,4}[smhd]$ ]] || { echo "SINCE must look like 30m / 2h / 1d" >&2; exit 2; }
 [[ "${LAST}" =~ ^[0-9]{1,3}$ ]] || { echo "LAST must be a number" >&2; exit 2; }
+# ``docker logs --since`` takes Go durations, which have no ``d`` unit.
+if [[ "${SINCE}" == *d ]]; then
+  SINCE="$((10#${SINCE%d} * 24))h"
+fi
 
 mapfile -t CONTAINERS < <(docker ps -a --filter 'name=^dwtgbot_' --format '{{.Names}}' | sort)
 
