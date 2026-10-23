@@ -12,6 +12,15 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — `deploy.yml` больше не глотает ошибки обновления checkout'а (C6)
+
+Скрипт делал `git checkout "${DEPLOY_REF}"` и `git pull --ff-only … || true`:
+на автодеплое (`DEPLOY_REF` — SHA) `pull` всегда падал и молча
+игнорировался, а при ручном запуске с веткой `checkout` брал локальную,
+возможно устаревшую ветку сервера. Теперь `fetch --tags --force origin`,
+ветка разрешается в `origin/<ветка>`, тег или SHA — как есть,
+`checkout --detach`; неизвестный ref останавливает деплой.
+
 ### Fixed — `pg_dump` в образе `backup` той же версии, что сервер (B1)
 
 Образ брал `postgresql-client` из Debian trixie (17) при сервере
