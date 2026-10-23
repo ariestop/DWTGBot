@@ -172,9 +172,6 @@ requirements/dev.lock`, pip-кэш привязан к `dev.lock`. CI получ
 ### 3.3 `tests` — pytest
 
 ```yaml
-- name: Install ffmpeg (for yt-dlp postprocessor probes)
-  run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
-
 - name: pytest
   env:
     BOT_TOKEN: "0000000000:test-token"
@@ -187,7 +184,9 @@ requirements/dev.lock`, pip-кэш привязан к `dev.lock`. CI получ
   run: pytest -m "not integration"
 ```
 
-- Installs `ffmpeg` system binary (yt-dlp probes it during option construction).
+- No system `ffmpeg`: the unit tests fake every ffmpeg/ffprobe subprocess.
+  (CI used to `apt-get install ffmpeg`; slow Ubuntu mirrors made that step
+  hit the 15-minute job timeout before any test ran.)
 - Excludes `@pytest.mark.integration` (those run in the dedicated integration job).
 - Coverage gate is enforced via `pyproject.toml` `addopts`:
   `--cov=app --cov-report=term --cov-report=xml --cov-fail-under=70`.

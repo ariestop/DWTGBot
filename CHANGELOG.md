@@ -27,6 +27,13 @@ the relevant ADR when one applies.
 OK при 644 рестартах). Теперь нужен Docker HEALTHCHECK `healthy` и
 `Restarting=false`; это касается и автоотката в `deploy_update.sh`.
 
+### Fixed — CI: job с тестами больше не ставит ffmpeg
+
+Шаг `apt-get install ffmpeg` дважды за 2026-10-23 упирался в 15-минутный
+таймаут job'а на медленном зеркале Ubuntu, не дойдя до тестов. Unit-тесты
+подменяют все вызовы ffmpeg/ffprobe и проходят без него (проверено:
+659 passed с убранными из PATH ffmpeg/ffprobe), так что шаг удалён.
+
 ### Changed — бот говорит «сервис временно недоступен», когда лежат Redis/Postgres
 
 Неожиданные ошибки в обработке ссылки, постановке в очередь и выборе
