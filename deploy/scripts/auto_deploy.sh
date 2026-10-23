@@ -416,6 +416,13 @@ main() {
     exit 0
   fi
 
+  # Один деплой стека за раз: deploy.yml мог начать тот же SHA по SSH.
+  # Следующий запуск таймера увидит его уже развёрнутым.
+  if ! acquire_deploy_lock "${TARGET}" 0; then
+    log_warn "Деплой ${TARGET} уже идёт (deploy.yml), пропускаю этот запуск"
+    exit 0
+  fi
+
   # Статус деплоя публикует стек, который владеет миграциями:
   # nl1 (gate для nl2) или single.
   if stack_has_control_plane "${TARGET}"; then

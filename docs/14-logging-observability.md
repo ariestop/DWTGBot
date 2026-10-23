@@ -240,9 +240,12 @@ If you don't have Loki/Datadog yet, `docker compose logs --since 1h` +
   alone is the credential; logging it is equivalent to leaking the file.
 - **Telegram user PII** beyond numeric `user_id` / `chat_id`. No usernames,
   full names, phone numbers.
-- **Full source URLs in WARNING/ERROR lines for analytics**. The URL is
-  fine to log at INFO when troubleshooting, but treat it as PII-adjacent —
-  do not push it to a public dashboard.
+- **Source, thumbnail or download URLs**, at any level (P11 in
+  `docs/34-data-retention-and-privacy.md`). A URL says what a user
+  downloaded and stays in the host journal for 30 days (and goes to
+  Sentry when `SENTRY_DSN` is set). Log `platform` or `host` instead;
+  `app/tests/test_no_urls_in_logs.py` rejects `url=` / `source_url=` /
+  `thumbnail=`-style keys in logger calls.
 - **Raw HTTP request bodies / Telegram updates** in production. They can
   contain user-controlled content. Use DEBUG sparingly when diagnosing.
 

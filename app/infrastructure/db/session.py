@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -44,19 +41,3 @@ def build_engine(settings: Settings) -> AsyncEngine:
 
 def build_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
-
-
-@asynccontextmanager
-async def session_scope(
-    sessionmaker: async_sessionmaker[AsyncSession],
-) -> AsyncIterator[AsyncSession]:
-    """Transactional context manager: commit on success, rollback on error."""
-    session: AsyncSession = sessionmaker()
-    try:
-        yield session
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()

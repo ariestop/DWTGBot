@@ -162,6 +162,29 @@ require_stack() {
   is_valid_stack "${1:-}" || die "Unknown stack '${1:-}' (expected single|nl1|nl2)"
 }
 
+# acquire_deploy_lock STACK [WAIT_S]: one deploy of STACK at a time on
+# this host — deploy.yml over SSH and the autodeploy timer both end in
+# deploy_update.sh. Waits up to WAIT_S seconds (default
+# DEPLOY_LOCK_WAIT_SECONDS or 600; 0 = try once). Returns 1 if the lock
+# stays busy. The lock lives as long as the shell; a child started by
+# the holder (auto_deploy.sh → deploy_update.sh) sees DWTGBOT_DEPLOY_LOCK
+# and does not wait for its own parent.
+acquire_deploy_lock() {
+  local stack="$1" wait_s="${2:-${DEPLOY_LOCK_WAIT_SECONDS:-600}}"
+  local dir="${DEPLOY_STATE_DIR:-/var/lib/dwtgbot}"
+  local file="${dir}/deploy-${stack}.lock"
+  [[ "${DWTGBOT_DEPLOY_LOCK:-}" == "${file}" ]] && return 0
+  require_command flock
+  mkdir -p "${dir}"
+  exec 8>"${file}"
+  if ! flock -n 8; then
+    ((wait_s > 0)) || return 1
+    log_warn "Another deploy of ${stack} is running; waiting up to ${wait_s}s for ${file}"
+    flock -w "${wait_s}" 8 || return 1
+  fi
+  export DWTGBOT_DEPLOY_LOCK="${file}"
+}
+
 # Does the stack run postgres/redis/bot/backup (+ migrations)?
 stack_has_control_plane() { [[ "$1" == "single" || "$1" == "nl1" ]]; }
 # Does the stack run worker/cleanup/nginx/certbot + storage?

@@ -114,6 +114,7 @@ async def test_selected_label_is_html_escaped(monkeypatch: pytest.MonkeyPatch) -
     malicious = '<b onclick="alert(1)">pwned</b>'
     option = SimpleNamespace(key="video_720", label=malicious)
     analyzed = SimpleNamespace(
+        source_url="https://youtu.be/abc",
         options=[option],
         info=SimpleNamespace(platform="youtube", raw={"source_url": "https://youtu.be/abc"}),
     )
@@ -155,6 +156,7 @@ async def test_picker_registers_progress_placeholder(monkeypatch: pytest.MonkeyP
     """
     option = SimpleNamespace(key="video_1080", label="Видео 1080p")
     analyzed = SimpleNamespace(
+        source_url="https://youtu.be/abc",
         options=[option],
         info=SimpleNamespace(
             platform="youtube",
@@ -195,6 +197,7 @@ async def test_picker_skips_progress_placeholder_when_feature_flag_disabled(
 ) -> None:
     option = SimpleNamespace(key="video_1080", label="Видео 1080p")
     analyzed = SimpleNamespace(
+        source_url="https://youtu.be/abc",
         options=[option],
         info=SimpleNamespace(
             platform="youtube",

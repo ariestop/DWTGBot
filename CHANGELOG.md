@@ -18,6 +18,24 @@ none.
 
 ## [Unreleased]
 
+### Fixed — этап 1 аудита кода 2026-10 (R4, R5, R8, R9, R11)
+
+- **R4.** В логах больше нет URL источника, превью и нормализованных
+  ссылок (P11, `docs/34`): 8 вызовов логгера пишут платформу или хост.
+  `app/tests/test_no_urls_in_logs.py` не пропустит новые.
+- **R5.** Сбой чтения кэша метаданных (Postgres) больше не роняет анализ
+  ссылки: ответит провайдер, как уже было в воркере. Тесты
+  `AnalyzeLinkUseCase.execute`.
+- **R8.** Деплой стека не идёт параллельно: `deploy_update.sh` берёт
+  `/var/lib/dwtgbot/deploy-<stack>.lock`, деплой из `deploy.yml` ждёт её
+  до 600 с, таймер автодеплоя при занятой блокировке пропускает запуск.
+- **R9.** Одно правило выбора `source_url` (`AnalyzedMedia.source_url`)
+  вместо двух копий в боте; экранирование HTML через `html.escape`.
+  Поведение не меняется.
+- **R11.** Удалены неиспользуемые `FfmpegRunner`, `session_scope`,
+  `Settings.database_url_sync`, неатомарный `TempLinksRepository.update`
+  и зависимость `python-multipart`.
+
 ### Added — workflow «Server maintenance»
 
 `.github/workflows/maintenance.yml`: ручной запуск идемпотентной

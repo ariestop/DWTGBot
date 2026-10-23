@@ -6,19 +6,10 @@
 alongside :func:`configure_logging`, so turning on error
 aggregation is a one-env-var redeploy rather than a code change.
 
-Why do we initialise per-role rather than in a shared composition
-root? Because each role has a different reasonable sampling and
-a different set of integrations:
-
-* ``bot`` benefits from FastAPI's equivalent for ``python-telegram-bot`` (there is none),
-  so it uses the stdlib logging integration only;
-* ``api`` wires the FastAPI/ASGI integration so HTTP tracing works;
-* ``worker`` / ``cleanup`` / ``backup`` are long-running loops, so
-  a lower default sample rate is preferred.
-
-The ``role`` argument drives those differences. It is a pure
-string tag; ``configure_sentry`` never inspects it for control
-flow beyond the logged role name.
+Every role gets the same setup: the stdlib logging integration
+(ERROR+ records become events) and ``SENTRY_TRACES_SAMPLE_RATE``.
+``role`` is only a tag on each event, so one Sentry project can tell
+bot, api, worker, cleanup and backup apart.
 """
 
 from __future__ import annotations

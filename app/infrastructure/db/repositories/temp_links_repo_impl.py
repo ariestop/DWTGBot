@@ -46,24 +46,6 @@ class SqlAlchemyTempLinksRepository(TempLinksRepository):
             row = result.scalar_one_or_none()
             return _to_entity(row) if row else None
 
-    async def update(self, link: TempLink) -> TempLink:
-        if link.id is None:
-            raise ValueError("Cannot update temp link without id")
-        async with self._sm.begin() as session:
-            row = await session.get(TempLinkModel, link.id)
-            if row is None:
-                raise LookupError(f"TempLink {link.id} not found")
-            row.downloads_count = link.downloads_count
-            row.is_active = link.is_active
-            row.expires_at = link.expires_at
-            row.max_downloads = link.max_downloads
-            await session.flush()
-            # See ``create()`` — TimestampMixin.updated_at uses onupdate=now()
-            # which is server-evaluated; explicit refresh pulls the fresh
-            # value before the ORM row leaves the session scope.
-            await session.refresh(row)
-            return _to_entity(row)
-
     async def deactivate_expired(self) -> int:
         now = datetime.now(UTC)
         async with self._sm.begin() as session:

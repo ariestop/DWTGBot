@@ -1172,6 +1172,12 @@ journalctl -u dwtgbot-autodeploy.service -n 200 --no-pager
   от NL-1 (`nl1-autodeploy`), так что миграции всё ещё выигрывают гонку.
 - Сам rollout по-прежнему выполняется через `deploy_update.sh`, то есть
   базовый механизм раскатки на хосте не меняется.
+- Один деплой стека за раз: `deploy_update.sh` берёт блокировку
+  `/var/lib/dwtgbot/deploy-<stack>.lock` (`flock`). Деплой из
+  `deploy.yml` ждёт её до `DEPLOY_LOCK_WAIT_SECONDS` (600 с) и
+  останавливается, ничего не меняя; таймер при занятой блокировке
+  пропускает запуск. Включён ли таймер — секция `Autodeploy` в
+  «Server diagnostics».
 - `single` (`DEPLOY_TARGET=single`) ни от кого не ждёт: он сам владеет
   миграциями, тянет все четыре образа и публикует deployment status в
   environment `single-autodeploy` (`GITHUB_ENVIRONMENT_SINGLE`).

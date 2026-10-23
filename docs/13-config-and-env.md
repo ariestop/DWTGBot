@@ -283,7 +283,6 @@ Read these instead of recomputing in callers.
 | `max_file_size_bytes` | int | `MAX_FILE_SIZE_MB * 1024 * 1024` |
 | `admin_ids` | `set[int]` | parsed from `BOT_ADMIN_IDS` |
 | `database_url` | str | async DSN |
-| `database_url_sync` | str | sync DSN for Alembic |
 | `redis_url` | str | with optional `:password@` segment |
 
 > **Rule:** if a value can be derived, expose it as a property — never let

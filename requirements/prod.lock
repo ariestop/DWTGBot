@@ -1063,10 +1063,6 @@ python-dotenv==1.2.2 \
     # via
     #   pydantic-settings
     #   uvicorn
-python-multipart==0.0.12 \
-    --hash=sha256:045e1f98d719c1ce085ed7f7e1ef9d8ccc8c02ba02b5566d5f7521410ced58cb \
-    --hash=sha256:43dcf96cf65888a9cd3423544dd0d75ac10f7aa0c3c28a175bbcd00c9ce1aebf
-    # via -r requirements/base.txt
 python-telegram-bot==21.11.1 \
     --hash=sha256:17f933a7a0569f519d9b672e06d71c29ab3688f1ec575ba59a3ca37922481113 \
     --hash=sha256:2abda5202f27a838f35e8140e5292af0f4f8fad6c2e5123b2defadd5f4e8ca02

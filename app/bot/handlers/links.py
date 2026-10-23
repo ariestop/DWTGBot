@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
@@ -161,7 +163,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         keyboard = build_options_keyboard(result.request_id, result.analyzed.options)
         title = info.title or "медиа"
         await message.reply_text(
-            f"<b>{_escape(title)}</b>\nВыберите вариант:",
+            f"<b>{html.escape(title, quote=False)}</b>\nВыберите вариант:",
             parse_mode="HTML",
             reply_markup=keyboard,
         )
@@ -198,7 +200,7 @@ async def _handle_instant_download(
                 user_id=user_id,
                 chat_id=chat_id,
                 analyzed=analyzed,
-                source_url=_resolve_source_url(analyzed),
+                source_url=analyzed.source_url,
                 placeholder_message_id=placeholder.message_id,
                 correlation_id=correlation_id,
             )
@@ -257,7 +259,7 @@ async def _send_placeholder(message, *, thumbnail_url: str | None):
                 caption=_ANALYZE_CAPTION,
             )
         except TelegramError:
-            _logger.info("instant_placeholder_photo_failed", thumbnail=thumbnail_url)
+            _logger.info("instant_placeholder_photo_failed")
     try:
         return await message.reply_text(_ANALYZE_CAPTION)
     except TelegramError:
@@ -280,22 +282,3 @@ async def _edit_placeholder_text(placeholder, text: str) -> None:
         # Last-ditch fallback — the placeholder may have been deleted
         # by the user; we don't want to drag an AppError up the stack.
         _logger.info("instant_placeholder_edit_failed")
-
-
-def _resolve_source_url(analyzed: AnalyzedMedia) -> str:
-    """Best-match source URL from provider ``raw`` bag.
-
-    Mirrors the picker flow's helper in
-    ``app/bot/callbacks/download.py`` so both paths persist the
-    same ``source_url`` into ``download_jobs.source_url``.
-    """
-    raw = analyzed.info.raw or {}
-    for key in ("source_url", "webpage_url", "original_url"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return ""
-
-
-def _escape(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

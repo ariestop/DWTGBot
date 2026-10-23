@@ -46,7 +46,6 @@ httpx==0.27.2
 pydantic==2.13.2
 pydantic-settings==2.13.1
 structlog==24.4.0
-python-multipart==0.0.12
 
 # --- Observability ---
 # Optional at runtime — only loaded when METRICS_ENABLED=true (see

@@ -184,7 +184,7 @@ class YtDlpRunner:
                 timeout_s=download_timeout,
             )
         except TimeoutError as exc:
-            _logger.warning("ytdlp_download_timeout", url=url, timeout_s=download_timeout)
+            _logger.warning("ytdlp_download_timeout", host=host_of(url), timeout_s=download_timeout)
             raise DownloadTimeoutError(f"yt-dlp timed out after {download_timeout}s") from exc
 
         files = sorted(p for p in target_dir.iterdir() if p.is_file())
@@ -231,7 +231,7 @@ class YtDlpRunner:
             await self._report_if_throttle(host, exc)
             raise self._classify(exc) from exc
         except Exception as exc:
-            _logger.exception(unexpected_event, url=url)
+            _logger.exception(unexpected_event, host=host)
             raise wrap_unexpected(exc) from exc
         await self._note_success(host)
         return result

@@ -15,9 +15,6 @@ class TempLinksRepository(ABC):
     async def get_by_token(self, token: str) -> TempLink | None: ...
 
     @abstractmethod
-    async def update(self, link: TempLink) -> TempLink: ...
-
-    @abstractmethod
     async def deactivate_expired(self) -> int:
         """Mark expired links as inactive. Returns number of rows touched."""
 

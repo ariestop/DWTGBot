@@ -42,10 +42,6 @@ class _AtomicRepo(TempLinksRepository):
     async def get_by_token(self, token: str) -> TempLink | None:
         return self._by_token.get(token)
 
-    async def update(self, link: TempLink) -> TempLink:  # pragma: no cover
-        self._by_token[link.token] = link
-        return link
-
     async def deactivate_expired(self) -> int:  # pragma: no cover
         return 0
 

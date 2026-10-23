@@ -158,11 +158,6 @@ class Settings(
         )
 
     @property
-    def database_url_sync(self) -> str:
-        """Sync URL for Alembic."""
-        return self.database_url.replace("+asyncpg", "+psycopg")
-
-    @property
     def rate_limit_windows(self) -> RateLimitWindows:
         """Parsed rate-limit windows. Raises ValueError if any RL_* is malformed."""
         return RateLimitWindows(
