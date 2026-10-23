@@ -199,6 +199,17 @@ def test_container_names_are_unique_and_prefixed(stack: str) -> None:
     assert all(name.startswith("dwtgbot_") for name in names)
 
 
+@pytest.mark.parametrize("stack", sorted(_STACK_INCLUDES))
+def test_every_service_logs_to_journald(stack: str) -> None:
+    # json-file logs die with the container, and every deploy recreates
+    # them; diagnostics.sh reads the journal by CONTAINER_NAME instead.
+    for name, svc in _services(stack).items():
+        assert svc.get("logging") == {
+            "driver": "journald",
+            "options": {"tag": "{{.Name}}"},
+        }, f"{stack}/{name}"
+
+
 def test_single_reuses_split_container_and_volume_names() -> None:
     single = _render("single")
     split = _merge(_render("nl1"), _render("nl2"))

@@ -31,8 +31,17 @@ Key facts:
 - `structlog` is the API for our code; stdlib `logging` is bridged through
   the same processor chain so third-party libs (`httpx`, `sqlalchemy`,
   `telegram`, `arq`) emit consistent records.
-- Output is **always to stdout**. Docker captures it (json-file driver
-  with rotation: `max-size: 10m`, `max-file: 5`). No file-based sinks.
+- Output is **always to stdout**. Docker sends it to the host's
+  **journald** (`logging.driver: journald`, `tag: {{.Name}}` in
+  `deploy/compose/*.yml`). The journal keeps the lines of earlier
+  containers of the same name, so a deploy (which recreates them) no
+  longer erases the history. Retention — 30 days, ≤ 2 GiB, ≥ 4 GiB free —
+  is set by `deploy/systemd/journald-dwtgbot.conf`
+  (`sudo bash deploy/scripts/journald_setup.sh`). No file-based sinks.
+- Reading: `docker compose logs <svc>` / `docker logs` show the current
+  container only; history across deploys —
+  `journalctl CONTAINER_NAME=dwtgbot_bot --since -1d -o cat`
+  (or `-t dwtgbot_bot`). `diagnostics.sh` uses the journal.
 - Format is **JSON in production**, ConsoleRenderer (pretty + colors) in
   development.
 
@@ -246,7 +255,7 @@ If you don't have Loki/Datadog yet, `docker compose logs --since 1h` +
 | Counters / histograms | none | wire `prometheus-client` and expose `/metrics` on the API container |
 | Distributed tracing | none | OpenTelemetry — set up `OTEL_EXPORTER_*`, propagate `request_id` as a trace id |
 | Health metrics | `/healthz` and `/readyz` | already there; can be scraped by Blackbox Exporter |
-| Log shipping | docker json-file → external aggregator (manual) | Promtail / Vector sidecar |
+| Log shipping | docker → host journald (30 d) → external aggregator (manual) | Promtail / Vector sidecar |
 | Alerting | external (e.g. Loki ruler) | bundle a starter alert pack as ADR followup |
 
 The hexagonal split keeps these additions cheap: metrics live in the

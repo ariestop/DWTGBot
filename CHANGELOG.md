@@ -18,6 +18,38 @@ none.
 
 ## [Unreleased]
 
+### Changed — логи контейнеров в journald
+
+Все сервисы (`migrate` тоже) пишут через `logging.driver: journald`
+(`tag: {{.Name}}`) вместо `json-file`. Логи `json-file` удалялись
+вместе с контейнером, а деплой пересоздаёт контейнеры — история до
+деплоя пропадала (так было при разборе простоя 2026-10-22). Журнал
+хранит строки и прежних контейнеров с тем же именем:
+`journalctl CONTAINER_NAME=dwtgbot_bot --since -1d -o cat`;
+`docker logs` по-прежнему показывает текущий контейнер.
+
+- `diagnostics.sh` читает окно логов из journald (охватывает деплои) и
+  показывает секцию `Journal`: драйверы, сокет, объём, persistent или
+  volatile, лимиты.
+- preflight в `deploy_update.sh` останавливает деплой, если Docker не
+  может писать в journald, до того как тронуть работающий релиз.
+- `deploy/systemd/journald-dwtgbot.conf` + `deploy/scripts/journald_setup.sh`
+  (`install.sh` → `[21]`): `Storage=persistent`, 30 дней
+  (политика docs/34), не больше 2 GiB, не меньше 4 GiB свободно. Лимиты
+  на весь журнал хоста.
+
+**Действия оператора**
+
+- Первый деплой с этим изменением пересоздаёт **все** контейнеры
+  стека, включая `postgres`, `redis`, `nginx` и `certbot` (у них
+  поменялась конфигурация логов): простой — секунды, данные в томах.
+  Логи `json-file`, накопленные до этого деплоя, удаляются вместе со
+  старыми контейнерами.
+- Рекомендуется, на каждом хосте (`single`; при split — `nl1` и `nl2`),
+  до или после деплоя: `sudo bash deploy/scripts/journald_setup.sh`.
+  Без него остаются умолчания journald (на `single` журнал уже
+  persistent, до ~10% диска).
+
 ### Added — шаблон PR с разделом «Действия оператора» (D3)
 
 `.github/pull_request_template.md` (Зачем / Изменения / Проверка /

@@ -19,12 +19,15 @@ x-app-env: &app-env
 x-restart: &restart
   restart: unless-stopped
 
+# journald keeps the logs of earlier containers of the same name, which
+# every deploy recreates (json-file dropped them with the container).
+# Retention is journald's: deploy/systemd/journald-dwtgbot.conf.
+# Read with ``journalctl CONTAINER_NAME=dwtgbot_bot`` or ``docker logs``.
 x-logging: &logging
   logging:
-    driver: json-file
+    driver: journald
     options:
-      max-size: "10m"
-      max-file: "5"
+      tag: "{{.Name}}"
 
 # Audit fix A9: cgroup resource caps. worker is the heaviest consumer
 # (ffmpeg re-encode of 4K video) so it gets the biggest budget — bound

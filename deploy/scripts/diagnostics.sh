@@ -3,12 +3,15 @@
 # Read-only diagnostics of one stack, safe to print in a public CI log.
 #
 #   sudo bash diagnostics.sh single|nl1|nl2 [SINCE] [LAST]
-#     SINCE  log window for ``docker logs --since`` (default 2h)
+#     SINCE  log window, 30m / 2h / 1d (default 2h)
 #     LAST   error records to show per section (default 30)
 #     DEPLOY_REPO_PATH  server checkout, used for healthcheck.sh
 #
-# Prints host resources, container state, healthcheck.sh results and a
-# redacted digest of container logs (log_digest.py next to this file).
+# Prints host resources, journald state, container state, healthcheck.sh
+# results and a redacted digest of container logs (log_digest.py next to
+# this file). Logs come from journald when a container uses that driver —
+# it keeps earlier containers of the same name, which every deploy
+# recreates — and from ``docker logs`` otherwise.
 # Changes nothing on the host. Run by .github/workflows/diagnostics.yml.
 # =====================================================================
 set -Eeuo pipefail
@@ -23,7 +26,7 @@ LOG_TAIL_PER_CONTAINER=5000
 [[ "${TARGET}" =~ ^(single|nl1|nl2)$ ]] || { echo "Usage: diagnostics.sh single|nl1|nl2 [SINCE] [LAST]" >&2; exit 2; }
 [[ "${SINCE}" =~ ^[0-9]{1,4}[smhd]$ ]] || { echo "SINCE must look like 30m / 2h / 1d" >&2; exit 2; }
 [[ "${LAST}" =~ ^[0-9]{1,3}$ ]] || { echo "LAST must be a number" >&2; exit 2; }
-# ``docker logs --since`` takes Go durations, which have no ``d`` unit.
+# docker logs (Go durations) and journalctl both lack a ``d`` unit.
 if [[ "${SINCE}" == *d ]]; then
   SINCE="$((10#${SINCE%d} * 24))h"
 fi
@@ -50,12 +53,49 @@ digest() {
 redact() { digest --plain; }
 section() { printf '\n===== %s =====\n' "$1"; }
 
+# container_logs NAME: the window's log lines of NAME, oldest first.
+container_logs() {
+  local driver
+  driver="$(docker inspect --format '{{.HostConfig.LogConfig.Type}}' "$1" 2>/dev/null || true)"
+  if [[ "${driver}" == journald ]] && command -v journalctl >/dev/null 2>&1; then
+    # CONTAINER_NAME is stable across recreation; docker logs would only
+    # show the current container (since the last deploy).
+    journalctl --no-pager --quiet --output=cat CONTAINER_NAME="$1" \
+      --since "-${SINCE}" --lines "${LOG_TAIL_PER_CONTAINER}"
+  else
+    docker logs --timestamps --since "${SINCE}" --tail "${LOG_TAIL_PER_CONTAINER}" "$1" 2>&1
+  fi
+}
+
 section "Host"
 date -u '+%Y-%m-%dT%H:%M:%SZ'
 uptime
 free -m
 df -h -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null | redact
 docker system df 2>/dev/null || true
+
+section "Journal"
+echo "docker default log driver: $(docker info --format '{{.LoggingDriver}}' 2>/dev/null || echo '?')"
+echo "docker log drivers: $(docker info --format '{{range .Plugins.Log}}{{.}} {{end}}' 2>/dev/null || echo '?')"
+# deploy_update.sh preflight requires both for the journald driver.
+if [[ -S /run/systemd/journal/socket ]]; then
+  echo "journald socket: present"
+else
+  echo "journald socket: missing"
+fi
+if command -v journalctl >/dev/null 2>&1; then
+  journalctl --disk-usage 2>/dev/null | redact || true
+  if [[ -d /var/log/journal ]]; then
+    echo "storage: persistent (/var/log/journal)"
+  else
+    echo "storage: volatile — journald loses logs on reboot"
+  fi
+  # Effective limits: drop-ins override journald.conf, later files win.
+  cat /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null \
+    | grep -E '^(Storage|SystemMaxUse|SystemKeepFree|MaxRetentionSec|RateLimit[A-Za-z]*)=' || echo "limits: journald defaults"
+else
+  echo "journalctl not installed"
+fi
 
 section "Checkout"
 git -C "${REPO}" log -1 --format='%h %cd %s' --date=iso 2>/dev/null | redact || echo "  (no git checkout at DEPLOY_REPO_PATH)"
@@ -83,6 +123,5 @@ fi
 
 section "Logs since ${SINCE} (redacted digest)"
 for c in "${CONTAINERS[@]}"; do
-  docker logs --timestamps --since "${SINCE}" --tail "${LOG_TAIL_PER_CONTAINER}" "${c}" 2>&1 \
-    | sed "s/^/${c} | /" || true
+  container_logs "${c}" | sed "s/^/${c} | /" || true
 done | digest --last "${LAST}"

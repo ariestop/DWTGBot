@@ -1123,12 +1123,13 @@ identified the dominant directory.)
    ```bash
    find /var/backups/dwtgbot -name '*.sql.gz' -mtime +14 -print -delete
    ```
-6. **Docker logs** — set `max-size: 50m, max-file: 3` in
-   `/etc/docker/daemon.json`; restart docker (will restart
-   containers); rotate now:
+6. **Logs (journald)** — check and shrink the journal:
    ```bash
-   truncate -s 0 /var/lib/docker/containers/*/*-json.log
+   journalctl --disk-usage
+   sudo journalctl --vacuum-size=500M      # or --vacuum-time=7d
    ```
+   Caps live in `/etc/systemd/journald.conf.d/dwtgbot.conf`
+   (`deploy/scripts/journald_setup.sh`).
 7. **Last resort** — extend the volume (LVM grow / cloud disk
    resize); keep this off the critical path for a 03:00 page.
 
@@ -1144,7 +1145,8 @@ $NL2 logs --since=5m worker | grep -c 'No space left'                # 0
 
 - Daily `cleanup.sh` (cron + container).
 - Alert on `disk_used > 75%` (warn) and `> 85%` (page).
-- `daemon.json`: `log-driver: json-file, log-opts {max-size:50m, max-file:3}`.
+- journald caps: `SystemMaxUse=2G`, `SystemKeepFree=4G`, `MaxRetentionSec=30day`
+  (`deploy/systemd/journald-dwtgbot.conf`).
 - `BACKUP_RETENTION_DAYS` env (default 14) enforced by backup
   script.
 - Periodic large-job audit: jobs > 1 GB → tighter `MAX_FILE_SIZE_MB`.
@@ -1988,7 +1990,7 @@ NL2='docker compose -f deploy/nl2/docker-compose.yml'
 $NL1 ps                                    # NL-1: bot, api, postgres, redis, backup
 $NL2 ps                                    # NL-2: worker, nginx, certbot, cleanup, api
 
-# Logs (live)
+# Logs (live; history across deploys: journalctl CONTAINER_NAME=dwtgbot_bot --since -1d -o cat)
 $NL1 logs -f --tail=200 bot
 $NL2 logs -f --tail=200 worker
 $NL2 logs -f --tail=200 nginx
@@ -2365,7 +2367,7 @@ sudo rsync -aHAX --numeric-ids "${SRC}/" "root@<NL2_PRIVATE_IP>:${DST}/"
 | Вход | Значение |
 |---|---|
 | `target` | `single` / `nl1` / `nl2` — те же environments и SSH-секреты, что у `deploy.yml` |
-| `since` | окно логов для `docker logs --since` (`30m`, `2h`, `1d`) |
+| `since` | окно логов (`30m`, `2h`, `1d`); читается из journald, поэтому охватывает и контейнеры до последнего деплоя |
 | `last` | сколько последних error-записей показать |
 
 Workflow по SSH запускает `deploy/scripts/diagnostics.sh`, который
@@ -2384,7 +2386,12 @@ Workflow по SSH запускает `deploy/scripts/diagnostics.sh`, котор
 > добавляйте в `SAFE_FIELDS` вместе с тестом в
 > `app/tests/test_log_digest.py`.
 
+Секция `Journal` показывает драйвер логов, объём журнала, persistent
+или volatile хранение и действующие лимиты journald.
+
 Локально на сервере то же самое: `sudo bash deploy/scripts/diagnostics.sh single 2h`.
+Сырые логи на сервере, включая контейнеры до деплоя:
+`journalctl CONTAINER_NAME=dwtgbot_bot --since -6h -o cat`.
 
 ---
 

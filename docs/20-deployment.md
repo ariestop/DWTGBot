@@ -315,6 +315,14 @@ sudo systemctl restart docker
 ```
 
 `live-restore: true` keeps containers running across `docker` daemon restarts.
+`log-driver` here applies only to containers started outside compose:
+the stacks set `journald` themselves (`deploy/compose/*.yml`).
+
+Log retention (journald, host-wide — 30 days, ≤ 2 GiB, keeps 4 GiB free):
+
+```bash
+sudo bash deploy/scripts/journald_setup.sh    # or install.sh → [21]
+```
 
 Проверьте версию Compose: для `include` нужна **≥ 2.24.0**
 (`docker compose version --short`). `install.sh` и `deploy_update.sh`

@@ -55,7 +55,7 @@ This table classifies every field by privacy role.
 | `STORAGE_TMP_PATH/<random>/...` (NL-2 disk; в `single` — диск единственного хоста) | **transient user-requested content** | in-flight worker scratch |
 | Postgres dumps in `/var/backups/dwtgbot/` (NL-1 disk; в `single` — диск единственного хоста) | **PII at rest** | full snapshot of `download_jobs`, `temp_links`, `audit_logs` |
 | Off-host backup copies (S3 / restic / rsync target) | **PII at rest** | same as above, possibly multiple revisions |
-| Container logs (Docker JSON-file driver) | **non-PII by policy (P11)** — only IDs | structured logs |
+| Container logs (host journald, Docker `journald` driver) | **non-PII by policy (P11)** — only IDs | structured logs |
 
 ### 1.3 Out of scope (we deliberately do not store)
 
@@ -89,7 +89,7 @@ of all clocks for the same datum.
 | Provider info cache | `media_cache` | `MEDIA_CACHE_TTL_SECONDS` (6 h default) | cleanup worker `purge_expired` | yes |
 | Postgres dumps (on-host) | `/var/backups/dwtgbot/` | `BACKUP_RETENTION_DAYS` (14 d default) | `backup.sh` `find -mtime` | yes |
 | Postgres dumps (off-host) | external store | operator-defined (recommend ≤ 90 d for PII) | external rotation | yes |
-| Container logs | host disk via Docker | per `daemon.json` (`max-size`, `max-file`) | docker rotation | yes |
+| Container logs | host journal `/var/log/journal` | 30 days, ≤ 2 GiB (`deploy/systemd/journald-dwtgbot.conf`) | journald `MaxRetentionSec` / `SystemMaxUse` | yes |
 | Audit logs (`audit_logs` table) | inside the DB | **forever today**; partition-by-month + drop-old recommended (§5) | manual SQL | yes |
 
 ### 2.2 Why "forever" for `download_jobs`
@@ -116,7 +116,7 @@ If your hosting jurisdiction requires bounded retention:
 | `download_jobs` | 365 days | scheduled SQL purge (§5) |
 | `audit_logs` | 730 days | partition + drop (§5) |
 | Off-host backups containing PII | ≤ 90 days | external rotation policy (`22-` §5) |
-| Logs | 30 days | `daemon.json` size cap, plus log shipper retention |
+| Logs | 30 days | journald `MaxRetentionSec=30day` (default config), plus log shipper retention |
 
 These are not the defaults — opt-in by writing them into `app_settings`
 or a cron job.
@@ -316,27 +316,24 @@ sudo docker compose -f deploy/nl1/docker-compose.yml start backup
 
 ### 4.5 Container logs
 
-By policy (P11) logs contain only `user_id` (a number). To remove
-historical lines:
+By policy (P11) logs contain only `user_id` (a number). Containers log
+to the host journal, which cannot be edited line by line:
 
 ```bash
 # Identify
-docker compose logs --no-color bot api worker | jq -c 'select(.user_id == :user_id)' | wc -l
+journalctl -o cat CONTAINER_NAME=dwtgbot_bot CONTAINER_NAME=dwtgbot_api CONTAINER_NAME=dwtgbot_worker \
+  | jq -c 'select(.user_id == :user_id)' | wc -l
 
-# Remove (per-container; requires service restart)
-# single: -f deploy/single/docker-compose.yml
-docker compose -f deploy/nl1/docker-compose.yml logs --no-color bot \
-  | jq -c 'select((.user_id // 0) != :user_id)' \
-  > /tmp/bot.purged.log
-# Replace the live JSON file (host path varies by Docker version):
-sudo find /var/lib/docker/containers -name '*-json.log' -exec ls -la {} +
-# … then move the purged version into place per file. Restart the container.
+# Remove: drop every archived journal file (the whole host journal,
+# not only dwtgbot) — rotate first so the active file is archived too.
+sudo journalctl --rotate
+sudo journalctl --vacuum-time=1s
 ```
 
-In practice: Docker rotates logs aggressively (`max-size=50m`,
-`max-file=5` in `daemon.json`) so the offending lines age out in days.
-Most operators consider that sufficient, given log-only PII is the
-numeric `user_id`.
+In practice: the journal keeps 30 days (`MaxRetentionSec=30day` in
+`deploy/systemd/journald-dwtgbot.conf`), so the lines age out on their
+own; most operators consider that sufficient, given log-only PII is
+the numeric `user_id`.
 
 ### 4.6 Acknowledge
 
