@@ -774,6 +774,7 @@ If both legs work, the restore is good.
 | Восстановление | одноразовый `postgres:16-alpine` (`dwtgbot_restore_drill`, `--network none`, без опубликованных портов); `gunzip \| psql` внутри контейнера — на хосте нужен только docker |
 | Проверка | таблицы `download_jobs`, `media_cache`, `temp_links`; в лог — ревизия Alembic и число строк |
 | Лог | публичный: из ошибок psql выводятся только строки `ERROR:` с замаскированными значениями в кавычках — данные строк в лог не попадают |
+| Версии | контейнер `backup` (Debian trixie) делает дампы `pg_dump` 17, сервер — Postgres 16. Дамп 17 начинается с `SET transaction_timeout`, которого 16 не знает: drill и `restore.sh` удаляют эту строку, всё остальное грузится с `ON_ERROR_STOP` (drill) |
 
 Контейнер удаляется при любом исходе. Если drill упал — сначала §6
 (ручная проверка бэкапа), затем §4 (off-host копии).

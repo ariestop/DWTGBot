@@ -122,7 +122,11 @@ check_age() {
 restore_dump() {
   local dump="$1"
   log_info "Restoring ${dump##*/} into drill DB"
-  if ! in_drill sh -c 'gunzip -c "$1" | psql -h 127.0.0.1 -U "$2" -d "$3" -v ON_ERROR_STOP=1 -q >/dev/null 2>/tmp/restore.err' \
+  # The backup image's pg_dump (Debian trixie: client 17) emits
+  # ``SET transaction_timeout``, which a 16 server rejects. restore.sh
+  # drops the same line; everything else stays under ON_ERROR_STOP.
+  if ! in_drill sh -c 'gunzip -c "$1" | sed "/^SET transaction_timeout = /d" \
+        | psql -h 127.0.0.1 -U "$2" -d "$3" -v ON_ERROR_STOP=1 -q >/dev/null 2>/tmp/restore.err' \
       _ "${dump}" "${DRILL_USER}" "${DRILL_DB}"; then
     # Postgres quotes the offending value in the message itself
     # (invalid input syntax for type bigint: "<value>"): mask quoted parts.
