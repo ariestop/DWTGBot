@@ -12,6 +12,22 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Added — preflight и автооткат в `deploy_update.sh`
+
+- **Preflight**: после `pull` и до `up -d` каждый app-сервис стека
+  (`bot`, `api`, `worker`, `cleanup`) прогоняет `validate_runtime` в новом
+  образе с реальным окружением сервиса (`docker compose run --rm --no-deps`).
+  Отказ любого сервиса прерывает деплой, не трогая работающие контейнеры —
+  простой 2026-10-22 был бы остановлен на этом шаге. Ошибки pydantic
+  выводятся без значений. `DEPLOY_SKIP_PREFLIGHT=1` отключает шаг.
+- **Автооткат**: если `up -d`, миграции, рестарт nginx или
+  `healthcheck.sh` упали, стек возвращается на последний релиз, прошедший
+  healthcheck на этом хосте (`/var/lib/dwtgbot/last-good-<stack>.env`;
+  до первой записи — на образы, работавшие перед деплоем), и
+  `healthcheck.sh` повторяется; деплой всё равно завершается с ошибкой.
+  Не срабатывает, если миграции сдвинули ревизию Alembic (тогда — ручной
+  «Rollback hint»), и при `DEPLOY_SKIP_ROLLBACK=1`.
+
 ### Fixed — прод на single-хосте не стартовал без пароля Redis
 
 После PR #17 `validate_runtime` в `APP_ENV=production` требовал пароль

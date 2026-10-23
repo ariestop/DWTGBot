@@ -13,12 +13,17 @@
 #   2. validate compose config
 #   3. (control plane: single / NL-1) backup db before applying migrations
 #   4. docker compose pull
-#   5. docker compose up -d (recreates only changed containers)
-#   6. (control plane) run alembic migrate one-shot
-#   7. (media plane: single / NL-2) restart nginx
-#   8. healthcheck
-#   9. remove old *:sha-* release images (keeps current + previous)
-#  10. on failure → print rollback hint
+#   5. preflight: validate_runtime of every app service in the NEW
+#      images, with the stack's real env; abort before touching the
+#      running containers if it fails (DEPLOY_SKIP_PREFLIGHT=1 skips)
+#   6. docker compose up -d (recreates only changed containers)
+#   7. (control plane) run alembic migrate one-shot
+#   8. (media plane: single / NL-2) restart nginx
+#   9. healthcheck
+#  10. remember this release as last-good, remove old *:sha-* images
+#  11. if 6–9 failed → automatic rollback to the last-good release
+#      (skipped when migrations changed the schema; then print the
+#      manual rollback hint). DEPLOY_SKIP_ROLLBACK=1 disables it.
 # =====================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
@@ -33,6 +38,12 @@ YOUTUBE_COOKIE_PATH="${YOUTUBE_COOKIE_PATH:-/srv/dwtgbot/secrets/cookies-youtube
 INSTAGRAM_COOKIE_PATH="${INSTAGRAM_COOKIE_PATH:-/srv/dwtgbot/secrets/cookies-instagram.txt}"
 
 run_compose() { compose_stack "${TARGET}" "$@"; }
+
+# Last release that passed healthcheck.sh, as IMAGE_*=<image> lines.
+DEPLOY_STATE_DIR="${DEPLOY_STATE_DIR:-/var/lib/dwtgbot}"
+LAST_GOOD_FILE="${DEPLOY_STATE_DIR}/last-good-${TARGET}.env"
+# compose service → the IMAGE_* variable that selects its image.
+RELEASE_SERVICES=(bot:IMAGE_BOT api:IMAGE_API worker:IMAGE_WORKER backup:IMAGE_BACKUP)
 
 git_pull_if_possible() {
   if [[ "${AUTODEPLOY_SKIP_GIT_PULL:-0}" == "1" ]]; then
@@ -123,14 +134,116 @@ ensure_secrets_dir() {
 }
 
 PREVIOUS_IMAGES=()
+ROLLBACK_RELEASE=()
+DB_REVISION_BEFORE=""
 
 remember_previous_images() {
   mapfile -t PREVIOUS_IMAGES < <(docker ps -a --filter "name=^dwtgbot_" --format '{{.Image}}' 2>/dev/null || true)
 }
 
+# Print IMAGE_*=<image> for the release the stack's containers run now.
+current_release() {
+  local pair svc var image
+  for pair in "${RELEASE_SERVICES[@]}"; do
+    svc="${pair%%:*}"
+    var="${pair#*:}"
+    image="$(docker ps -a --filter "name=^dwtgbot_" \
+      --filter "label=com.docker.compose.service=${svc}" \
+      --filter "label=com.docker.compose.oneoff=False" \
+      --format '{{.Image}}' 2>/dev/null | head -n 1 || true)"
+    [[ -n "${image}" ]] && printf '%s=%s\n' "${var}" "${image}"
+  done
+  return 0
+}
+
+# Alembic head of the stack's database ("" when there is none here).
+db_revision() {
+  stack_has_control_plane "${TARGET}" || return 0
+  docker exec dwtgbot_postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version_num FROM alembic_version"' \
+    2>/dev/null | tr -d '[:space:]' || true
+}
+
+# Rollback target: the last release that passed healthcheck.sh on this
+# host; before the first such deploy, whatever the containers run now.
+remember_rollback_release() {
+  local line
+  if [[ -f "${LAST_GOOD_FILE}" ]]; then
+    while IFS= read -r line; do
+      [[ "${line}" =~ ^IMAGE_(BOT|API|WORKER|BACKUP)=[A-Za-z0-9./:@_-]+$ ]] && ROLLBACK_RELEASE+=("${line}")
+    done <"${LAST_GOOD_FILE}"
+    log_info "Rollback target: last-good release from ${LAST_GOOD_FILE}"
+  else
+    mapfile -t ROLLBACK_RELEASE < <(current_release)
+    log_info "Rollback target: images running before this deploy (no ${LAST_GOOD_FILE} yet)"
+  fi
+  DB_REVISION_BEFORE="$(db_revision)"
+}
+
+record_last_good() {
+  local tmp
+  if ! mkdir -p "${DEPLOY_STATE_DIR}" 2>/dev/null; then
+    log_warn "Cannot create ${DEPLOY_STATE_DIR}; automatic rollback will fall back to running images"
+    return 0
+  fi
+  tmp="${LAST_GOOD_FILE}.tmp"
+  if current_release >"${tmp}" && mv -f "${tmp}" "${LAST_GOOD_FILE}"; then
+    log_ok "Recorded last-good release in ${LAST_GOOD_FILE}"
+  else
+    rm -f -- "${tmp}"
+    log_warn "Could not write ${LAST_GOOD_FILE}"
+  fi
+}
+
 pull_images() {
   log_step "Pulling images"
   run_compose pull
+}
+
+# Runs inside each new app image with the service's real environment.
+# Prints only setting names and messages: the deploy log is public and a
+# pydantic error would otherwise echo the offending value.
+PREFLIGHT_PY='
+import sys
+try:
+    from app.config import get_settings
+    errors = get_settings().validate_runtime(require_storage=False, require_tools=False)
+except RuntimeError as exc:
+    cause = exc.__cause__
+    if hasattr(cause, "errors"):
+        errors = [".".join(map(str, e["loc"])) + ": " + e["msg"] for e in cause.errors()]
+    else:
+        errors = ["invalid configuration (details withheld)"]
+for err in errors:
+    print("    " + err)
+sys.exit(1 if errors else 0)
+'
+
+# Catch configuration the new release refuses to start with (a new
+# required setting, a stricter check) before ``up -d`` replaces the
+# running containers: the 2026-10-22 outage was exactly that.
+preflight_config() {
+  if [[ "${DEPLOY_SKIP_PREFLIGHT:-0}" == "1" ]]; then
+    log_warn "DEPLOY_SKIP_PREFLIGHT=1, skipping preflight"
+    return 0
+  fi
+  log_step "Preflight: app config in the new images"
+  local services=() failed=() svc
+  mapfile -t services < <(run_compose config --services)
+  for svc in bot api worker cleanup; do
+    [[ " ${services[*]} " == *" ${svc} "* ]] || continue
+    if run_compose run --rm --no-deps -T --name "dwtgbot_preflight_${svc}_$$" \
+        --entrypoint python "${svc}" -c "${PREFLIGHT_PY}"; then
+      log_ok "${svc}: config accepted"
+    else
+      log_error "${svc}: config rejected (see above)"
+      failed+=("${svc}")
+    fi
+  done
+  if ((${#failed[@]} > 0)); then
+    log_error "Preflight rejected the config of: ${failed[*]}"
+    return 1
+  fi
 }
 
 # Every deploy pulls new immutable ``*-{bot,api,worker,backup}:sha-*``
@@ -199,6 +312,53 @@ verify() {
   bash "${SCRIPT_DIR}/healthcheck.sh" "${TARGET}"
 }
 
+# apply → migrate → nginx → healthcheck, failing fast. Called from an
+# ``if`` so a failure reaches rollback_release instead of the ERR trap.
+release_new() {
+  apply && run_migrations && restart_nginx_if_present && verify
+}
+
+rollback_release() {
+  log_step "Automatic rollback"
+  if [[ "${DEPLOY_SKIP_ROLLBACK:-0}" == "1" ]]; then
+    log_warn "DEPLOY_SKIP_ROLLBACK=1, leaving the failed release in place"
+    print_rollback_hint
+    return
+  fi
+  if ((${#ROLLBACK_RELEASE[@]} == 0)); then
+    log_warn "No previous release on this host (first deploy?) — nothing to roll back to"
+    print_rollback_hint
+    return
+  fi
+  local revision_now
+  revision_now="$(db_revision)"
+  if [[ "${revision_now}" != "${DB_REVISION_BEFORE}" ]]; then
+    log_error "Migrations moved the schema ${DB_REVISION_BEFORE:-none} -> ${revision_now:-none}; the previous images may not run on it, not rolling back automatically"
+    print_rollback_hint
+    return
+  fi
+  local line var same=1
+  for line in "${ROLLBACK_RELEASE[@]}"; do
+    var="${line%%=*}"
+    [[ "${!var:-}" == "${line#*=}" ]] || same=0
+  done
+  if ((same)); then
+    log_warn "The rollback target is the release that just failed — nothing to roll back to"
+    print_rollback_hint
+    return
+  fi
+  for line in "${ROLLBACK_RELEASE[@]}"; do
+    log_info "  ${line}"
+    export "${line?}"
+  done
+  if run_compose up -d --remove-orphans && verify; then
+    log_warn "Rolled back: ${TARGET} is healthy on the previous release; the new one stays undeployed"
+  else
+    log_error "Rollback did not bring ${TARGET} back to healthy"
+    print_rollback_hint
+  fi
+}
+
 print_rollback_hint() {
   log_warn "Rollback hint:"
   echo "  Set IMAGE_BOT/IMAGE_API/IMAGE_WORKER to the previous tag in ${ENV_FILE}"
@@ -219,11 +379,15 @@ main() {
   validate_config
   pre_backup
   remember_previous_images
+  remember_rollback_release
   pull_images
-  apply
-  run_migrations
-  restart_nginx_if_present
-  verify
+  preflight_config || die "Preflight failed — the running release was not touched"
+  if ! release_new; then
+    log_error "New release failed to come up healthy"
+    rollback_release
+    exit 1
+  fi
+  record_last_good
   prune_old_images
   log_ok "Deploy ${TARGET} finished"
 }
