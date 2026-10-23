@@ -227,6 +227,16 @@ preflight_config() {
     log_warn "DEPLOY_SKIP_PREFLIGHT=1, skipping preflight"
     return 0
   fi
+  log_step "Preflight: journald log driver"
+  # Every service logs via journald (deploy/compose/*.yml); without it no
+  # container — the preflight ones below included — can start.
+  if docker info --format '{{range .Plugins.Log}}{{.}} {{end}}' 2>/dev/null | grep -qw journald \
+      && [[ -S /run/systemd/journal/socket ]]; then
+    log_ok "journald available"
+  else
+    log_error "Docker cannot log to journald here (needs systemd-journald running)"
+    return 1
+  fi
   log_step "Preflight: app config in the new images"
   local services=() failed=() svc
   mapfile -t services < <(run_compose config --services)

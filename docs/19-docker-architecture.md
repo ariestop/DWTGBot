@@ -328,17 +328,20 @@ x-restart: &restart
 
 x-logging: &logging
   logging:
-    driver: json-file
+    driver: journald
     options:
-      max-size: "10m"
-      max-file: "5"
+      tag: "{{.Name}}"
 ```
 
 - **`unless-stopped`** for all long-running services. Excludes
   `migrate` (`restart: no`) and one-shot scripts.
-- **`json-file` driver** with rotation. Per-container ceiling: 50 MiB
-  (5 × 10 MiB). For higher retention, ship to an aggregator (see
-  [`14-logging-observability.md`](14-logging-observability.md)).
+- **`journald` driver** for every service, `migrate` included. Unlike
+  `json-file`, the journal outlives the container, so the logs before a
+  deploy (or a crash that made compose recreate it) stay readable:
+  `journalctl CONTAINER_NAME=dwtgbot_<svc>`. Retention is journald's,
+  host-wide: `deploy/systemd/journald-dwtgbot.conf` (30 days, ≤ 2 GiB),
+  installed by `deploy/scripts/journald_setup.sh`. For more, ship to an
+  aggregator (see [`14-logging-observability.md`](14-logging-observability.md)).
 
 ---
 

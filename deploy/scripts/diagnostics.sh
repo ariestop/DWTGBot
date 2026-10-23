@@ -76,6 +76,13 @@ docker system df 2>/dev/null || true
 
 section "Journal"
 echo "docker default log driver: $(docker info --format '{{.LoggingDriver}}' 2>/dev/null || echo '?')"
+echo "docker log drivers: $(docker info --format '{{range .Plugins.Log}}{{.}} {{end}}' 2>/dev/null || echo '?')"
+# deploy_update.sh preflight requires both for the journald driver.
+if [[ -S /run/systemd/journal/socket ]]; then
+  echo "journald socket: present"
+else
+  echo "journald socket: missing"
+fi
 if command -v journalctl >/dev/null 2>&1; then
   journalctl --disk-usage 2>/dev/null | redact || true
   if [[ -d /var/log/journal ]]; then

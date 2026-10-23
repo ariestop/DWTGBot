@@ -239,6 +239,11 @@ opt_firewall() {
   fi
 }
 
+opt_journald() {
+  log_step "journald log retention"
+  sudo bash "${SCRIPT_DIR}/journald_setup.sh"
+}
+
 opt_up()      { log_step "Starting"; auto_compose up -d; }
 opt_down()    { log_step "Stopping"; auto_compose down; }
 opt_restart() { log_step "Restarting"; auto_compose restart; }
@@ -353,6 +358,7 @@ MENU_ITEMS=(
   "4"  "Create .env from template"
   "20" "Configure cookies (Instagram / YouTube)"
   "5"  "Configure firewall"
+  "21" "Configure journald log retention"
   "6"  "Start containers"
   "7"  "Stop containers"
   "8"  "Restart containers"
@@ -391,6 +397,7 @@ run_action() {
     18) opt_install_autodeploy ;;
     19) opt_prepare_single ;;
     20) opt_cookies ;;
+    21) opt_journald ;;
     0)  exit 0 ;;
     *)  log_warn "Unknown choice: $1" ;;
   esac
