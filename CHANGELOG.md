@@ -30,6 +30,11 @@ the relevant ADR when one applies.
   прогонами `healthcheck.sh` десяти минут может не хватить.
 - `.github/dependabot.yml`: еженедельный сгруппированный PR для
   `github-actions` с `cooldown` 14 дней.
+- `hadolint-action` v3.5.0 несёт hadolint 2.15, который применяет DL3025
+  и к `HEALTHCHECK`. Проверки в `api`/`bot`/`worker` намеренно в shell-форме
+  (`||`, перенаправления, `${VAR:-default}`), поэтому перед ними стоит
+  точечное `# hadolint ignore=DL3025`; для `CMD`/`ENTRYPOINT` правило
+  по-прежнему действует.
 
 ### Added — preflight и автооткат в `deploy_update.sh`
 

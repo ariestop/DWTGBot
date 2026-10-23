@@ -65,6 +65,8 @@ COPY --chown=${APP_USER}:${APP_USER} alembic.ini ./
 
 USER ${APP_USER}
 
+# Shell form on purpose: the probe needs ``||``, redirects and ${VAR:-default}.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost', 1)); s.close()" \
         || pgrep -f "app.main_bot" >/dev/null || exit 1
