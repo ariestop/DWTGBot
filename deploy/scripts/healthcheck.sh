@@ -72,10 +72,19 @@ _sanitize_env_value() {
 }
 
 # Bot may still be ``created`` / ``restarting`` for a few seconds after ``compose up``.
-_bot_is_running() {
-  [[ "$(docker inspect --format '{{.State.Status}}' dwtgbot_bot 2>/dev/null)" == running ]]
+# Healthy per its Docker HEALTHCHECK, or running when it has none. "running"
+# alone is not enough: a crash-looping container is briefly "running" on
+# every restart (the 2026-10-22 outage showed "bot running" as OK with
+# 644 restarts), while its health resets to "starting" and never turns
+# "healthy".
+_container_healthy() {
+  local s
+  s="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null || true)"
+  [[ "${s}" == healthy || "${s}" == running ]] \
+    && [[ "$(docker inspect --format '{{.State.Restarting}}' "$1" 2>/dev/null)" == false ]]
 }
-_nl1_bot_running() { until_deadline _bot_is_running; }
+_nl1_bot_healthy() { until_deadline _container_healthy dwtgbot_bot; }
+_worker_healthy() { until_deadline _container_healthy dwtgbot_worker; }
 
 log_step "Toolchain"
 check "docker present"          has_command docker
@@ -96,7 +105,7 @@ _check_control_plane() {
   # Prefer Docker health status; fall back to running (no healthcheck).
   check "postgres healthy"         bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_postgres 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
   check "redis healthy"            bash -c 's=$(docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" dwtgbot_redis 2>/dev/null || true); [[ "$s" == healthy || "$s" == running ]]'
-  check "bot running"              _nl1_bot_running
+  check "bot healthy"              _nl1_bot_healthy
 }
 
 # Media-plane probes (single / NL-2). Container name is ``dwtgbot_api``
@@ -104,7 +113,7 @@ _check_control_plane() {
 _check_media_plane() {
   local port="$1"
   check "api running"              bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_api 2>/dev/null | grep -qx running'
-  check "worker running"           bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_worker 2>/dev/null | grep -qx running'
+  check "worker healthy"           _worker_healthy
   check "nginx running"            bash -c 'docker inspect --format "{{.State.Status}}" dwtgbot_nginx 2>/dev/null | grep -qx running'
   check "internal /healthz"        _nl2_curl_healthz "${port}"
   check "internal /readyz"         _nl2_curl_readyz "${port}"
