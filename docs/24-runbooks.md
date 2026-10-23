@@ -2388,6 +2388,24 @@ Workflow по SSH запускает `deploy/scripts/diagnostics.sh`, котор
 
 ---
 
+## §28 — Алерт Watchdog в Telegram (ADR-0013)
+
+`.github/workflows/watchdog.yml` каждые 15 минут выполняет
+`healthcheck.sh` на хостах топологии и пишет в Telegram только при смене
+состояния.
+
+| Сообщение | Что делать |
+|---|---|
+| 🔴 `<host> не проходит healthcheck (или недоступен по SSH)` | Actions → **Server diagnostics** (§27) для этого хоста: секция «Containers» (health, restarts, последний упавший probe) и сводка ошибок. Если хост не отвечает по SSH — проверить его у провайдера |
+| 🔴 `… всё ещё не проходит healthcheck (~N ч)` | напоминание раз в ~4 ч, пока не починено |
+| 🟢 `<host> снова проходит healthcheck` | авария закончилась; разобрать причину |
+
+Лог прогона — ссылка в сообщении. Ручной запуск: Actions → Watchdog →
+Run workflow. GitHub отключает scheduled-workflow после 60 дней без
+активности в репозитории — включить заново во вкладке Actions.
+
+---
+
 ## Closing note
 
 Every new incident → either matches a runbook above, or **becomes

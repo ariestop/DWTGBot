@@ -12,6 +12,36 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Added — Watchdog: алерт в Telegram, когда сервис не работает (ADR-0013)
+
+`.github/workflows/watchdog.yml` каждые 15 минут выполняет `healthcheck.sh`
+на хостах топологии по SSH и пишет в Telegram только смену состояния
+(DOWN / RECOVERED / напоминание раз в ~4 ч,
+`.github/scripts/watchdog-notify.sh`). Простой 22.10 (11 ч незамеченным)
+был бы виден через ~15 минут. Runbook — `docs/24-runbooks.md` §28.
+
+### Fixed — `healthcheck.sh` не видел restart-loop
+
+`bot`/`worker` проверялись по `State.Status == running`, что верно и для
+контейнера в restart-loop между рестартами (во время P0 — «bot running»
+OK при 644 рестартах). Теперь нужен Docker HEALTHCHECK `healthy` и
+`Restarting=false`; это касается и автоотката в `deploy_update.sh`.
+
+### Fixed — CI: job с тестами больше не ставит ffmpeg
+
+Шаг `apt-get install ffmpeg` дважды за 2026-10-23 упирался в 15-минутный
+таймаут job'а на медленном зеркале Ubuntu, не дойдя до тестов. Unit-тесты
+подменяют все вызовы ffmpeg/ffprobe и проходят без него (проверено:
+659 passed с убранными из PATH ffmpeg/ffprobe), так что шаг удалён.
+
+### Changed — бот говорит «сервис временно недоступен», когда лежат Redis/Postgres
+
+Неожиданные ошибки в обработке ссылки, постановке в очередь и выборе
+формата отвечали «попробуйте ещё раз» даже во время аварии. Если ошибка
+вызвана недоступностью Postgres/Redis (`app/utils/errors.py`), ответ —
+«Сервис временно недоступен — идут технические работы. Попробуйте через
+пару минут.»
+
 ### Fixed — дампы контейнера `backup` не грузились в Postgres 16 с ON_ERROR_STOP
 
 Первый restore drill на сервере упал: образ `backup` (Debian trixie)

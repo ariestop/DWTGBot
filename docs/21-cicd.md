@@ -77,6 +77,7 @@ flowchart LR
 | Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | selected ref/target deployed over SSH |
 | Roll out (automatic) | `.github/workflows/diagnostics.yml` | `workflow_dispatch` (target, since, last) | `diagnostics-<target>` | `contents: read` | Read-only SSH: состояние контейнеров, `healthcheck.sh`, обезличенная сводка ошибок (`docs/24-runbooks.md` §27) |
 | `.github/workflows/restore-drill.yml` | `schedule` (ночью), `workflow_dispatch`, PR в `migrations/**` | — | `contents: read` | Миграции на чистый Postgres + проверка таблиц |
+| `.github/workflows/watchdog.yml` | `schedule` (каждые 15 мин), `workflow_dispatch` | `watchdog` | `contents: read`, `actions: read` | `healthcheck.sh` по SSH на хостах; Telegram при смене состояния (ADR-0013, `docs/24-runbooks.md` §28) |
 | `.github/workflows/restore-drill-server.yml` | `schedule` (вс 03:41 UTC), `workflow_dispatch` (target, from_offsite) | `restore-drill-server` | `contents: read` | По SSH восстановить свежий бэкап на сервере в одноразовый Postgres, отчёт в Telegram (`docs/22-backup-restore.md` §12.4) |
 | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
 | Dependency refresh | `yt-dlp-update.yml` | daily cron + manual | yt-dlp lock bump on `main` → the chain above; Telegram report (§4b) |
@@ -171,9 +172,6 @@ requirements/dev.lock`, pip-кэш привязан к `dev.lock`. CI получ
 ### 3.3 `tests` — pytest
 
 ```yaml
-- name: Install ffmpeg (for yt-dlp postprocessor probes)
-  run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
-
 - name: pytest
   env:
     BOT_TOKEN: "0000000000:test-token"
@@ -186,7 +184,9 @@ requirements/dev.lock`, pip-кэш привязан к `dev.lock`. CI получ
   run: pytest -m "not integration"
 ```
 
-- Installs `ffmpeg` system binary (yt-dlp probes it during option construction).
+- No system `ffmpeg`: the unit tests fake every ffmpeg/ffprobe subprocess.
+  (CI used to `apt-get install ffmpeg`; slow Ubuntu mirrors made that step
+  hit the 15-minute job timeout before any test ran.)
 - Excludes `@pytest.mark.integration` (those run in the dedicated integration job).
 - Coverage gate is enforced via `pyproject.toml` `addopts`:
   `--cov=app --cov-report=term --cov-report=xml --cov-fail-under=70`.

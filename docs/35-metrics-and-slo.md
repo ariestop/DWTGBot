@@ -348,6 +348,11 @@ groups:
 
 ### 6.3 No-Prometheus alternative — periodic log query
 
+> **Сейчас в проде** (ADR-0013): Prometheus не развёрнут; доступность
+> покрывает Watchdog (`.github/workflows/watchdog.yml`) — `healthcheck.sh`
+> раз в 15 минут и Telegram при смене состояния. Правила ниже — шаблоны
+> на будущее.
+
 For deployments without Prometheus, a 5-minute cron that runs the LogQL
 queries (§4.2) and pages on threshold breach is a valid substitute.
 Example with `logcli`:

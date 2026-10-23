@@ -50,9 +50,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-python-deps
 
-      - name: Install ffmpeg (for yt-dlp postprocessor probes)
-        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
-
       - name: pytest
         env:
           BOT_TOKEN: "0000000000:test-token"

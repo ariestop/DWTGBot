@@ -13,6 +13,7 @@ from app.application.use_cases.auto_enqueue_download import AutoEnqueueInput
 from app.bot.callbacks.codec import CancelJobCallback
 from app.bot.container import BotContainer, get_container
 from app.bot.keyboards.download_options import build_options_keyboard
+from app.bot.services.fallback_text import unexpected_error_text
 from app.domain.enums import Platform
 from app.domain.rate_limit import LimitDecision
 from app.exceptions import AppError, InvalidUrlError, TooManyJobsError, UnsupportedPlatformError
@@ -116,7 +117,9 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         except Exception as exc:
             _logger.exception("link_analysis_unexpected_error", error=str(exc))
-            await message.reply_text("Не удалось обработать ссылку. Попробуйте позже.")
+            await message.reply_text(
+                unexpected_error_text(exc, "Не удалось обработать ссылку. Попробуйте позже.")
+            )
             return
 
         if not result.analyzed.options:
@@ -210,7 +213,9 @@ async def _handle_instant_download(
         return
     except Exception as exc:
         _logger.exception("instant_enqueue_unexpected_error", error=str(exc))
-        await _edit_placeholder_text(placeholder, "Не удалось поставить задачу в очередь.")
+        await _edit_placeholder_text(
+            placeholder, unexpected_error_text(exc, "Не удалось поставить задачу в очередь.")
+        )
         return
 
     # Attach the cancel button now. The initial caption stays

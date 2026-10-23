@@ -5,6 +5,7 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.bot.services.fallback_text import unexpected_error_text
 from app.exceptions import AppError
 from app.logging_config import get_logger
 
@@ -21,6 +22,8 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_message = "Что-то пошло не так. Попробуйте отправить ссылку ещё раз."
     if isinstance(err, AppError):
         user_message = err.user_message
+    elif err is not None:
+        user_message = unexpected_error_text(err, user_message)
 
     _logger.exception("bot_error", error=str(err))
 
