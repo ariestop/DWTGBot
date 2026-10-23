@@ -1,0 +1,6 @@
+# Known false positives from the full-history scan (CI on workflow_dispatch,
+# e.g. the yt-dlp auto-update run). Fingerprint: <commit>:<file>:<rule>:<line>.
+# Test fixture token for the temp-link endpoint.
+1639771a15d00e384cda9775f4f0622da132758e:app/tests/test_downloads_endpoint.py:generic-api-key:147
+# Placeholder image tag (sha-abcdef1) in the rollback runbook.
+1639771a15d00e384cda9775f4f0622da132758e:docs/21-cicd.md:generic-api-key:670

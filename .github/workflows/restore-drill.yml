@@ -43,7 +43,7 @@ jobs:
         ports:
           - 55432:5432
         options: >-
-          --health-cmd "pg_isready -U drill"
+          --health-cmd "pg_isready -U drill -d dwtgbot_drill"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -60,8 +60,15 @@ jobs:
         run: pip install -r requirements/base.txt
 
       - name: Apply migrations against the drill DB
+        # migrations/env.py loads app Settings (BOT_TOKEN is required) and
+        # runs an async engine, so the URL needs the asyncpg driver — the
+        # only Postgres driver in requirements/base.txt.
         env:
-          DATABASE_URL: postgresql+psycopg://drill:drillpw@127.0.0.1:55432/dwtgbot_drill
+          BOT_TOKEN: "0000000000:drill-token"
+          APP_ENV: development
+          STORAGE_PATH: ${{ runner.temp }}/dwtgbot/storage
+          STORAGE_TMP_PATH: ${{ runner.temp }}/dwtgbot/tmp
+          DATABASE_URL: postgresql+asyncpg://drill:drillpw@127.0.0.1:55432/dwtgbot_drill
         run: alembic upgrade head
 
       - name: Verify required tables exist
