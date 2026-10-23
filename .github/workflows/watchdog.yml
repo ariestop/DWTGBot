@@ -1,0 +1,70 @@
+name: Watchdog
+
+# Every 15 minutes: healthcheck.sh on each host over SSH (deploy.yml's
+# secrets and environments); Telegram only when the state changes —
+# DOWN, RECOVERED, and a reminder every ~4 h while still down. The
+# previous state comes from this workflow's own run history, so nothing
+# is stored anywhere. The 2026-10-22 outage lasted 11 h unnoticed; this
+# reports such a failure within ~15 minutes (GitHub may delay schedules).
+#
+# healthcheck.sh shares a 90 s wait budget across its probes, which
+# absorbs container restarts during a deploy. GitHub disables scheduled
+# workflows after 60 days without repository activity — re-enable it in
+# the Actions tab if that happens.
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read # previous runs' conclusions → state transitions
+
+jobs:
+  probe:
+    name: Probe ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # ADR-0011: one host, or NL-1 + NL-2.
+        target: ${{ fromJSON(vars.DEPLOY_TOPOLOGY == 'single' && '["single"]' || '["nl1","nl2"]') }}
+    environment: ${{ matrix.target }}
+    env:
+      PREFIX: ${{ fromJSON('{"single":"SINGLE","nl1":"NL1","nl2":"NL2"}')[matrix.target] }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: healthcheck.sh over SSH
+        id: probe
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          DEPLOY_REPO_PATH: ${{ secrets[format('{0}_REPO_PATH', env.PREFIX)] }}
+          TARGET: ${{ matrix.target }}
+        with:
+          host: ${{ secrets[format('{0}_HOST', env.PREFIX)] }}
+          username: ${{ secrets[format('{0}_SSH_USER', env.PREFIX)] }}
+          key: ${{ secrets[format('{0}_SSH_KEY', env.PREFIX)] }}
+          port: ${{ secrets[format('{0}_SSH_PORT', env.PREFIX)] || 22 }}
+          command_timeout: 5m
+          envs: DEPLOY_REPO_PATH,TARGET
+          script: |
+            set -Eeuo pipefail
+            NO_COLOR=1 sudo -E bash "${DEPLOY_REPO_PATH}/deploy/scripts/healthcheck.sh" "${TARGET}"
+
+      - name: Report state changes to Telegram
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OUTCOME: ${{ steps.probe.outcome }}
+          TARGET: ${{ matrix.target }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/watchdog-notify.sh

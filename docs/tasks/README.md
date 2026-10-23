@@ -66,7 +66,7 @@
 ## Аудит 2026-10 — P0 + план
 
 **Файл:** [`audit-2026-10.md`](audit-2026-10.md)
-**Статус:** ✅ P0 закрыт (PR #19, `DEPLOY_TOPOLOGY`); ✅ C1–C3 (PR #18); ✅ D1 preflight + D2 автооткат; ✅ шаг 3 C4/C5 (actions по SHA, node24, Dependabot); ✅ шаг 4 (D4 restore drill на сервере, Q1–Q3, Q5); ⏳ D3, C6, D5 (оператор), шаг 5.
+**Статус:** ✅ P0 закрыт (PR #19, `DEPLOY_TOPOLOGY`); ✅ C1–C3 (PR #18); ✅ D1 preflight + D2 автооткат; ✅ шаг 3 C4/C5 (actions по SHA, node24, Dependabot); ✅ шаг 4 (D4 restore drill на сервере, Q1–Q3, Q5); ✅ шаг 5 (ADR-0013: Watchdog, restart-loop в healthcheck, деградация); ⏳ D3, C6, B1, D5 (оператор).
 
 ---
 
