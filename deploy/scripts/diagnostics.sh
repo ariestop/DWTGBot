@@ -97,6 +97,14 @@ else
   echo "journalctl not installed"
 fi
 
+section "Autodeploy"
+# deploy.yml and this timer share deploy_update.sh's per-stack lock.
+if command -v systemctl >/dev/null 2>&1; then
+  echo "dwtgbot-autodeploy.timer: $(systemctl is-enabled dwtgbot-autodeploy.timer 2>/dev/null || true) / $(systemctl is-active dwtgbot-autodeploy.timer 2>/dev/null || true)"
+else
+  echo "systemctl not available"
+fi
+
 section "Checkout"
 git -C "${REPO}" log -1 --format='%h %cd %s' --date=iso 2>/dev/null | redact || echo "  (no git checkout at DEPLOY_REPO_PATH)"
 

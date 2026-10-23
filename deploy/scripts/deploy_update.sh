@@ -380,6 +380,8 @@ print_rollback_hint() {
 }
 
 main() {
+  acquire_deploy_lock "${TARGET}" \
+    || die "Another deploy of ${TARGET} still holds the lock — nothing was changed"
   trap 'print_rollback_hint' ERR
   log_info "Updating ${TARGET}"
   git_pull_if_possible
