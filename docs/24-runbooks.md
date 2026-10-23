@@ -2356,6 +2356,38 @@ sudo rsync -aHAX --numeric-ids "${SRC}/" "root@<NL2_PRIVATE_IP>:${DST}/"
 
 ---
 
+## §27 — Удалённая диагностика без SSH (workflow «Server diagnostics»)
+
+Когда нужно посмотреть состояние сервера и ошибки, не заходя на него
+(или из облачной сессии агента, где исходящий SSH закрыт), запустите
+**Actions → Server diagnostics → Run workflow** (`.github/workflows/diagnostics.yml`).
+
+| Вход | Значение |
+|---|---|
+| `target` | `single` / `nl1` / `nl2` — те же environments и SSH-секреты, что у `deploy.yml` |
+| `since` | окно логов для `docker logs --since` (`30m`, `2h`, `1d`) |
+| `last` | сколько последних error-записей показать |
+
+Workflow по SSH запускает `deploy/scripts/diagnostics.sh`, который
+ничего не меняет на хосте и печатает: ресурсы хоста, состояние
+`dwtgbot_*` контейнеров (health, restarts, exit code, OOM, последний
+упавший probe), вывод `healthcheck.sh` и сводку логов
+`deploy/scripts/log_digest.py` — счётчики error/warning по контейнерам,
+топ событий, последние error-записи с traceback и не-JSON строки
+падений при старте (например, `Invalid configuration: …`).
+
+> ⚠️ Репозиторий публичный — лог этого job виден всем. Поэтому
+> `log_digest.py` выводит только whitelisted поля structlog и
+> редактирует user/chat id, URL (остаётся только хост), имена
+> медиафайлов, IP, e-mail, UUID, токены и пароли. Не добавляйте в
+> workflow «сырой» `docker logs`; новые поля, которые нужно видеть,
+> добавляйте в `SAFE_FIELDS` вместе с тестом в
+> `app/tests/test_log_digest.py`.
+
+Локально на сервере то же самое: `sudo bash deploy/scripts/diagnostics.sh single 2h`.
+
+---
+
 ## Closing note
 
 Every new incident → either matches a runbook above, or **becomes

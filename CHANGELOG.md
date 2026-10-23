@@ -12,6 +12,30 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Added — workflow «Server diagnostics»
+
+`.github/workflows/diagnostics.yml` (ручной запуск) по тем же SSH-секретам,
+что и `deploy.yml`, выполняет `deploy/scripts/diagnostics.sh`: ресурсы хоста,
+состояние контейнеров, `healthcheck.sh` и обезличенная сводка ошибок из
+логов (`deploy/scripts/log_digest.py`). Лог job публичный, поэтому сводка
+содержит только whitelisted поля и редактирует id, URL, имена файлов и
+секреты. Runbook — `docs/24-runbooks.md` §27.
+
+### Fixed — ночной Restore drill падал на `alembic upgrade head`
+
+`restore-drill.yml` передавал `postgresql+psycopg://…`, а в
+`requirements/base.txt` только `asyncpg` (и `migrations/env.py` работает
+через async engine), и не задавал `BOT_TOKEN`, без которого `Settings`
+не загружаются. Теперь `postgresql+asyncpg://…` и минимальный набор env.
+
+### Fixed — CI по `workflow_dispatch` падал на Gitleaks
+
+При ручном/автоматическом dispatch (yt-dlp auto-update) gitleaks сканирует
+всю историю и находил две заглушки: тестовый токен в
+`app/tests/test_downloads_endpoint.py` и `sha-abcdef1` в
+`docs/21-cicd.md`. Их fingerprints внесены в `.gitleaksignore`, поэтому
+обновления yt-dlp снова доходят до деплоя.
+
 ### Security — the cancel button could cancel another user's job
 
 The live-progress cancel button carries `cj|<job_id>`, and `job_id` is a
