@@ -46,17 +46,19 @@ jobs:
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           DEPLOY_REPO_PATH: ${{ secrets[format('{0}_REPO_PATH', env.PREFIX)] }}
-          TARGET: ${{ matrix.target }}
+          # Not TARGET: ssh-action's entrypoint keeps the drone-ssh binary
+          # path in TARGET, and that is what ``envs`` would forward.
+          HC_TARGET: ${{ matrix.target }}
         with:
           host: ${{ secrets[format('{0}_HOST', env.PREFIX)] }}
           username: ${{ secrets[format('{0}_SSH_USER', env.PREFIX)] }}
           key: ${{ secrets[format('{0}_SSH_KEY', env.PREFIX)] }}
           port: ${{ secrets[format('{0}_SSH_PORT', env.PREFIX)] || 22 }}
           command_timeout: 5m
-          envs: DEPLOY_REPO_PATH,TARGET
+          envs: DEPLOY_REPO_PATH,HC_TARGET
           script: |
             set -Eeuo pipefail
-            NO_COLOR=1 sudo -E bash "${DEPLOY_REPO_PATH}/deploy/scripts/healthcheck.sh" "${TARGET}"
+            NO_COLOR=1 sudo -E bash "${DEPLOY_REPO_PATH}/deploy/scripts/healthcheck.sh" "${HC_TARGET}"
 
       - name: Report state changes to Telegram
         if: always()

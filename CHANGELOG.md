@@ -12,6 +12,13 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — Watchdog передавал на хост не тот `TARGET`
+
+Entrypoint `appleboy/ssh-action` хранит в `TARGET` путь к бинарнику
+drone-ssh, и `envs: …,TARGET` отправлял на хост его вместо имени стека:
+`healthcheck.sh` отвечал `Usage`, и первый прогон Watchdog прислал ложный
+DOWN. Переменная переименована в `HC_TARGET`.
+
 ### Added — Watchdog: алерт в Telegram, когда сервис не работает (ADR-0013)
 
 `.github/workflows/watchdog.yml` каждые 15 минут выполняет `healthcheck.sh`
