@@ -1088,13 +1088,31 @@ sudo bash deploy/scripts/deploy_update.sh nl2
 3. Control-plane stacks (`single`, `nl1`): take a pre-deploy DB backup when Postgres is running.
 4. `docker compose pull` using image tags from the current environment /
    `.env`.
-5. `docker compose up -d` (Compose recreates only changed services).
-6. Control-plane stacks (`single`, `nl1`): run Alembic migrations.
-7. Media-plane stacks (`single`, `nl2`): restart nginx defensively so bind-mounted config and upstream
+5. **Preflight**: для каждого app-сервиса стека (`bot`, `api`, `worker`,
+   `cleanup`) `docker compose run --rm --no-deps` запускает в **новом**
+   образе `validate_runtime` с реальным окружением сервиса (`.env` +
+   `environment` из compose). Если хоть один сервис отвергает
+   конфигурацию, деплой прерывается **до** замены контейнеров — работающий
+   релиз не трогается. В лог выводятся только имена настроек и сообщения,
+   без значений (лог Deploy в Actions публичный). Пропуск —
+   `DEPLOY_SKIP_PREFLIGHT=1`.
+6. `docker compose up -d` (Compose recreates only changed services).
+7. Control-plane stacks (`single`, `nl1`): run Alembic migrations.
+8. Media-plane stacks (`single`, `nl2`): restart nginx defensively so bind-mounted config and upstream
    resolution are refreshed.
-8. Wait for healthchecks to report green; abort + log if anything stays
+9. Wait for healthchecks to report green; abort + log if anything stays
    `unhealthy` longer than the timeout.
-9. После успешного healthcheck удалить старые образы релизов
+10. **Автооткат**: если `up -d`, миграции, рестарт nginx или
+   `healthcheck.sh` упали, скрипт возвращает стек на последний релиз,
+   прошедший healthcheck на этом хосте (`/var/lib/dwtgbot/last-good-<stack>.env`,
+   переопределяется `DEPLOY_STATE_DIR`; до первого такого деплоя — на
+   образы, работавшие перед деплоем), и повторяет `healthcheck.sh`. Деплой
+   в любом случае завершается с ненулевым кодом. Автооткат **не**
+   выполняется, если миграции сдвинули ревизию Alembic (старые образы
+   могут не работать на новой схеме — см. §12.3), если откатываться не на
+   что или при `DEPLOY_SKIP_ROLLBACK=1`; тогда печатается ручной
+   «Rollback hint».
+11. После успешного healthcheck записать релиз в `last-good-<stack>.env` и удалить старые образы релизов
    (`*-{bot,api,worker,backup}:sha-*`): остаются образы текущих
    контейнеров и релиза, который работал до деплоя (для отката без
    повторного pull). Без этого каждый деплой добавлял на диск новые
