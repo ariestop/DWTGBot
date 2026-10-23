@@ -756,6 +756,28 @@ If both legs work, the restore is good.
 
 ---
 
+### 12.4 Еженедельный restore drill на сервере
+
+Каждое воскресенье в 03:41 UTC `.github/workflows/restore-drill-server.yml`
+по SSH (секреты и environments `deploy.yml`; хост — `single`, либо `nl1`
+в split) запускает `deploy/scripts/restore_drill.sh` из checkout сервера
+и шлёт результат в Telegram (`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`).
+Вручную: **Actions → Restore drill (server) → Run workflow** (можно
+`from_offsite`) или на хосте `sudo bash deploy/scripts/restore_drill.sh [--from-offsite]`.
+
+Что делает скрипт:
+
+| Шаг | Детали |
+|---|---|
+| Источник дампов | том `dwtgbot_backups` (ежедневные дампы контейнера `backup`) и `/var/backups/dwtgbot` на хосте (дампы перед деплоем, `--from-offsite`) — оба только на чтение; берётся самый свежий `dwtgbot_*.sql.gz` |
+| Возраст | дамп старше `DRILL_MAX_AGE_HOURS` (48 ч) — провал: бэкапы перестали создаваться |
+| Восстановление | одноразовый `postgres:16-alpine` (`dwtgbot_restore_drill`, `--network none`, без опубликованных портов); `gunzip \| psql` внутри контейнера — на хосте нужен только docker |
+| Проверка | таблицы `download_jobs`, `media_cache`, `temp_links`; в лог — ревизия Alembic и число строк |
+| Лог | публичный: из ошибок psql выводятся только строки `ERROR:` с замаскированными значениями в кавычках — данные строк в лог не попадают |
+
+Контейнер удаляется при любом исходе. Если drill упал — сначала §6
+(ручная проверка бэкапа), затем §4 (off-host копии).
+
 ## §13 — Partial restore
 
 Sometimes you don't want the whole DB back — you want one table, one row, or "everything from yesterday but not today's writes". The dump format supports it; the trick is to do it without affecting the live DB.

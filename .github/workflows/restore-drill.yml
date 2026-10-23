@@ -9,9 +9,9 @@ name: Restore drill
 #   - stale REQUIRED_TABLES list in restore_drill.sh,
 #   - hardcoded paths broken by housekeeping.
 #
-# Production deploys should additionally run restore_drill.sh
-# --from-offsite from cron once a week against the real S3/rclone
-# remote — see deploy/scripts/restore_drill.sh header.
+# The real backups are drilled weekly on the server by
+# restore-drill-server.yml (same restore_drill.sh, newest dump, Telegram
+# report); this workflow only proves the migrations on an empty DB.
 
 on:
   schedule:
