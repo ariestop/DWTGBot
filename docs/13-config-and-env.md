@@ -71,6 +71,7 @@ Grouped by concern. **Bold** = required, no safe default.
 |---|---|---|---|
 | `APP_ROLE` | enum (`bot`/`api`/`worker`/`all`) | `all` | Diagnostic; the actual entrypoint determines behaviour |
 | `APP_ENV` | enum (`development`/`production`) | `development` | Controls JSON logs, validation strictness |
+| `DEPLOY_TOPOLOGY` | enum (`single`/`split`) | `split` | Топология деплоя (ADR-0011). `deploy/single/single.override.yml` задаёт `single` всем app-сервисам; в `.env` не указывается. При `single` пароль Redis в production не обязателен |
 | `LOG_LEVEL` | enum (`DEBUG`…`CRITICAL`) | `INFO` | Validated; case-insensitive |
 | `LOG_JSON` | bool | `false` | In production JSON is forced regardless |
 
@@ -109,7 +110,7 @@ Grouped by concern. **Bold** = required, no safe default.
 |---|---|---|---|
 | `REDIS_HOST` | str | `redis` | Same dual-use pattern as Postgres |
 | `REDIS_PORT` | int | `6379` | |
-| `REDIS_PASSWORD` | str | empty | Required in production: `validate_runtime` refuses to start when the effective Redis URL (`REDIS_URL`, else built from `REDIS_*`) carries no password |
+| `REDIS_PASSWORD` | str | empty | Required in production in the split topology: `validate_runtime` refuses to start when the effective Redis URL (`REDIS_URL`, else built from `REDIS_*`) carries no password. Optional with `DEPLOY_TOPOLOGY=single` |
 | `REDIS_DB` | int | `0` | |
 | `REDIS_URL` | str | computed | Overrides if set |
 

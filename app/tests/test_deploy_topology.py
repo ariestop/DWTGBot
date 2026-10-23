@@ -153,6 +153,19 @@ def test_single_app_services_join_both_networks() -> None:
         assert services[name]["networks"] == ["dwtgbot_internal"], name
 
 
+@pytest.mark.parametrize("stack", sorted(_STACK_INCLUDES))
+def test_only_single_declares_single_topology(stack: str) -> None:
+    # Settings default to ``split`` (Redis password required in production);
+    # only the one-host stack may relax that.
+    services = _services(stack)
+    for name in _APP_IMAGE_VARS:
+        if name not in services:
+            continue
+        env = services[name].get("environment") or {}
+        expected = "single" if stack == "single" else None
+        assert env.get("DEPLOY_TOPOLOGY") == expected, (stack, name)
+
+
 def test_single_media_services_wait_for_migrate() -> None:
     services = _services("single")
     for name in ("api", "worker", "cleanup"):
