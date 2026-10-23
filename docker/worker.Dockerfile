@@ -65,6 +65,8 @@ RUN mkdir -p /var/lib/dwtgbot/storage /var/lib/dwtgbot/tmp \
 
 USER ${APP_USER}
 
+# Shell form on purpose: the probe needs ``||``, redirects and ${VAR:-default}.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD pgrep -f "app.main_worker|arq " >/dev/null || exit 1
 

@@ -43,7 +43,7 @@ jobs:
     environment: single
     steps:
       - name: Deploy to the single host over SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEPLOY_TARGET: single
@@ -54,7 +54,11 @@ jobs:
           username: ${{ secrets.SINGLE_SSH_USER }}
           key: ${{ secrets.SINGLE_SSH_KEY }}
           port: ${{ secrets.SINGLE_SSH_PORT || 22 }}
-          script_stop: true
+          # ssh-action v1.2 dropped ``script_stop``: the script's own
+          # ``set -Eeuo pipefail`` stops it on the first error. A deploy
+          # with an automatic rollback runs healthcheck.sh twice, so the
+          # 10m default is too short; stay under the job timeouts.
+          command_timeout: 18m
           # Audit fix #4: pass immutable image tags into the deploy
           # script's environment. The compose files require IMAGE_* to
           # be set (``${VAR:?...}``) and will refuse to start otherwise.
@@ -92,7 +96,7 @@ jobs:
     environment: nl1
     steps:
       - name: Deploy to NL-1 over SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEPLOY_TARGET: nl1
@@ -103,7 +107,11 @@ jobs:
           username: ${{ secrets.NL1_SSH_USER }}
           key: ${{ secrets.NL1_SSH_KEY }}
           port: ${{ secrets.NL1_SSH_PORT || 22 }}
-          script_stop: true
+          # ssh-action v1.2 dropped ``script_stop``: the script's own
+          # ``set -Eeuo pipefail`` stops it on the first error. A deploy
+          # with an automatic rollback runs healthcheck.sh twice, so the
+          # 10m default is too short; stay under the job timeouts.
+          command_timeout: 18m
           envs: *deploy_envs
           script: *deploy_script
 
@@ -130,7 +138,7 @@ jobs:
     environment: nl2
     steps:
       - name: Deploy to NL-2 over SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEPLOY_TARGET: nl2
@@ -141,6 +149,10 @@ jobs:
           username: ${{ secrets.NL2_SSH_USER }}
           key: ${{ secrets.NL2_SSH_KEY }}
           port: ${{ secrets.NL2_SSH_PORT || 22 }}
-          script_stop: true
+          # ssh-action v1.2 dropped ``script_stop``: the script's own
+          # ``set -Eeuo pipefail`` stops it on the first error. A deploy
+          # with an automatic rollback runs healthcheck.sh twice, so the
+          # 10m default is too short; stay under the job timeouts.
+          command_timeout: 18m
           envs: *deploy_envs
           script: *deploy_script

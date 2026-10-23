@@ -75,7 +75,9 @@ flowchart LR
 | Publish | `build-images.yml` | successful `ci.yml` on `main` + `v*.*.*` tag + manual | tagged images in GHCR |
 | Roll out (automatic) | `deploy.yml` | successful `build-images.yml` on `main` | running new images on the single host (`DEPLOY_TOPOLOGY=single`) or on NL-1, then NL-2 |
 | Roll out (manual) | `deploy.yml` | manual (`workflow_dispatch`) | selected ref/target deployed over SSH |
-| Roll out (automatic) | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
+| Roll out (automatic) | `.github/workflows/diagnostics.yml` | `workflow_dispatch` (target, since, last) | `diagnostics-<target>` | `contents: read` | Read-only SSH: состояние контейнеров, `healthcheck.sh`, обезличенная сводка ошибок (`docs/24-runbooks.md` §27) |
+| `.github/workflows/restore-drill.yml` | `schedule` (ночью), `workflow_dispatch`, PR в `migrations/**` | — | `contents: read` | Миграции на чистый Postgres + проверка таблиц |
+| `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | periodic host timer | latest green `main` SHA deployed on each host |
 | Dependency refresh | `yt-dlp-update.yml` | daily cron + manual | yt-dlp lock bump on `main` → the chain above; Telegram report (§4b) |
 
 Canonical GitHub-side order for `main` is:
@@ -104,6 +106,16 @@ Rolling restart with current .env` вызывает низкоуровневый
 | `.github/workflows/build-images.yml` | successful `CI` run on `main`, tags `v*.*.*`, `workflow_dispatch` | `build-images-${{ github.event.workflow_run.head_sha || github.ref }}` | `contents: read`, `packages: write` | Build & push 4 images to GHCR |
 | `.github/workflows/deploy.yml` | successful `Build & push images` run on `main`, `workflow_dispatch` (target + ref) | `deploy-<target>` (manual) or `deploy-single` / `deploy-both` by `DEPLOY_TOPOLOGY`, `cancel-in-progress: false` | `contents: read`, `packages: read` | SSH into the single host, or NL-1 then NL-2, run `deploy_update.sh` |
 | `deploy/systemd/dwtgbot-autodeploy.timer` + `deploy/scripts/auto_deploy.sh` | systemd timer on each host | `flock` lock per target (`single` / `nl1` / `nl2`) | GitHub token on host (`Actions: read`, `Contents: read`, `Deployments: read/write`) | Wait for green `ci.yml` + `build-images.yml`, then run host-side deploy |
+
+**Сторонние actions закреплены по SHA коммита** (`uses: owner/repo@<40 hex> # vX.Y.Z`),
+включая composite `.github/actions/setup-python-deps`. Тег или ветку
+владелец action может переписать, и workflow с секретами выполнит чужой
+код; SHA неизменяем. Обновляет пины `.github/dependabot.yml`: раз в
+неделю один сгруппированный PR, релиз должен «отлежаться» 14 дней
+(`cooldown`). Новый `uses:` добавляйте сразу с SHA и комментарием версии;
+SHA коммита (не аннотированного тега) даёт
+`git ls-remote https://github.com/<owner>/<repo> 'refs/tags/<tag>^{}'`
+или, для lightweight-тега, та же команда без `^{}`.
 
 **Concurrency contract:**
 - CI cancels stale runs on the same branch (PR rebase friendly).

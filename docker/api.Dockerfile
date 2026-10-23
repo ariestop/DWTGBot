@@ -63,6 +63,8 @@ RUN mkdir -p /var/lib/dwtgbot/storage /var/lib/dwtgbot/tmp \
 USER ${APP_USER}
 EXPOSE 8080
 
+# Shell form on purpose: the probe needs ``||``, redirects and ${VAR:-default}.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${API_PORT:-8080}/healthz" >/dev/null || exit 1
 

@@ -1,0 +1,16 @@
+# Keeps the SHA-pinned actions in .github/ current: Dependabot bumps the
+# pin and its ``# vX.Y.Z`` comment together, one grouped PR a week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    # Let a release age before it reaches CI with repository secrets.
+    cooldown:
+      default-days: 14
+    groups:
+      github-actions:
+        patterns: ["*"]

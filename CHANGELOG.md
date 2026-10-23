@@ -12,6 +12,30 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Security — сторонние GitHub Actions закреплены по SHA, Node 24
+
+- Все `uses:` в `.github/workflows/*` и `.github/actions/setup-python-deps`
+  ссылаются на SHA коммита с комментарием версии; `aquasecurity/trivy-action`
+  больше не берётся с `@master`.
+- Обновлены до версий на node24 (Node 20 на runner'ах снимается):
+  `actions/checkout` v7.0.1, `setup-python` v7.0.0, `upload-artifact` v7.0.2,
+  `cache` v6.1.0, `docker/*` (`setup-qemu` v4.4.0, `setup-buildx` v4.4.1,
+  `login` v4.6.0, `metadata` v6.2.0, `build-push` v7.4.0),
+  `gitleaks-action` v3.0.0; также `appleboy/ssh-action` v1.2.5,
+  `trivy-action` v0.36.0, `hadolint-action` v3.5.0, `lychee-action` v2.9.0.
+  Используемые входы есть в новых версиях; релизы не моложе двух недель.
+- `ssh-action` v1.2 убрал `script_stop`: скрипты деплоя и диагностики и так
+  идут под `set -Eeuo pipefail`. `command_timeout` задан явно (18m деплой,
+  12m диагностика) вместо 10m по умолчанию — деплою с автооткатом и двумя
+  прогонами `healthcheck.sh` десяти минут может не хватить.
+- `.github/dependabot.yml`: еженедельный сгруппированный PR для
+  `github-actions` с `cooldown` 14 дней.
+- `hadolint-action` v3.5.0 несёт hadolint 2.15, который применяет DL3025
+  и к `HEALTHCHECK`. Проверки в `api`/`bot`/`worker` намеренно в shell-форме
+  (`||`, перенаправления, `${VAR:-default}`), поэтому перед ними стоит
+  точечное `# hadolint ignore=DL3025`; для `CMD`/`ENTRYPOINT` правило
+  по-прежнему действует.
+
 ### Added — preflight и автооткат в `deploy_update.sh`
 
 - **Preflight**: после `pull` и до `up -d` каждый app-сервис стека
