@@ -254,7 +254,7 @@ class ProcessDownloadUseCase:
         try:
             record = await self._media_cache.get_fresh(job.source_url)
         except Exception:  # pragma: no cover  best-effort cache read
-            _logger.exception("media_cache_read_failed", url=job.source_url)
+            _logger.exception("media_cache_read_failed")
             return None
         if record is None:
             return None
@@ -357,7 +357,7 @@ class ProcessDownloadUseCase:
             _logger.info("job_size_probed", option=option.key, size_bytes=size_bytes)
             return size_bytes
         if option.kind is MediaKind.VIDEO:
-            _logger.warning("job_size_unknown", option=option.key, url=url)
+            _logger.warning("job_size_unknown", option=option.key)
             raise SizeUnknownError(
                 f"Unable to determine size for option {option.key}",
                 user_message=(

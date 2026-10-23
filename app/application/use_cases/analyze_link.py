@@ -85,11 +85,7 @@ class AnalyzeLinkUseCase:
                 # numbers — cost is one extra yt-dlp call per URL once
                 # until the new entry repopulates.
                 if is_stale_youtube_cache(candidate):
-                    _logger.info(
-                        "media_cache_legacy_miss",
-                        platform=detected.platform.value,
-                        url=detected.normalized,
-                    )
+                    _logger.info("media_cache_legacy_miss", platform=detected.platform.value)
                 else:
                     info = candidate
                     served_from_cache = True
@@ -102,9 +98,7 @@ class AnalyzeLinkUseCase:
         options = provider.build_options(info)
 
         if not options:
-            _logger.warning(
-                "no_options_built", platform=detected.platform.value, url=detected.normalized
-            )
+            _logger.warning("no_options_built", platform=detected.platform.value)
 
         analyzed = AnalyzedMedia(info=info, options=tuple(options))
         request_id = secrets.token_urlsafe(8)
@@ -142,4 +136,4 @@ class AnalyzeLinkUseCase:
             # ``.warning`` without exc_info erased the diagnostic trail
             # for rare upsert errors (unique-violation races, DB pool
             # exhaustion), making operator triage impossible.
-            _logger.exception("media_cache_upsert_failed", source_url=source_url)
+            _logger.exception("media_cache_upsert_failed", platform=info.platform.value)

@@ -257,7 +257,7 @@ async def _send_placeholder(message, *, thumbnail_url: str | None):
                 caption=_ANALYZE_CAPTION,
             )
         except TelegramError:
-            _logger.info("instant_placeholder_photo_failed", thumbnail=thumbnail_url)
+            _logger.info("instant_placeholder_photo_failed")
     try:
         return await message.reply_text(_ANALYZE_CAPTION)
     except TelegramError:
