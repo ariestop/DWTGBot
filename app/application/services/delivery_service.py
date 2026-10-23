@@ -13,6 +13,7 @@ calls the sender / temp link / storage objects it was given.
 from __future__ import annotations
 
 import asyncio
+import html
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -353,7 +354,7 @@ def _caption(result: DownloadResult, size_bytes: int, *, footer: str = "") -> st
 
 
 def _escape(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html.escape(text, quote=False)
 
 
 def _format_size(n: int) -> str:

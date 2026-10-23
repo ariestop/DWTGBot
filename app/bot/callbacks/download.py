@@ -8,7 +8,6 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.application.dto.jobs import EnqueueDownloadInput
-from app.application.dto.media import AnalyzedMedia
 from app.bot.callbacks.codec import PREFIX_CANCEL, SEP, DownloadCallback
 from app.bot.container import get_container
 from app.bot.services.fallback_text import unexpected_error_text
@@ -69,7 +68,7 @@ async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT
                 EnqueueDownloadInput(
                     user_id=user.id,
                     chat_id=chat.id,
-                    source_url=_resolve_source_url(analyzed),
+                    source_url=analyzed.source_url,
                     platform=analyzed.info.platform,
                     selected_option_key=selected.key,
                     correlation_id=correlation_id,
@@ -128,16 +127,3 @@ async def handle_download_callback(update: Update, context: ContextTypes.DEFAULT
         # do with it and it clutters the placeholder. ``result.job_id``
         # is still logged above for operator triage.
         del result
-
-
-def _resolve_source_url(analyzed: AnalyzedMedia) -> str:
-    """
-    The provider stores the original URL inside MediaInfo.raw under one of the
-    well-known keys. Fall back across them to be tolerant to minor differences.
-    """
-    raw = analyzed.info.raw or {}
-    for key in ("source_url", "webpage_url", "original_url"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return ""
