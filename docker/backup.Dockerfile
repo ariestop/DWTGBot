@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # =====================================================================
 # Backup image (NL-1).
-# Slim Debian + postgresql-client + bash; runs the project's backup.sh
+# Slim Debian + postgresql-client-${PG_MAJOR} (PGDG) + bash; runs the project's backup.sh
 # on a schedule via app.workers.backup_worker.
 #
 # Deploy-audit fix (post-L8):
@@ -25,6 +25,11 @@ ARG PYTHON_VERSION=3.14.4
 # tracks Python's upstream default and flips silently on every Debian
 # release, re-pointing our off-site backup client at a new CLI.
 ARG DEBIAN_CODENAME=trixie
+# Major of the Postgres server (deploy/compose/control.yml). Debian
+# trixie's own client is 17, whose dumps start with SET transaction_timeout
+# that a 16 server rejects; PGDG ships every major for every Debian
+# release. app/tests/test_deploy_topology.py keeps the two in step.
+ARG PG_MAJOR=16
 ARG APP_USER=app
 ARG APP_UID=1000
 ARG APP_GID=1000
@@ -47,6 +52,7 @@ FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS runtime
 ARG APP_USER
 ARG APP_UID
 ARG APP_GID
+ARG PG_MAJOR
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" APP_HOME=/app
@@ -56,9 +62,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
 # Neither is pulled from pip because awscli's dep graph conflicts with
 # the pinned app graph in ``prod.lock``, and a static rclone binary via
 # apt is strictly simpler than downloading the upstream tarball.
+#
+# postgresql-common's apt.postgresql.org.sh adds the PGDG repository with
+# the signing key it bundles; the build fails if pg_dump is not ${PG_MAJOR}.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        postgresql-client gzip tini ca-certificates bash \
+        postgresql-common ca-certificates \
+    && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+    && apt-get install -y --no-install-recommends \
+        postgresql-client-${PG_MAJOR} gzip tini bash \
         awscli rclone \
+    && case "$(pg_dump --version)" in *" ${PG_MAJOR}."*) ;; *) exit 1 ;; esac \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid ${APP_GID} ${APP_USER} \
     && useradd  --system --uid ${APP_UID} --gid ${APP_GID} \

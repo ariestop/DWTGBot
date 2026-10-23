@@ -12,6 +12,16 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — `pg_dump` в образе `backup` той же версии, что сервер (B1)
+
+Образ брал `postgresql-client` из Debian trixie (17) при сервере
+`postgres:16-alpine`. Теперь `docker/backup.Dockerfile` ставит
+`postgresql-client-${PG_MAJOR}` (16) из репозитория PGDG и проверяет
+версию `pg_dump` при сборке. `test_postgres_major_matches_everywhere`
+не даёт major-версиям сервера, клиента бэкапа, restore drill и CI
+разойтись. Удаление `SET transaction_timeout` в drill/`restore.sh`
+оставлено для дампов, сделанных до этого изменения.
+
 ### Fixed — Watchdog передавал на хост не тот `TARGET`
 
 Entrypoint `appleboy/ssh-action` хранит в `TARGET` путь к бинарнику
