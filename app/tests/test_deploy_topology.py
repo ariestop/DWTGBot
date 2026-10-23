@@ -7,6 +7,7 @@ sequences (``ports``, ``networks``) are unioned.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -218,3 +219,25 @@ def test_compose_files_have_no_forbidden_options() -> None:
             assert "cap_add" not in svc, where
             assert svc.get("pid") != "host", where
             assert svc.get("network_mode") != "host", where
+
+
+def test_postgres_major_matches_everywhere() -> None:
+    # A pg_dump newer than the server writes settings the server rejects
+    # (17's SET transaction_timeout broke the first restore drill on 16):
+    # the backup client, the drill and the CI services follow the server.
+    root = _DEPLOY.parent
+    server = _services("single")["postgres"]["image"]
+    match = re.fullmatch(r"postgres:(\d+)-alpine", server)
+    assert match, server
+    major = match.group(1)
+
+    dockerfile = (root / "docker" / "backup.Dockerfile").read_text(encoding="utf-8")
+    assert re.search(rf"^ARG PG_MAJOR={major}$", dockerfile, re.MULTILINE)
+
+    drill = (_DEPLOY / "scripts" / "restore_drill.sh").read_text(encoding="utf-8")
+    assert f"DRILL_IMAGE:-postgres:{major}-alpine" in drill
+
+    for workflow in ("ci.yml", "restore-drill.yml"):
+        text = (root / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+        found = re.findall(r"image: postgres:(\d+)", text)
+        assert found and set(found) == {major}, workflow

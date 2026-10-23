@@ -469,7 +469,7 @@ jobs:
     username: ${{ secrets.NL1_SSH_USER }}
     key: ${{ secrets.NL1_SSH_KEY }}
     port: ${{ secrets.NL1_SSH_PORT || 22 }}
-    script_stop: true                      # abort on first non-zero exit
+    command_timeout: 18m                   # ssh-action v1.2: no script_stop; set -Eeuo pipefail aborts
     envs: *deploy_envs
     script: *deploy_script                 # cd "${DEPLOY_REPO_PATH}", fetch, checkout "${DEPLOY_REF}",
                                            # export IMAGE_*, deploy_update.sh "${DEPLOY_TARGET}"
@@ -480,10 +480,10 @@ jobs:
 Для проверки локально: `actionlint` ≥ 1.7.12 (более старые версии не
 понимают алиасы в скалярных полях).
 
-- `script_stop: true` + `set -Eeuo pipefail` → first failure aborts the whole script (no half-deploys).
-- `git pull --ff-only … || true` → tolerates a detached-HEAD-on-tag checkout (no upstream to pull).
+- `set -Eeuo pipefail` → first failure aborts the whole script (no half-deploys).
+- `DEPLOY_REF` разрешается явно: ветка → `origin/<ветка>` (не локальная ветка сервера), тег или SHA — как есть; затем `git checkout --detach`. Неизвестный ref останавливает деплой (раньше `git pull --ff-only … || true` молча игнорировал ошибки).
 - The runner forwards its ephemeral `GITHUB_TOKEN` over SSH and uses a
-  temporary `http.extraheader` for `git fetch` / `git pull`, so private
+  temporary `http.extraheader` for `git fetch`, so private
   host checkouts do not need a separate credential helper.
 - `ASSUME_YES=1` → confirms destructive steps in helpers; required for non-interactive runs.
 
@@ -540,8 +540,8 @@ flowchart LR
 
 | # | Step | Idempotent? | Failure mode |
 |---|---|---|---|
-| 1 | `git fetch --all --tags` | yes | network → exit 1, no host change |
-| 2 | `git checkout <ref>` + `pull --ff-only` (best-effort) | yes | conflict → exit 1, working tree unchanged |
+| 1 | `git fetch --tags --force origin` | yes | network → exit 1, no host change |
+| 2 | resolve `<ref>` (`origin/<branch>`, tag or SHA) + `git checkout --detach` | yes | unknown ref / conflict → exit 1, working tree unchanged |
 | 3 | `docker compose -f deploy/<stack>/docker-compose.yml pull` | yes | manifest unknown → exit 1, no container change |
 | 4 | Control-plane stacks only (`single`, `nl1`): `docker compose run --rm migrate alembic upgrade head` | yes (forward-only; idempotent if at HEAD) | bad migration → exit 1, **DB partially migrated** if mid-flight (see §11.4) |
 | 5 | `docker compose up -d` | yes (Compose recreates only changed services) | bad image / config → exit 1 with the offending service named |
@@ -967,9 +967,8 @@ gh api /users/<org>/packages/container/<repo>-bot/versions \
 ```bash
 ssh ops@nl1
 cd /opt/dwtgbot
-git fetch --all --tags
-git checkout main           # or your tag/sha
-git pull --ff-only origin main || true
+git fetch --tags --force origin
+git checkout --detach origin/main   # or a tag / SHA
 sudo bash deploy/scripts/deploy_update.sh nl1
 # Wait for green; run smoke (§10)
 exit
@@ -980,9 +979,8 @@ exit
 ```bash
 ssh ops@nl2
 cd /opt/dwtgbot
-git fetch --all --tags
-git checkout main
-git pull --ff-only origin main || true
+git fetch --tags --force origin
+git checkout --detach origin/main   # the same commit as NL-1
 sudo bash deploy/scripts/deploy_update.sh nl2
 exit
 ```

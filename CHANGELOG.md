@@ -8,9 +8,42 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Architectural rationale lives in `docs/adr/`. Each entry below links to
 the relevant ADR when one applies.
 
+An entry that needs work on the servers (a new or newly required
+environment variable, a migration, files or secrets on the host) ends
+with a **Действия оператора** block: what to set, on which stacks, and
+whether before or after the deploy. Entries without such a block need
+none.
+
 ---
 
 ## [Unreleased]
+
+### Added — шаблон PR с разделом «Действия оператора» (D3)
+
+`.github/pull_request_template.md` (Зачем / Изменения / Проверка /
+Действия оператора), правило в `CONTRIBUTING.md` и соглашение в шапке
+этого файла: новая обязательная переменная, миграция или изменение на
+хосте перечисляются в PR и в записи CHANGELOG, чтобы оператор узнал о
+них до деплоя (preflight его остановит, но уже после merge).
+
+### Fixed — `deploy.yml` больше не глотает ошибки обновления checkout'а (C6)
+
+Скрипт делал `git checkout "${DEPLOY_REF}"` и `git pull --ff-only … || true`:
+на автодеплое (`DEPLOY_REF` — SHA) `pull` всегда падал и молча
+игнорировался, а при ручном запуске с веткой `checkout` брал локальную,
+возможно устаревшую ветку сервера. Теперь `fetch --tags --force origin`,
+ветка разрешается в `origin/<ветка>`, тег или SHA — как есть,
+`checkout --detach`; неизвестный ref останавливает деплой.
+
+### Fixed — `pg_dump` в образе `backup` той же версии, что сервер (B1)
+
+Образ брал `postgresql-client` из Debian trixie (17) при сервере
+`postgres:16-alpine`. Теперь `docker/backup.Dockerfile` ставит
+`postgresql-client-${PG_MAJOR}` (16) из репозитория PGDG и проверяет
+версию `pg_dump` при сборке. `test_postgres_major_matches_everywhere`
+не даёт major-версиям сервера, клиента бэкапа, restore drill и CI
+разойтись. Удаление `SET transaction_timeout` в drill/`restore.sh`
+оставлено для дампов, сделанных до этого изменения.
 
 ### Fixed — Watchdog передавал на хост не тот `TARGET`
 

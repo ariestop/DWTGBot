@@ -71,9 +71,16 @@ jobs:
             set -Eeuo pipefail
             cd "${DEPLOY_REPO_PATH}"
             GH_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --all --tags
-            git checkout "${DEPLOY_REF}"
-            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" pull --ff-only origin "${DEPLOY_REF}" || true
+            git -c "http.https://github.com/.extraheader=${GH_AUTH_HEADER}" fetch --tags --force origin
+            # DEPLOY_REF is a commit SHA (workflow_run) or a branch / tag /
+            # SHA (dispatch). A branch means origin's tip, never a stale local
+            # branch; the checkout is detached, which deploy_update.sh expects.
+            # An unknown ref stops the deploy (it used to be '|| true').
+            if ! commit="$(git rev-parse --verify --quiet "refs/remotes/origin/${DEPLOY_REF}^{commit}")"; then
+              commit="$(git rev-parse --verify --quiet "${DEPLOY_REF}^{commit}")" \
+                || { echo "DEPLOY_REF ${DEPLOY_REF} is not a branch, tag or commit on origin" >&2; exit 1; }
+            fi
+            git checkout --quiet --detach "${commit}"
             SHORT_SHA="$(git rev-parse --short=7 HEAD)"
             export IMAGE_TAG="sha-${SHORT_SHA}"
             REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
