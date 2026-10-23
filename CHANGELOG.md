@@ -12,6 +12,14 @@ the relevant ADR when one applies.
 
 ## [Unreleased]
 
+### Fixed — дампы контейнера `backup` не грузились в Postgres 16 с ON_ERROR_STOP
+
+Первый restore drill на сервере упал: образ `backup` (Debian trixie)
+делает дампы `pg_dump` 17, который пишет `SET transaction_timeout = 0;`,
+а Postgres 16 отвечает `unrecognized configuration parameter`.
+`restore_drill.sh` и `restore.sh` удаляют эту строку перед `psql`;
+`restore.sh` раньше печатал ошибку и продолжал, drill — падал.
+
 ### Added — еженедельный restore drill реальных бэкапов
 
 `.github/workflows/restore-drill-server.yml` по воскресеньям (и вручную)

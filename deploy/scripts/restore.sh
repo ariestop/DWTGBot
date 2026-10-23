@@ -152,8 +152,11 @@ restore() {
       "CREATE DATABASE \"${POSTGRES_DB}\" OWNER \"${POSTGRES_USER}\";"
 
   log_info "Loading dump"
-  gunzip -c "${DUMP}" | run_compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-    psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --quiet
+  # Dumps from the backup container come from pg_dump 17 (Debian trixie)
+  # and start with ``SET transaction_timeout``, unknown to Postgres 16.
+  gunzip -c "${DUMP}" | sed '/^SET transaction_timeout = /d' \
+    | run_compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+      psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --quiet
 
   log_info "Restarting ${STACK} services"
   run_compose up -d bot api
