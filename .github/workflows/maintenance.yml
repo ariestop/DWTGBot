@@ -1,0 +1,81 @@
+name: Server maintenance
+
+# One-off host setup on a deployed server without an SSH session: runs a
+# vetted script from this ref over the same SSH secrets and environments
+# as deploy.yml. Each action is idempotent and prints only its own
+# progress, so the public job log stays free of secrets.
+#
+#   journald-setup  deploy/scripts/journald_setup.sh — journald retention
+#                   drop-in (30 days, <= 2G, >= 4G free) + restart
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which server"
+        type: choice
+        required: true
+        options: [single, nl1, nl2]
+        default: single
+      action:
+        description: "What to apply"
+        type: choice
+        required: true
+        options: [journald-setup]
+        default: journald-setup
+
+concurrency:
+  # Not deploy.yml's group: a newer pending run cancels the pending one
+  # in a group, and that must never be a deploy.
+  group: maintenance-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: ${{ inputs.action }} on ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target }}
+    env:
+      # deploy.yml secret prefix for each target.
+      PREFIX: ${{ fromJSON('{"single":"SINGLE","nl1":"NL1","nl2":"NL2"}')[inputs.target] }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bundle the scripts
+        env:
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          case "${ACTION}" in
+            journald-setup)
+              files=(scripts/helpers.sh scripts/journald_setup.sh systemd/journald-dwtgbot.conf)
+              entry=scripts/journald_setup.sh
+              ;;
+            *) echo "::error::unknown action ${ACTION}"; exit 1 ;;
+          esac
+          # Keeps deploy/'s layout: the scripts find ../systemd themselves.
+          bundle="$(tar czf - -C deploy "${files[@]}" | base64 -w0)"
+          {
+            echo "MAINT_ENTRY=${entry}"
+            echo "MAINT_BUNDLE=${bundle}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Apply over SSH
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets[format('{0}_HOST', env.PREFIX)] }}
+          username: ${{ secrets[format('{0}_SSH_USER', env.PREFIX)] }}
+          key: ${{ secrets[format('{0}_SSH_KEY', env.PREFIX)] }}
+          port: ${{ secrets[format('{0}_SSH_PORT', env.PREFIX)] || 22 }}
+          command_timeout: 5m
+          envs: MAINT_ENTRY,MAINT_BUNDLE
+          script: |
+            set -Eeuo pipefail
+            dir="$(mktemp -d)"
+            trap 'rm -rf -- "${dir}"' EXIT
+            printf '%s' "${MAINT_BUNDLE}" | base64 -d | tar xzf - -C "${dir}"
+            sudo NO_COLOR=1 bash "${dir}/${MAINT_ENTRY}"

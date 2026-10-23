@@ -322,6 +322,7 @@ Log retention (journald, host-wide — 30 days, ≤ 2 GiB, keeps 4 GiB free):
 
 ```bash
 sudo bash deploy/scripts/journald_setup.sh    # or install.sh → [21]
+# without SSH: Actions → Server maintenance → action journald-setup
 ```
 
 Проверьте версию Compose: для `include` нужна **≥ 2.24.0**
