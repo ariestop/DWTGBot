@@ -2393,6 +2393,20 @@ Workflow по SSH запускает `deploy/scripts/diagnostics.sh`, котор
 Сырые логи на сервере, включая контейнеры до деплоя:
 `journalctl CONTAINER_NAME=dwtgbot_bot --since -6h -o cat`.
 
+### §27.1 Настройка хоста без SSH (workflow «Server maintenance»)
+
+**Actions → Server maintenance → Run workflow**
+(`.github/workflows/maintenance.yml`): `target` — хост, `action` — что
+применить. Скрипты берутся из выбранной ветки и запускаются по SSH с
+`sudo`, как деплой; каждое действие идемпотентно.
+
+| `action` | Что делает |
+|---|---|
+| `journald-setup` | `deploy/scripts/journald_setup.sh`: ставит `/etc/systemd/journald.conf.d/dwtgbot.conf` (30 дней, ≤ 2 GiB, ≥ 4 GiB свободно), перезапускает `systemd-journald`, применяет лимиты к накопленному и печатает объём журнала |
+
+Проверка: секция `Journal` в «Server diagnostics» показывает эти лимиты
+вместо `journald defaults`.
+
 ---
 
 ## §28 — Алерт Watchdog в Telegram (ADR-0013)

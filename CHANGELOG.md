@@ -18,6 +18,13 @@ none.
 
 ## [Unreleased]
 
+### Added — workflow «Server maintenance»
+
+`.github/workflows/maintenance.yml`: ручной запуск идемпотентной
+настройки хоста по тем же SSH-секретам, что у деплоя, без входа на
+сервер. Первое действие — `journald-setup` (`journald_setup.sh`, лимиты
+журнала из записи ниже). Runbook §27.1.
+
 ### Changed — логи контейнеров в journald
 
 Все сервисы (`migrate` тоже) пишут через `logging.driver: journald`
@@ -46,7 +53,8 @@ none.
   Логи `json-file`, накопленные до этого деплоя, удаляются вместе со
   старыми контейнерами.
 - Рекомендуется, на каждом хосте (`single`; при split — `nl1` и `nl2`),
-  до или после деплоя: `sudo bash deploy/scripts/journald_setup.sh`.
+  до или после деплоя: `sudo bash deploy/scripts/journald_setup.sh`
+  или Actions → **Server maintenance** → `journald-setup`.
   Без него остаются умолчания journald (на `single` журнал уже
   persistent, до ~10% диска).
 
