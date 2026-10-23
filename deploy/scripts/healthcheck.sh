@@ -13,6 +13,21 @@ source "${SCRIPT_DIR}/helpers.sh"
 
 TARGET="${1:-auto}"
 FAIL=0
+# One wait budget for every probe that waits for a container to come up
+# (bot running, /healthz, /readyz), shared across the run: on a healthy
+# stack they pass at once; on a dead one the run fails after the budget
+# instead of after 45 s per probe.
+HEALTHCHECK_BUDGET_SECONDS="${HEALTHCHECK_BUDGET_SECONDS:-90}"
+DEADLINE=$((SECONDS + HEALTHCHECK_BUDGET_SECONDS))
+
+# until_deadline CMD...: retry CMD every second until it succeeds or the
+# shared budget is spent; once spent, every remaining probe gets one try.
+until_deadline() {
+  until "$@"; do
+    ((SECONDS < DEADLINE)) || return 1
+    sleep 1
+  done
+}
 
 check() {
   local name="$1"; shift
@@ -28,27 +43,11 @@ check() {
 # visible inside ``bash -c '...'``, so probes must use ``docker exec`` or
 # call the wrapper in the current shell (see git history).
 _nl1_curl_healthz() {
-  local port="${1:-8080}"
-  local _
-  for _ in {1..45}; do
-    if docker exec dwtgbot_api_nl1 curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
+  until_deadline docker exec dwtgbot_api_nl1 curl -fsS "http://127.0.0.1:${1:-8080}/healthz"
 }
 
 _nl2_curl_healthz() {
-  local port="${1:-8080}"
-  local _
-  for _ in {1..45}; do
-    if docker exec dwtgbot_api curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
+  until_deadline docker exec dwtgbot_api curl -fsS "http://127.0.0.1:${1:-8080}/healthz"
 }
 
 _nl2_curl_readyz() {
@@ -57,16 +56,8 @@ _nl2_curl_readyz() {
   # that container's env — keeps the secret out of the host process
   # list and of the operator's shell history.
   local port="${1:-8080}"
-  local _
-  for _ in {1..45}; do
-    if docker exec dwtgbot_api sh -c \
-        "curl -fsS -H \"X-Internal-Token: \$API_INTERNAL_TOKEN\" http://127.0.0.1:${port}/readyz" \
-        >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
+  until_deadline docker exec dwtgbot_api sh -c \
+    "curl -fsS -H \"X-Internal-Token: \$API_INTERNAL_TOKEN\" http://127.0.0.1:${port}/readyz"
 }
 
 # Strip quotes / whitespace from ``API_PORT=`` lines (``API_PORT="8080"`` is common).
@@ -81,16 +72,10 @@ _sanitize_env_value() {
 }
 
 # Bot may still be ``created`` / ``restarting`` for a few seconds after ``compose up``.
-_nl1_bot_running() {
-  local _
-  for _ in {1..45}; do
-    if docker inspect --format "{{.State.Status}}" dwtgbot_bot 2>/dev/null | grep -qx running; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
+_bot_is_running() {
+  [[ "$(docker inspect --format '{{.State.Status}}' dwtgbot_bot 2>/dev/null)" == running ]]
 }
+_nl1_bot_running() { until_deadline _bot_is_running; }
 
 log_step "Toolchain"
 check "docker present"          has_command docker
