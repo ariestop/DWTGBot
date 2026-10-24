@@ -140,7 +140,7 @@ sum(rate({app="bot"} | json | event="bot_message_handled" [5m]))
 # A2 — URL-analysis success (5-min window)
 sum(rate({app="bot"} | json | event="job_status_changed" | to="ready_for_choice" [5m]))
 /
-sum(rate({app="bot"} | json | event="job_created" [5m]))
+sum(rate({app="bot"} | json | event="job_enqueued" [5m]))
 
 # A3 — download completion, excluding user errors
 sum(rate({app="worker"} | json | event="job_status_changed" | to="completed" [5m]))
@@ -152,12 +152,12 @@ sum(rate({app="worker"} | json | event="job_status_changed"
 # A4 / A5 — time-to-delivery percentiles
 quantile_over_time(
   0.95,
-  {app="worker"} | json | event="job_completed" | file_size_class="lt_200mb"
+  {app="worker"} | json | event="job_done" | file_size_class="lt_200mb"
                 | unwrap total_seconds [5m]
 )
 
 # B3 — queue depth
-max_over_time({app="bot"} | json | event="queue_depth" | unwrap depth [5m])
+max_over_time({app="bot"} | json | event="queue_depth_sample" | unwrap depth [5m])
 ```
 
 > Loki users: index `event` as a label only if cardinality is bounded. The
@@ -203,7 +203,7 @@ topk(10,
 # Slowest 5 jobs of the last hour
 topk(5,
   max_over_time({app="worker"} | json
-    | event="job_completed"
+    | event="job_done"
     | unwrap total_seconds [1h])) by (job_id, platform)
 
 # Per-user request rate (privacy: user_id is numeric only — see 34-)

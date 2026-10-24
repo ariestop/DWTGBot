@@ -307,7 +307,7 @@ Tick these off in order. Each item is doable in 10–30 minutes; the whole thing
 **Verify your local environment**:
 - [ ] Python 3.14+ installed (`python3 --version`).
 - [ ] Docker + Docker Compose v2 installed (`docker compose version`).
-- [ ] Repo cloned; `make setup` (or `pip install -r requirements-dev.txt`) succeeds.
+- [ ] Repo cloned; `make dev-install` (or `pip install -r requirements/dev.lock`) succeeds.
 - [ ] `ruff check .` and `ruff format --check .` exit 0.
 - [ ] `mypy app` exits 0.
 - [ ] `pytest -m "not integration"` exits 0.

@@ -169,7 +169,7 @@ Implications:
   ~24 h without a real need.
 - **Tested in both places.** Any change to the default must be reflected
   in `13-config-and-env.md` and verified against
-  `app/application/services/request_state.py` (Redis TTL) and
+  `app/application/services/request_state_store.py` (Redis TTL) and
   `media_cache_repo_impl.purge_expired` (Postgres).
 
 > See [`13-config-and-env.md`](13-config-and-env.md) §132 for the
@@ -327,7 +327,7 @@ NL2='docker compose -f /opt/dwtgbot/deploy/nl2/docker-compose.yml'
 # single: NL2='docker compose -f /opt/dwtgbot/deploy/single/docker-compose.yml'
 
 # Recent successful cycles
-$NL2 logs --since=24h --no-color cleanup \
+$NL2 logs --no-log-prefix --since=24h --no-color cleanup \
   | jq -c 'select(.event | test("temp_links_deactivated|temp_link_files_removed|media_cache_purged|cleanup_started|cleanup_cycle_error"))' \
   | tail -20
 ```
@@ -428,7 +428,7 @@ sudo TMP_MAX_AGE_HOURS=2 bash /opt/dwtgbot/deploy/scripts/cleanup.sh
 
 ### 7.3 Path discipline (P11)
 
-All file paths returned by providers must be **inside** `STORAGE_PATH` — enforced by `ensure_within(path, STORAGE_PATH)` in `app/utils/paths.py`. Cleanup trusts this invariant: it never traverses outside `STORAGE_PATH`. If a provider violates the invariant and writes elsewhere, cleanup will not touch those files (they leak forever). See `30-add-new-provider-guide.md` Appendix D.7.
+All file paths returned by providers must be **inside** `STORAGE_PATH` — enforced by `ensure_within(STORAGE_PATH, path)` in `app/utils/filenames.py`. Cleanup trusts this invariant: it never traverses outside `STORAGE_PATH`. If a provider violates the invariant and writes elsewhere, cleanup will not touch those files (they leak forever). See `30-add-new-provider-guide.md` Appendix D.7.
 
 ---
 
@@ -456,7 +456,7 @@ stateDiagram-v2
 
 The cleanup worker only reaps **files that were registered as temp links**. The catch-all for everything else (small-file direct sends, crashed jobs) is the manual scratch sweep. This is intentional — a single rule (`temp_links.is_active=false → safe to delete file`) is easy to reason about; everything else is operator-driven.
 
-If your `download_pipeline` for **small files** also creates a `temp_links` row (with a short TTL, even if the user never touches it), the cleanup loop will reap it on the next cycle for free. Confirm in `app/application/use_cases/download.py`.
+If your `download_pipeline` for **small files** also creates a `temp_links` row (with a short TTL, even if the user never touches it), the cleanup loop will reap it on the next cycle for free. Confirm in `app/application/use_cases/process_download.py`.
 
 ---
 
@@ -682,12 +682,12 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c "
    WHERE is_active=false AND file_path IS NOT NULL;"
 
 # 6) Cycle counts in the last 24h
-$NL2 logs --since=24h --no-color cleanup \
+$NL2 logs --no-log-prefix --since=24h --no-color cleanup \
   | jq -c 'select(.event | test("^(temp_links_deactivated|temp_link_files_removed|media_cache_purged)$"))' \
   | jq -r '.event' | sort | uniq -c
 
 # 7) Failures
-$NL2 logs --since=24h --no-color cleanup \
+$NL2 logs --no-log-prefix --since=24h --no-color cleanup \
   | jq -c 'select(.event=="temp_link_file_remove_failed" or .event=="cleanup_cycle_error")' \
   | tail -20
 ```

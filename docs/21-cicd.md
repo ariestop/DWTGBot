@@ -263,12 +263,14 @@ You can reproduce all of CI locally:
 
 ```bash
 # Core CI jobs:
-ruff format --check . && ruff check . && mypy app && pytest -m "not integration"
-pytest -m "integration" --no-cov
+ruff format --check . && ruff check . && mypy app && pytest
+# integration: без этих переменных тесты пропускаются (skip), а не падают
+DWTGBOT_TEST_POSTGRES_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/dwtgbot_test \
+DWTGBOT_TEST_REDIS_URL=redis://127.0.0.1:6379/15 pytest app/tests/integration --no-cov
 shellcheck deploy/scripts/*.sh
 ```
 
-Or via `make ci` (if defined).
+Или по частям: `make lint`, `make typecheck`, `make test`.
 
 ---
 
@@ -767,7 +769,7 @@ Confirm each image tag matches the ref you intended to deploy.
 ```bash
 SINCE=10m
 for s in nl1 nl2; do
-  docker compose -f deploy/$s/docker-compose.yml logs --since=$SINCE --no-color \
+  docker compose -f deploy/$s/docker-compose.yml logs --no-log-prefix --since=$SINCE --no-color \
     | jq -c 'select(.level=="error" or .level=="warning")' 2>/dev/null \
     | head -30
 done
@@ -799,7 +801,7 @@ The two newest rows should be `completed`.
 | `docker inspect ... -f '{{.RestartCount}}'` | unchanged from pre-deploy (no restart loops) |
 | Top `error_class` histogram (`31-` Appendix A.5) | no new entries |
 | Queue depth (`ZCARD arq:queue`) | trending toward 0 |
-| `worker_job_done` rate | matches pre-deploy baseline |
+| `job_done` rate | matches pre-deploy baseline |
 | `https://.../healthz` | returns `{"status":"ok"}` |
 | TLS expiry | unchanged (>30 days) |
 

@@ -211,7 +211,7 @@ NL-1 и NL-2 должны совпадать.
 | `PROGRESS_STALE_WARN_SEC` | int 5..600 | `90` | Через столько секунд без событий подпись меняется на «соединение потеряно». Должен быть заметно меньше `PROGRESS_META_TTL_SEC` |
 | `PROGRESS_STALE_DROP_SEC` | int 30..3600 | `300` | Через столько секунд без событий placeholder удаляется. Должен превышать `PROGRESS_STALE_WARN_SEC` |
 
-### Circuit breaker — yt-dlp upstream (`docs/34-error-taxonomy.md`, L5 audit fix)
+### Circuit breaker — yt-dlp upstream (`docs/16-error-handling.md`, L5 audit fix)
 
 The breaker is per-host and shared across the fleet via two Redis keys
 (`cb:{host}:failures`, `cb:{host}:open_until`). When the breaker is

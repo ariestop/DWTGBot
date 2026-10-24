@@ -145,7 +145,7 @@ attempt; trivially under 1 ms locally.
 | Symptom | Limiter behaviour | Why |
 |---|---|---|
 | Redis timeout, slow | **Fail open** (allow). Increment a `rl_redis_error_total` counter. | P11: prefer user-visible reliability. The L0 / queue depth backstops still protect the system. |
-| Redis up but Lua errors | Fail open. Log `level=error event=rate_limit_lua_error`. | Same reasoning. |
+| Redis up but Lua errors | Fail open. Log `level=error event=rate_limit_lua_parse_error`. | Same reasoning. |
 | Redis returns garbage | Fail open. Log + alert (ticket). | Same. |
 
 > **Do not** fail closed. The bot replying "service unavailable" to a
@@ -429,12 +429,12 @@ topk(10, sum by (user_id) (rate({app="bot"} |= "rate_limit_first_deny"
 
 ```bash
 # 1. How many denies per layer in the last hour?
-docker compose -f deploy/nl1/docker-compose.yml logs --no-color bot \
+docker compose -f deploy/nl1/docker-compose.yml logs --no-log-prefix --no-color bot \
   | jq -c 'select(.event=="rate_limit_decision" and .decision=="deny")' \
   | jq -s '[.[] | .layer] | group_by(.) | map({layer: .[0], n: length})'
 
 # 2. Which user_ids are hottest?
-docker compose -f deploy/nl1/docker-compose.yml logs --no-color bot \
+docker compose -f deploy/nl1/docker-compose.yml logs --no-log-prefix --no-color bot \
   | jq -r 'select(.event=="rate_limit_decision" and .decision=="deny") | .user_id' \
   | sort | uniq -c | sort -rn | head
 

@@ -14,6 +14,14 @@
 > [`29-feature-development-guide.md`](29-feature-development-guide.md) — feature-level lifecycle,
 > [`adr/0005-locked-architectural-assumptions.md`](adr/0005-locked-architectural-assumptions.md) — locked decisions.
 
+> ⚠️ **Примеры частично описывают ранний дизайн (аудит документации 2026-10).**
+> Пути вроде `app/infrastructure/runners/*`, `app/workers/tasks/*`,
+> `app/bot/application_factory.py`, `app/workers/settings.py` и сценарии
+> TikTok / zip — иллюстрации, таких файлов нет. Реальная раскладка —
+> [`03-project-structure.md`](03-project-structure.md); перед правкой
+> сверяйтесь с кодом. Сокращение плейбуков — этап 4 в
+> [`tasks/docs-audit-2026-10.md`](tasks/docs-audit-2026-10.md).
+
 > ⚠️ **Read this BEFORE you create or modify a `<Platform>Provider`.**
 >
 > The eleven principles **P1–P11** referenced throughout are defined

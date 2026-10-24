@@ -69,14 +69,10 @@ page; everything technical lives here.
 - [`37-load-and-capacity.md`](37-load-and-capacity.md) — capacity equations, load-test recipes, scaling-up runbook (vertical → ADR-grade horizontal)
 
 ### 8. Architectural decisions
-- [`adr/`](adr/README.md) — Architectural Decision Records (process + index)
-  - [ADR-0001 — Two-server topology](adr/0001-two-server-topology.md) (amended by ADR-0011)
-  - [ADR-0002 — `python-telegram-bot`](adr/0002-python-telegram-bot.md)
-  - [ADR-0003 — `ruff format` (no `black`)](adr/0003-ruff-format-no-black.md)
-  - [ADR-0004 — Temp links via Nginx `X-Accel-Redirect`](adr/0004-temp-links-via-nginx-x-accel.md)
-  - 🔒 [**ADR-0005 — Locked architectural assumptions** (canonical 12-row register)](adr/0005-locked-architectural-assumptions.md)
-  - [ADR-0006 — In-process Prometheus exporter for rate-limit metrics](adr/0006-in-process-rate-limit-metrics-exporter.md)
-  - [ADR-0011 — Single-server topology (`single` рядом со `split`)](adr/0011-single-server-topology.md)
+- [`adr/README.md`](adr/README.md) — процесс и **полный индекс** ADR (единственный
+  список; здесь не дублируется, чтобы не отставал).
+- 🔒 [**ADR-0005 — Locked architectural assumptions**](adr/0005-locked-architectural-assumptions.md) —
+  канонический реестр зафиксированных решений; начинайте с него.
 
 ---
 

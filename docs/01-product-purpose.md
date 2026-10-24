@@ -238,9 +238,9 @@ leaves room for them. Each links to the technical extension point.
 | **Per-user quotas** (e.g. "X GiB / day") | Operator-level need once user count grows | `audit_logs` aggregation + bot pre-enqueue check | [`32-roadmap-and-extension-points.md`](32-roadmap-and-extension-points.md) §3 |
 | **Object-storage backend** (S3-compatible) | Frees NL-2 disk; enables multi-region | `LocalStorage` swap + temp-link 307 redirect | [`11-storage-strategy.md`](11-storage-strategy.md) §12 |
 | **Subtitles / chapters extraction** | Natural extension of yt-dlp postprocessors | New download `Option` + provider hook | [`07-provider-architecture.md`](07-provider-architecture.md) |
-| **Localised UI strings** (currently RU-only) | i18n if user base grows beyond RU | `app/bot/strings/` (single source) | [`06-bot-flow.md`](06-bot-flow.md) |
+| **Localised UI strings** (currently RU-only) | i18n if user base grows beyond RU | новый модуль строк в `app/bot/` (сейчас тексты в обработчиках и `user_message` в `app/exceptions.py`) | [`06-bot-flow.md`](06-bot-flow.md) |
 | **Multiple operator deployments / shared installer** | Make it trivial to spin up a private clone | `deploy/scripts/install.sh` parametrisation | [`20-deployment.md`](20-deployment.md) |
-| **Webhook mode** (instead of long polling) | Lower latency at scale | `app/bot/main.py` + Nginx route on NL-1 | ADR required (currently long-polling-only) |
+| **Webhook mode** (instead of long polling) | Lower latency at scale | `app/main_bot.py` + Nginx route | ADR required (currently long-polling-only) |
 
 If you implement one of these, update this table to mark it as shipped
 (or move it into the in-scope section §5).
