@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from telegram.error import TelegramError
 
 from app.application.ports.media_sender import InlineKeyboard
 from app.application.services.delivery_service import (
@@ -43,8 +42,6 @@ class _SendCall:
 
 
 class _FakeSender:
-    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
-
     def __init__(self) -> None:
         self.calls: list[_SendCall] = []
 

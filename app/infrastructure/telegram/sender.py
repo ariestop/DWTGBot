@@ -23,16 +23,24 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, LinkPreviewOptions
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, ChatMigrated, Forbidden, RetryAfter, TelegramError
 from telegram.request import HTTPXRequest
 
 from app.application.ports.media_sender import InlineKeyboard
 from app.config import Settings
+from app.exceptions import (
+    DeliveryRejectedError,
+    DeliveryTransientError,
+    RecipientUnavailableError,
+)
 from app.logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -135,10 +143,32 @@ def _to_markup(keyboard: InlineKeyboard | None) -> InlineKeyboardMarkup | None:
     )
 
 
+@contextmanager
+def _delivery_errors() -> Iterator[None]:
+    """Translate PTB errors into the application's delivery errors.
+
+    ``BadRequest`` subclasses ``NetworkError`` in PTB, so the order of
+    the clauses matters.
+    """
+    try:
+        yield
+    except RetryAfter as exc:
+        raise DeliveryTransientError(str(exc), retry_after_s=_seconds(exc.retry_after)) from exc
+    except (Forbidden, ChatMigrated) as exc:
+        raise RecipientUnavailableError(str(exc)) from exc
+    except BadRequest as exc:
+        raise DeliveryRejectedError(str(exc)) from exc
+    except TelegramError as exc:
+        raise DeliveryTransientError(str(exc)) from exc
+
+
+def _seconds(value: float | timedelta) -> float:
+    return value.total_seconds() if isinstance(value, timedelta) else float(value)
+
+
 class TelegramSender:
-    # Any Telegram API failure (TimedOut, NetworkError, transient CDN
-    # BadRequest) is retried in place by DeliveryService.
-    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
+    """``MediaSender`` over PTB. Every call raises the delivery errors of
+    ``app.exceptions`` instead of PTB's own."""
 
     def __init__(self, settings: Settings) -> None:
         self._bot = Bot(
@@ -181,13 +211,14 @@ class TelegramSender:
         # URL into an inline ``url=`` button (URL buttons are not
         # crawled) — see ``DeliveryService._deliver_via_link``.
         link_preview = LinkPreviewOptions(is_disabled=disable_web_page_preview)
-        await self._bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=_to_markup(reply_markup),
-            link_preview_options=link_preview,
-        )
+        with _delivery_errors():
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=_to_markup(reply_markup),
+                link_preview_options=link_preview,
+            )
 
     async def send_video(
         self,
@@ -203,19 +234,20 @@ class TelegramSender:
         # portrait videos.
         meta = await _probe_video(file_path)
         data = await _read_bytes(file_path)
-        msg = await self._bot.send_video(
-            chat_id=chat_id,
-            video=InputFile(data, filename=file_path.name),
-            caption=caption,
-            parse_mode=ParseMode.HTML if caption else None,
-            supports_streaming=True,
-            width=meta.width,
-            height=meta.height,
-            duration=meta.duration,
-            reply_markup=_to_markup(reply_markup),
-            write_timeout=_UPLOAD_TIMEOUT_S,
-            read_timeout=_READ_TIMEOUT_S,
-        )
+        with _delivery_errors():
+            msg = await self._bot.send_video(
+                chat_id=chat_id,
+                video=InputFile(data, filename=file_path.name),
+                caption=caption,
+                parse_mode=ParseMode.HTML if caption else None,
+                supports_streaming=True,
+                width=meta.width,
+                height=meta.height,
+                duration=meta.duration,
+                reply_markup=_to_markup(reply_markup),
+                write_timeout=_UPLOAD_TIMEOUT_S,
+                read_timeout=_READ_TIMEOUT_S,
+            )
         return msg.video.file_id if msg.video else None
 
     async def send_audio(
@@ -227,15 +259,16 @@ class TelegramSender:
         reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
-        msg = await self._bot.send_audio(
-            chat_id=chat_id,
-            audio=InputFile(data, filename=file_path.name),
-            caption=caption,
-            parse_mode=ParseMode.HTML if caption else None,
-            reply_markup=_to_markup(reply_markup),
-            write_timeout=_UPLOAD_TIMEOUT_S,
-            read_timeout=_READ_TIMEOUT_S,
-        )
+        with _delivery_errors():
+            msg = await self._bot.send_audio(
+                chat_id=chat_id,
+                audio=InputFile(data, filename=file_path.name),
+                caption=caption,
+                parse_mode=ParseMode.HTML if caption else None,
+                reply_markup=_to_markup(reply_markup),
+                write_timeout=_UPLOAD_TIMEOUT_S,
+                read_timeout=_READ_TIMEOUT_S,
+            )
         return msg.audio.file_id if msg.audio else None
 
     async def send_photo(
@@ -247,15 +280,16 @@ class TelegramSender:
         reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
-        msg = await self._bot.send_photo(
-            chat_id=chat_id,
-            photo=InputFile(data, filename=file_path.name),
-            caption=caption,
-            parse_mode=ParseMode.HTML if caption else None,
-            reply_markup=_to_markup(reply_markup),
-            write_timeout=_UPLOAD_TIMEOUT_S,
-            read_timeout=_READ_TIMEOUT_S,
-        )
+        with _delivery_errors():
+            msg = await self._bot.send_photo(
+                chat_id=chat_id,
+                photo=InputFile(data, filename=file_path.name),
+                caption=caption,
+                parse_mode=ParseMode.HTML if caption else None,
+                reply_markup=_to_markup(reply_markup),
+                write_timeout=_UPLOAD_TIMEOUT_S,
+                read_timeout=_READ_TIMEOUT_S,
+            )
         return msg.photo[-1].file_id if msg.photo else None
 
     async def send_document(
@@ -267,13 +301,14 @@ class TelegramSender:
         reply_markup: InlineKeyboard | None = None,
     ) -> str | None:
         data = await _read_bytes(file_path)
-        msg = await self._bot.send_document(
-            chat_id=chat_id,
-            document=InputFile(data, filename=file_path.name),
-            caption=caption,
-            parse_mode=ParseMode.HTML if caption else None,
-            reply_markup=_to_markup(reply_markup),
-            write_timeout=_UPLOAD_TIMEOUT_S,
-            read_timeout=_READ_TIMEOUT_S,
-        )
+        with _delivery_errors():
+            msg = await self._bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(data, filename=file_path.name),
+                caption=caption,
+                parse_mode=ParseMode.HTML if caption else None,
+                reply_markup=_to_markup(reply_markup),
+                write_timeout=_UPLOAD_TIMEOUT_S,
+                read_timeout=_READ_TIMEOUT_S,
+            )
         return msg.document.file_id if msg.document else None

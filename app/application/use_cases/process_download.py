@@ -28,6 +28,7 @@ from app.exceptions import (
     FileTooLargeError,
     JobCancelledError,
     JobConcurrentUpdateError,
+    RecipientUnavailableError,
     SizeUnknownError,
     StorageError,
 )
@@ -511,6 +512,9 @@ class ProcessDownloadUseCase:
                 _logger.exception("progress_fail_failed", job_id=job.id)
         try:
             await self._sender.send_text(job.chat_id, f"⚠️ {user_text}")
+        except RecipientUnavailableError:
+            # Blocked the bot or left the chat: nobody to tell, not an error.
+            _logger.info("notify_user_skipped_recipient_unavailable")
         except Exception:  # pragma: no cover  best-effort
             _logger.exception("notify_user_about_failure_failed")
 

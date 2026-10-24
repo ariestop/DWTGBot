@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from telegram.error import TelegramError
 
 from app.application.dto.jobs import WorkerJobPayload
 from app.application.dto.media import AnalyzedMedia
@@ -137,8 +136,6 @@ class _FakeTempLinks:
 
 
 class _FakeTelegramSender:
-    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
-
     def __init__(self) -> None:
         self.videos: list[_SentVideo] = []
         self.texts: list[_SentText] = []

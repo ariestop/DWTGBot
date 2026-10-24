@@ -28,6 +28,10 @@ classDiagram
     DownloadError <|-- FileTooLargeError
     DownloadError <|-- FfmpegError
     AppError <|-- StorageError
+    AppError <|-- DeliveryError
+    DeliveryError <|-- DeliveryTransientError
+    DeliveryError <|-- DeliveryRejectedError
+    DeliveryError <|-- RecipientUnavailableError
     AppError <|-- TempLinkExpiredError
     AppError <|-- TempLinkExhaustedError
 
@@ -82,6 +86,9 @@ This split is the entire point of the hierarchy.
 | `UpstreamUnavailableError` | **`True`** | `provider_error` | "Источник временно ограничивает скачивание. Попробуйте через несколько минут." | circuit breaker open |
 | `FfmpegError` | `False` | `provider_error` | "Не удалось обработать медиа." | direct ffmpeg failures |
 | `StorageError` | `False` | `internal_error` | "Ошибка хранилища." | `LocalStorage`, `ensure_within` |
+| `DeliveryTransientError` | **`True`** | `network_error` | "Не удалось отправить файл в Telegram. Попробуйте позже." | `TelegramSender`: `TimedOut`, `NetworkError`, `RetryAfter` (carries `retry_after_s`); 3 attempts in place, then the job retry |
+| `DeliveryRejectedError` | `False` | `internal_error` | "Telegram не принял файл. Попробуйте другое качество или другую ссылку." | `TelegramSender`: `BadRequest`; 3 attempts in place (a CDN blip sometimes clears), no job retry |
+| `RecipientUnavailableError` | `False` | `user_error` | "Не удалось отправить сообщение в этот чат." | `TelegramSender`: `Forbidden` (bot blocked), `ChatMigrated`; never retried |
 | `JobConcurrentUpdateError` | **`True`** | `internal_error` | "Задача обновлялась параллельно. Попробуйте ещё раз." | optimistic-lock conflict |
 | `TooManyJobsError` | `False` | `user_error` | "Сейчас у вас уже выполняется несколько задач. Дождитесь их завершения и попробуйте снова." | per-user job cap |
 | `JobCancelledError` | `False` | `user_error` | "Отменено." | cooperative cancel (ADR-0010) |

@@ -8,11 +8,16 @@ Product rule (explicit user requirement, 2026-04):
 
 ``DeliveryService`` therefore:
 
-* retries ``send_*`` up to ``_UPLOAD_RETRY_ATTEMPTS`` times when the
-  first attempt fails with a ``TelegramError`` (covers ``TimedOut``,
-  ``NetworkError``, transient ``BadRequest`` from the CDN layer);
-* propagates the last exception when the budget is exhausted, letting
-  arq retry the whole job — no silent fallback to a temp link;
+* retries ``send_*`` up to ``_UPLOAD_RETRY_ATTEMPTS`` times when an
+  attempt fails with ``DeliveryTransientError`` (``TimedOut``,
+  ``NetworkError``, ``RetryAfter``) or ``DeliveryRejectedError``
+  (``BadRequest``, sometimes a CDN blip). ``TelegramSender`` translates
+  PTB errors into these;
+* waits ``retry_after`` on flood control, up to ``_RETRY_AFTER_CAP_S``;
+* never retries ``RecipientUnavailableError`` (bot blocked, chat gone);
+* propagates the last exception when the budget is exhausted: arq
+  retries the whole job only for a transient error — no silent fallback
+  to a temp link;
 * leaves the >49 MB branch untouched (already goes straight to the
   link path without ever calling ``send_video``).
 
@@ -30,13 +35,17 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 
 import app.application.services.delivery_service as delivery_service_module
 from app.application.ports.media_sender import InlineKeyboard
 from app.application.services.delivery_service import DeliveryService
 from app.domain.entities.media_info import DownloadResult
 from app.domain.enums import DeliveryMethod, MediaKind
+from app.exceptions import (
+    DeliveryRejectedError,
+    DeliveryTransientError,
+    RecipientUnavailableError,
+)
 
 
 @dataclass
@@ -55,8 +64,6 @@ class _SenderVideo:
     A ``BaseException`` is raised, anything else (including ``None``)
     is returned verbatim as the resulting ``file_id``.
     """
-
-    upload_retry_errors: tuple[type[BaseException], ...] = (TelegramError,)
 
     def __init__(self, outcomes: list[Any]) -> None:
         self._outcomes = list(outcomes)
@@ -143,19 +150,21 @@ def _small_video(tmp_path: Path, *, size_bytes: int = 1024) -> DownloadResult:
 
 
 @pytest.fixture(autouse=True)
-def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the test suite fast: retry backoff is fixed at 3 s in prod."""
+def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Keep the test suite fast and record the waits between attempts."""
+    waits: list[float] = []
 
-    async def _instant(_: float) -> None:
-        return None
+    async def _instant(seconds: float) -> None:
+        waits.append(seconds)
 
     monkeypatch.setattr(delivery_service_module.asyncio, "sleep", _instant)
+    return waits
 
 
 @pytest.mark.asyncio
 async def test_transient_timeout_retries_then_delivers_directly(tmp_path: Path) -> None:
     """First attempt trips ``TimedOut``; retry succeeds. No temp link."""
-    sender = _SenderVideo([TimedOut("upload stalled"), "file-id-ok"])
+    sender = _SenderVideo([DeliveryTransientError("upload stalled"), "file-id-ok"])
     temp_links = _FakeTempLinks()
     service = DeliveryService(
         settings=_settings(),
@@ -184,9 +193,9 @@ async def test_persistent_network_error_propagates_after_retries(tmp_path: Path)
     """All attempts fail → last exception surfaces to the caller (arq)."""
     sender = _SenderVideo(
         [
-            NetworkError("reset 1"),
-            NetworkError("reset 2"),
-            NetworkError("reset 3"),
+            DeliveryTransientError("reset 1"),
+            DeliveryTransientError("reset 2"),
+            DeliveryTransientError("reset 3"),
         ]
     )
     temp_links = _FakeTempLinks()
@@ -199,7 +208,7 @@ async def test_persistent_network_error_propagates_after_retries(tmp_path: Path)
     )
     result = _small_video(tmp_path)
 
-    with pytest.raises(TelegramError):
+    with pytest.raises(DeliveryTransientError):
         await service.deliver(job_id=42, chat_id=99, result=result)
 
     # Budget was honoured, and crucially — no temp-link fallback fired.
@@ -220,9 +229,9 @@ async def test_persistent_badrequest_propagates_after_retries(tmp_path: Path) ->
     """
     sender = _SenderVideo(
         [
-            BadRequest("failed to read video"),
-            BadRequest("failed to read video"),
-            BadRequest("failed to read video"),
+            DeliveryRejectedError("failed to read video"),
+            DeliveryRejectedError("failed to read video"),
+            DeliveryRejectedError("failed to read video"),
         ]
     )
     temp_links = _FakeTempLinks()
@@ -235,10 +244,13 @@ async def test_persistent_badrequest_propagates_after_retries(tmp_path: Path) ->
     )
     result = _small_video(tmp_path)
 
-    with pytest.raises(BadRequest):
+    with pytest.raises(DeliveryRejectedError) as caught:
         await service.deliver(job_id=42, chat_id=99, result=result)
 
+    assert len([c for c in sender.calls if c.kind == "video"]) == 3
     assert temp_links.issued == []
+    # A new download would get the same answer: arq does not repeat the job.
+    assert caught.value.is_retryable is False
 
 
 @pytest.mark.asyncio
@@ -277,3 +289,50 @@ async def test_large_file_still_uses_temp_link(tmp_path: Path) -> None:
     # No send_video attempt at all — we go directly to the link path.
     assert all(c.kind != "video" for c in sender.calls)
     assert temp_links.issued == [(7, str(big))]
+
+
+def _service(sender: _SenderVideo) -> DeliveryService:
+    return DeliveryService(
+        settings=_settings(),
+        sender=sender,
+        storage=_FakeStorage(),
+        temp_links=_FakeTempLinks(),
+        post_text_store=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_blocked_recipient_is_not_retried(tmp_path: Path) -> None:
+    # Retrying an upload to a user who blocked the bot only burns
+    # bandwidth; the job fails without another attempt (audit R3).
+    sender = _SenderVideo([RecipientUnavailableError("bot was blocked by the user")])
+
+    with pytest.raises(RecipientUnavailableError) as caught:
+        await _service(sender).deliver(job_id=42, chat_id=99, result=_small_video(tmp_path))
+
+    assert len(sender.calls) == 1
+    assert caught.value.is_retryable is False
+
+
+@pytest.mark.asyncio
+async def test_flood_control_wait_is_honoured(tmp_path: Path, sleeps: list[float]) -> None:
+    sender = _SenderVideo([DeliveryTransientError("flood", retry_after_s=17.0), "file-id"])
+
+    outcome = await _service(sender).deliver(job_id=42, chat_id=99, result=_small_video(tmp_path))
+
+    assert outcome.primary_telegram_file_id == "file-id"
+    assert sleeps == [17.0]
+
+
+@pytest.mark.asyncio
+async def test_flood_wait_beyond_the_cap_goes_to_the_job_retry(
+    tmp_path: Path, sleeps: list[float]
+) -> None:
+    long_wait = delivery_service_module._RETRY_AFTER_CAP_S + 1
+    sender = _SenderVideo([DeliveryTransientError("flood", retry_after_s=long_wait)])
+
+    with pytest.raises(DeliveryTransientError):
+        await _service(sender).deliver(job_id=42, chat_id=99, result=_small_video(tmp_path))
+
+    assert len(sender.calls) == 1
+    assert sleeps == []

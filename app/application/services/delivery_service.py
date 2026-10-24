@@ -24,7 +24,7 @@ from app.application.services.temp_link_service import TempLinkService
 from app.config import Settings
 from app.domain.entities.media_info import DownloadResult
 from app.domain.enums import DeliveryMethod, MediaKind
-from app.exceptions import FileTooLargeError
+from app.exceptions import DeliveryRejectedError, DeliveryTransientError, FileTooLargeError
 from app.logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -59,6 +59,9 @@ _POST_TEXT_CALLBACK_PREFIX = "pt"
 # deliver directly.
 _UPLOAD_RETRY_ATTEMPTS = 3
 _UPLOAD_RETRY_BACKOFF_S = 3.0
+# Flood control (``RetryAfter``) asks for a wait; honour it up to this.
+# A longer wait goes to arq's job-level retry instead of holding a slot.
+_RETRY_AFTER_CAP_S = 60.0
 
 
 def _post_text_callback_data(job_id: int) -> str:
@@ -296,16 +299,21 @@ class DeliveryService:
                     caption=caption,
                     reply_markup=reply_markup,
                 )
-            except self._sender.upload_retry_errors as exc:
+            except (DeliveryTransientError, DeliveryRejectedError) as exc:
+                # RecipientUnavailableError is not caught: the chat
+                # cannot receive anything, a retry only repeats the upload.
                 last_exc = exc
-                if attempt >= attempts:
+                retry_after = (
+                    exc.retry_after_s or 0.0 if isinstance(exc, DeliveryTransientError) else 0.0
+                )
+                if attempt >= attempts or retry_after > _RETRY_AFTER_CAP_S:
                     _logger.warning(
                         "telegram_upload_retries_exhausted",
                         job_id=job_id,
                         size=size,
                         file=file.name,
                         attempts=attempt,
-                        error_class=type(exc).__name__,
+                        error_class=type(exc.__cause__ or exc).__name__,
                         error=str(exc),
                     )
                     raise
@@ -315,10 +323,10 @@ class DeliveryService:
                     size=size,
                     file=file.name,
                     attempt=attempt,
-                    error_class=type(exc).__name__,
+                    error_class=type(exc.__cause__ or exc).__name__,
                     error=str(exc),
                 )
-                await asyncio.sleep(_UPLOAD_RETRY_BACKOFF_S)
+                await asyncio.sleep(max(_UPLOAD_RETRY_BACKOFF_S, retry_after))
         # Unreachable: the loop either returns or raises. The ``assert``
         # keeps type-checkers happy about the Optional return type.
         assert last_exc is not None  # pragma: no cover

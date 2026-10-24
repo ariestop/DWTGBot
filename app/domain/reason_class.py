@@ -19,6 +19,9 @@ from enum import Enum
 from app.exceptions import (
     AppError,
     ConfigError,
+    DeliveryError,
+    DeliveryRejectedError,
+    DeliveryTransientError,
     DownloadError,
     DownloadTimeoutError,
     FfmpegError,
@@ -29,6 +32,7 @@ from app.exceptions import (
     MediaNotFoundError,
     MediaPrivateError,
     ProviderError,
+    RecipientUnavailableError,
     SizeUnknownError,
     StorageError,
     TempLinkExhaustedError,
@@ -70,6 +74,8 @@ _USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
     # so the SLO denominator excludes these — a cancel is not a service
     # failure.
     JobCancelledError,
+    # The user blocked the bot or removed it from the chat.
+    RecipientUnavailableError,
 )
 
 # Failures originating in the upstream provider / yt-dlp / ffmpeg.
@@ -92,6 +98,7 @@ _PROVIDER_ERROR_TYPES: tuple[type[BaseException], ...] = (
 # the local socket stalled — both are retryable in the same way.
 _NETWORK_ERROR_TYPES: tuple[type[BaseException], ...] = (
     DownloadTimeoutError,
+    DeliveryTransientError,
     TimeoutError,
     ConnectionError,
 )
@@ -100,6 +107,11 @@ _NETWORK_ERROR_TYPES: tuple[type[BaseException], ...] = (
 # misconfiguration) — never the user's fault.
 _INTERNAL_ERROR_TYPES: tuple[type[BaseException], ...] = (
     StorageError,
+    # Telegram refused our request (BadRequest): a payload we built.
+    # The base also lands here; its transient and recipient subclasses
+    # are matched earlier.
+    DeliveryRejectedError,
+    DeliveryError,
     JobConcurrentUpdateError,
     ConfigError,
 )
