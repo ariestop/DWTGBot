@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,6 +10,7 @@ from yt_dlp.utils import DownloadError as YtDlpDownloadError
 
 from app.config import Settings
 from app.exceptions import DownloadError, MediaPrivateError, UpstreamUnavailableError
+from app.infrastructure.downloader.ytdlp_child import build_opts
 from app.infrastructure.downloader.ytdlp_runner import YtDlpRunner
 from app.utils.url import is_allowed_host
 
@@ -77,32 +77,15 @@ async def test_extract_info_merges_extra_opts(monkeypatch: pytest.MonkeyPatch) -
     assert callable(opts["match_filter"])
 
 
-@pytest.mark.asyncio
-async def test_download_passes_allowed_extractors_and_match_filter(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runner = _make_runner(monkeypatch)
-    captured: dict[str, Any] = {}
+def test_download_child_adds_allowed_extractors_and_match_filter() -> None:
+    # Downloads run in ytdlp_child (audit R16); the guards are added there.
+    opts = build_opts({"format": "best", "cookiefile": "/tmp/c.txt"}, lambda _m: None)
 
-    def _capture(url: str, opts: dict[str, Any]) -> None:
-        captured["url"] = url
-        captured["opts"] = opts
-        (tmp_path / "out.mp4").write_bytes(b"x")
-
-    monkeypatch.setattr(runner, "_download_sync", staticmethod(_capture))
-
-    await runner.download(
-        "https://instagram.com/reel/abc",
-        format_spec="best",
-        target_dir=tmp_path,
-    )
-
-    opts = captured["opts"]
     assert opts["allowed_extractors"] == ["Youtube", "YoutubeTab", "Instagram"]
     assert callable(opts["match_filter"])
     assert opts["match_filter"]({"url": "https://r1---sn.googlevideo.com/videoplayback"}) is None
     assert opts["match_filter"]({"url": "https://example.com/file.mp4"}) is not None
+    assert opts["cookiefile"] == "/tmp/c.txt"
 
 
 def test_is_allowed_host_accepts_supported_provider_cdns() -> None:

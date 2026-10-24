@@ -12,10 +12,12 @@ import os
 import pytest
 from redis.asyncio import Redis
 
+from app.application.ports.progress_channel import EVENTS_CHANNEL
 from app.application.services.delivery_ledger import DeliveredRecord
 from app.domain.enums import DeliveryMethod
 from app.infrastructure.cache.redis_delivery_ledger import RedisDeliveryLedger
 from app.infrastructure.cache.redis_post_text_store import RedisPostTextStore
+from app.infrastructure.cache.redis_progress_feed import RedisProgressFeed
 
 pytestmark = pytest.mark.integration
 
@@ -84,3 +86,23 @@ async def test_delivery_ledger_treats_a_corrupt_entry_as_missing(redis_client: R
     await redis_client.set("delivered:9", b"not json")
 
     assert await ledger.get(job_id=9) is None
+
+
+async def test_progress_feed_receives_published_job_ids(redis_client: Redis) -> None:
+    feed = RedisProgressFeed(redis_client)
+    await redis_client.hset("progress_meta:5", mapping={"chat_id": "1", "message_id": "2"})
+    subscription = await feed.subscribe()
+    try:
+        await redis_client.publish(EVENTS_CHANNEL, "5")
+        job_id = None
+        for _ in range(20):
+            job_id = await subscription.next_job_id(wait_s=0.1)
+            if job_id is not None:
+                break
+        assert job_id == 5
+    finally:
+        await subscription.close()
+
+    assert [item async for item in feed.placeholders()] == [
+        (5, {"chat_id": "1", "message_id": "2"})
+    ]

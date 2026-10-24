@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.config import get_settings
 from app.workers import backup_worker
 
 
@@ -60,7 +61,10 @@ async def test_loop_keeps_running_after_failure_and_stops_on_sigterm(
         return 1  # every run fails
 
     monkeypatch.setattr(backup_worker, "_run_backup", fake_backup)
-    monkeypatch.setenv("BACKUP_INTERVAL_SECONDS", "0")
+    # Below the >=60 floor on purpose: model_copy skips validation, so the
+    # loop runs back to back instead of waiting a minute.
+    fast = get_settings().model_copy(update={"BACKUP_INTERVAL_SECONDS": 0})
+    monkeypatch.setattr(backup_worker, "get_settings", lambda: fast)
 
     assert await backup_worker._amain() == 0
     assert len(calls) == 2

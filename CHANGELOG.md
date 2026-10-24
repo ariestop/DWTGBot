@@ -18,6 +18,45 @@ none.
 
 ## [Unreleased]
 
+### Fixed — загрузка yt-dlp в отдельном процессе: таймаут её действительно останавливает (аудит R16, [ADR-0014](docs/adr/0014-ytdlp-download-in-child-process.md))
+
+Раньше загрузка шла в потоке, и `DOWNLOAD_TIMEOUT_SECONDS` или отмена
+задачи arq снимали только ожидание. Если не было кадров прогресса
+(зависшее соединение, слияние или перекодирование в ffmpeg), yt-dlp и
+ffmpeg продолжали работать после того, как задача уже FAILED, занимая
+слот воркера, диск и сеть.
+
+Теперь `YtDlpRunner.download` запускает
+`app.infrastructure.downloader.ytdlp_child` в своей группе процессов и
+по таймауту или отмене убивает всю группу. Классификация ошибок, circuit
+breaker и прогресс работают как раньше; прогресс приходит не чаще шага
+0.5 %. Метаданные (`extract_info`, `probe_size`) по-прежнему в потоке.
+Цена: около 0.5 с и ~65 МБ на загрузку. `make_cancel_hook` (R13) удалён.
+
+### Changed — порты вместо прямого доступа к Redis/Postgres и `os.environ` (аудит R14, R15)
+
+Рефакторинг без изменения поведения.
+
+- **R15.** `ProgressUpdater` в боте читает прогресс через порт
+  `ProgressFeed`; реализация на Redis — `RedisProgressFeed` в
+  `app/infrastructure/cache/`. `/readyz` проверяет Postgres и Redis через
+  `CoreInfra.ping_postgres` / `ping_redis`, а не своим SQL. Тест слоёв
+  теперь падает, если `app/bot`, `app/api` или `app/workers` импортируют
+  драйвер (`redis`, `sqlalchemy`, `asyncpg`, `arq`, `yt_dlp`).
+- **R14.** Воркер бэкапов берёт `BACKUP_INTERVAL_SECONDS` и новый
+  `BACKUP_SCRIPT` из `Settings`, а не из `os.environ`. Значения по
+  умолчанию прежние (86400 с, `/app/deploy/scripts/backup.sh`); новое —
+  минимум 60 с для интервала, проверяется при старте вместе с остальной
+  конфигурацией. Новый тест запрещает `os.environ` / `os.getenv` вне
+  `app/config.py`.
+
+### Added — действие `docker-prune` в «Server maintenance»
+
+Удаляет образы, которые не использует ни один контейнер и которых нет в
+`last-good-*.env` (откат без pull остаётся возможным), и весь build cache.
+Печатает `docker system df` до и после. На single уже выполнено: образы
+10.9 → 7.6 ГБ, кэш сборки 5.5 ГБ → 0, диск 81 % → 69 %.
+
 ### Changed — `ProcessDownloadUseCase` без дублей переходов статуса (аудит R10)
 
 Рефакторинг без изменения поведения. Метрика и лог `job_status_changed`

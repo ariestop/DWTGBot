@@ -231,6 +231,9 @@ class BackupSettings(BaseModel):
 
     BACKUP_DIR: Path = Path("/var/backups/dwtgbot")
     BACKUP_RETENTION_DAYS: int = Field(14, ge=1)
+    # Read by app/workers/backup_worker.py: pause between runs of the script.
+    BACKUP_INTERVAL_SECONDS: int = Field(86_400, ge=60)
+    BACKUP_SCRIPT: Path = Path("/app/deploy/scripts/backup.sh")
 
 
 class ToolingSettings(BaseModel):

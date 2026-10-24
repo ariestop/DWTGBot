@@ -2403,6 +2403,7 @@ Workflow по SSH запускает `deploy/scripts/diagnostics.sh`, котор
 | `action` | Что делает |
 |---|---|
 | `journald-setup` | `deploy/scripts/journald_setup.sh`: ставит `/etc/systemd/journald.conf.d/dwtgbot.conf` (30 дней, ≤ 2 GiB, ≥ 4 GiB свободно), перезапускает `systemd-journald`, применяет лимиты к накопленному и печатает объём журнала |
+| `docker-prune` | `deploy/scripts/docker_prune.sh`: удаляет образы, которые не использует ни один контейнер и ни один last-good релиз (`/var/lib/dwtgbot/last-good-*.env`, нужны для отката), и весь кэш сборки; печатает `docker system df` до и после |
 
 Проверка: секция `Journal` в «Server diagnostics» показывает эти лимиты
 вместо `journald defaults`.

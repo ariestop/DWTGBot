@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 from urllib.parse import urlparse
-
-from yt_dlp.utils import DownloadCancelled
 
 from app.logging_config import get_logger
 from app.utils.url import is_allowed_host
@@ -125,7 +122,7 @@ def make_progress_hook(
 ) -> Callable[[ProgressEvent], None]:
     """Wrap ``on_progress`` into yt-dlp's ``progress_hooks`` protocol.
 
-    Runs inside the ``asyncio.to_thread`` worker. Hook errors are logged
+    Runs inside yt-dlp, in the download child process. Hook errors are logged
     and swallowed: yt-dlp has no recovery path for them and progress
     reporting must never abort a download (ADR-0010 §2.2).
     """
@@ -140,22 +137,6 @@ def make_progress_hook(
             on_progress(percent)
         except Exception:  # pragma: no cover  defensive
             _logger.exception("ytdlp_progress_hook_error")
-
-    return _hook
-
-
-def make_cancel_hook(cancelled: threading.Event) -> Callable[[ProgressEvent], None]:
-    """A progress hook that aborts the download once ``cancelled`` is set.
-
-    yt-dlp stops on ``DownloadCancelled`` raised from a hook, so a
-    download that hit ``DOWNLOAD_TIMEOUT_SECONDS`` ends at its next
-    progress frame instead of running on in its thread
-    (``asyncio.wait_for`` cannot stop a thread).
-    """
-
-    def _hook(_d: ProgressEvent) -> None:
-        if cancelled.is_set():
-            raise DownloadCancelled("download timed out")
 
     return _hook
 

@@ -24,6 +24,7 @@ from app.config import Settings
 from app.infrastructure.cache.redis_job_cancellation import RedisJobCancellationStore
 from app.infrastructure.cache.redis_notice_throttle import RedisNoticeThrottle
 from app.infrastructure.cache.redis_post_text_store import RedisPostTextStore
+from app.infrastructure.cache.redis_progress_feed import RedisProgressFeed
 from app.infrastructure.cache.redis_progress_reporter import RedisProgressReporter
 from app.infrastructure.cache.redis_rate_limit_gate import RedisRateLimitGate
 from app.infrastructure.cache.redis_state_store import RedisRequestStateStore
@@ -168,7 +169,7 @@ async def build_bot(settings: Settings) -> BotComposition:
 
     # ADR-0010 §2.2: the bot is the sole *reader* of the side-channel.
     # Built unconditionally: with no producer events it simply stays idle.
-    progress_updater = ProgressUpdater(settings=settings, redis=core.redis)
+    progress_updater = ProgressUpdater(settings=settings, feed=RedisProgressFeed(core.redis))
 
     return BotComposition(
         core=core,

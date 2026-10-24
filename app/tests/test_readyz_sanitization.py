@@ -19,15 +19,13 @@ from app.api.internal.health import router
 from app.config import Settings
 
 
-class _BoomEngine:
-    def connect(self) -> Any:
+class _BoomCore:
+    async def ping_postgres(self) -> None:
         raise RuntimeError(
             "sensitive: user=admin password=hunter2 host=/var/run/postgresql/.s.PGSQL.5432"
         )
 
-
-class _BoomRedis:
-    async def ping(self) -> bool:
+    async def ping_redis(self) -> bool:
         raise RuntimeError("ConnectionError: password=hunter2 leaked in driver msg")
 
 
@@ -37,22 +35,16 @@ class _BoomStorage:
 
 
 @dataclass
-class _Core:
-    engine: _BoomEngine
-    redis: _BoomRedis
-
-
-@dataclass
 class _Composition:
-    core: _Core
-    storage: _BoomStorage
+    core: Any
+    storage: Any
 
 
 def _make_client() -> TestClient:
     app = FastAPI()
     app.state.settings = Settings(_env_file=None)  # type: ignore[call-arg]
     app.state.composition = _Composition(
-        core=_Core(engine=_BoomEngine(), redis=_BoomRedis()),
+        core=_BoomCore(),
         storage=_BoomStorage(),
     )
     app.include_router(router)
@@ -80,22 +72,11 @@ def test_readyz_503_body_has_no_exception_detail() -> None:
 def test_readyz_ok_body_unchanged() -> None:
     """Happy path keeps the documented shape — no accidental regression."""
 
-    class _OkConnCtx:
-        async def __aenter__(self) -> _OkConnCtx:
-            return self
-
-        async def __aexit__(self, *_: object) -> None:
+    class _OkCore:
+        async def ping_postgres(self) -> None:
             return None
 
-        async def execute(self, _stmt: Any) -> None:
-            return None
-
-    class _OkEngine:
-        def connect(self) -> _OkConnCtx:
-            return _OkConnCtx()
-
-    class _OkRedis:
-        async def ping(self) -> bool:
+        async def ping_redis(self) -> bool:
             return True
 
     class _OkStorage:
@@ -105,7 +86,7 @@ def test_readyz_ok_body_unchanged() -> None:
     app = FastAPI()
     app.state.settings = Settings(_env_file=None)  # type: ignore[call-arg]
     app.state.composition = _Composition(
-        core=_Core(engine=_OkEngine(), redis=_OkRedis()),
+        core=_OkCore(),
         storage=_OkStorage(),
     )
     app.include_router(router)

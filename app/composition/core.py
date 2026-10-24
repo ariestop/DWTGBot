@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
@@ -30,6 +31,14 @@ class CoreInfra:
     engine: AsyncEngine
     sessionmaker: async_sessionmaker[AsyncSession]
     redis: Redis
+
+    async def ping_postgres(self) -> None:
+        """``SELECT 1``; raises when Postgres is unreachable (``/readyz``)."""
+        async with self.engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+
+    async def ping_redis(self) -> bool:
+        return bool(await self.redis.ping())
 
 
 def build_core(settings: Settings) -> CoreInfra:

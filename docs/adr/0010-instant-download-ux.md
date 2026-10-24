@@ -127,6 +127,11 @@ shutdown. It subscribes to `progress:events`, looks up
 > **Дополнено (2026-09-25):** имена ключей и канала вынесены в
 > `app/application/ports/progress_channel.py` (общий контракт writer ↔
 > reader), текст подписи — в `app/bot/services/progress_caption.py`.
+>
+> **Дополнено (2026-10-24, аудит R15):** updater больше не держит
+> клиент Redis: читает через порт `ProgressFeed` (тот же модуль),
+> реализация — `app/infrastructure/cache/redis_progress_feed.py`;
+> ошибки Redis приходят как `ProgressFeedError`.
 
 - Debounce: skip updates when `|Δpercent| < PROGRESS_DEBOUNCE_PERCENT`
   and the stage has not changed, unless the last successful edit is

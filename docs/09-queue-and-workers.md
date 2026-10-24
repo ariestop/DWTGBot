@@ -18,8 +18,8 @@ flowchart LR
     Bot[Bot (NL-1)] -->|enqueue_job<br/>_job_id="job:N"| R[(Redis on NL-1)]
     R -->|pop| W1[Worker process #1 (NL-2)]
     R -->|pop| W2[Worker process #2 (NL-2)]
-    W1 -->|to_thread| YDL[yt-dlp]
-    W2 -->|to_thread| YDL
+    W1 -->|child process| YDL[yt-dlp]
+    W2 -->|child process| YDL
     W1 -->|update| DB[(Postgres on NL-1)]
     W2 -->|update| DB
     W1 -->|HTTPS| TG[Telegram]

@@ -17,7 +17,7 @@ flowchart LR
     UC[ProcessDownloadUseCase] --> Prep[LocalStorage.prepare_job_dir]
     Prep --> Prov[Provider.download]
     Prov --> YDL[YtDlpRunner.download]
-    YDL -->|asyncio.to_thread| YT[yt_dlp.YoutubeDL]
+    YDL -->|child process<br/>ytdlp_child| YT[yt_dlp.YoutubeDL]
     YT --> FFM[ffmpeg<br/>postprocessor / merge]
     FFM --> FS[(target_dir/*.{ext})]
     FS --> Result[DownloadResult]
@@ -43,7 +43,8 @@ Component responsibilities:
 
 | Модуль | Ответственность |
 |---|---|
-| `ytdlp_runner.py` | `YtDlpRunner` — асинхронный фасад: `to_thread`, circuit breaker, таймаут загрузки, общий `_guarded` для всех вызовов |
+| `ytdlp_runner.py` | `YtDlpRunner` — асинхронный фасад: `to_thread` для метаданных, дочерний процесс для загрузки, circuit breaker, таймаут загрузки, общий `_guarded` для всех вызовов |
+| `ytdlp_child.py` | одна загрузка в отдельном процессе: JSON-запрос на stdin, строки прогресса и итога на stdout (ADR-0014) |
 | `ytdlp_opts.py` | чистые сборщики опций (`extract_opts` / `probe_opts` / `download_opts`), `apply_source_guards`, `apply_proxy`, `host_of`, хук прогресса (`ProgressEvent` TypedDict) |
 | `ytdlp_results.py` | `classify_error`, `looks_like_throttle`, `extract_known_size`, `selected_media_urls` |
 | `http_probe.py` | `head_content_length` — HEAD по разрешённому хосту (allowlist + `HTTPS_PROXY_URL`) |
@@ -93,7 +94,13 @@ class YtDlpRunner:
   - `ffmpeg_location = shutil.which(settings.FFMPEG_BIN)` — absolute path;
     yt-dlp rejects a bare name. Omitted (yt-dlp auto-discovers) when the
     binary is not on `PATH`.
-- Bounded by `DOWNLOAD_TIMEOUT_SECONDS` → `DownloadTimeoutError`.
+- Runs in a child process (`python -m app.infrastructure.downloader.ytdlp_child`,
+  own process group, [ADR-0014](adr/0014-ytdlp-download-in-child-process.md)).
+  Options cross the pipe as JSON; the child adds the source guards and the
+  progress hook. Progress reaches `on_progress` at most every 0.5 %.
+- Bounded by `DOWNLOAD_TIMEOUT_SECONDS` → `DownloadTimeoutError`. On timeout,
+  and when arq cancels the job, the runner sends `SIGKILL` to the child's
+  group: yt-dlp and its ffmpeg stop at once.
 - MP4-family outputs go through `mobile_compat.make_mobile_compatible` (§5).
 - Returns sorted list of files inside `target_dir`.
 
@@ -244,7 +251,7 @@ sequenceDiagram
     FS -->> UC: /storage/<job_id>/
     UC ->> P: provider.download(url, option, target_dir=...)
     P ->> YDL: download(format_spec, postproc=..., merge=..., target_dir=...)
-    YDL ->> YDL: yt_dlp + ffmpeg in to_thread
+    YDL ->> YDL: yt_dlp + ffmpeg in ytdlp_child process
     YDL -->> P: list[Path]
     P -->> UC: DownloadResult
     UC ->> Deliver: deliver(job_id, chat_id, result)
@@ -312,8 +319,8 @@ short timeout can flap.
 ## 10. Anti-patterns
 
 1. **Calling `yt_dlp.YoutubeDL` directly from a use case or the bot.** Only
-   the runner may. Otherwise we lose the `to_thread` boundary and risk
-   blocking the event loop.
+   the runner may. Otherwise we lose the `to_thread` / child-process
+   boundary and risk blocking the event loop or an unkillable download.
 2. **Reusing the same `target_dir` across jobs.** Always job-scoped.
 3. **Setting `outtmpl` without `%(id)s`.** Without the id, two videos with
    identical titles overwrite each other.
@@ -343,8 +350,8 @@ short timeout can flap.
 ## 12. Performance notes
 
 - A single worker handles `WORKER_CONCURRENCY` jobs in parallel (default 2).
-  Each yt-dlp download runs in its own thread, so increase `WORKER_CONCURRENCY`
-  cautiously — disk IO and bandwidth become bottlenecks before CPU does.
+  Each yt-dlp download runs in its own process (~0.5 s start, ~65 MB RSS),
+  so increase `WORKER_CONCURRENCY` cautiously — disk IO and bandwidth become bottlenecks before CPU does.
 - `concurrent_fragment_downloads=4` is a sweet spot for typical residential
   bandwidth; higher values rarely help and cause more retries on flaky CDNs.
 - ffmpeg muxing is fast (no transcode) for the YouTube video path. The
