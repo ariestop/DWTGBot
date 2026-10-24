@@ -168,7 +168,8 @@ Grouped by concern. **Bold** = required, no safe default.
 |---|---|---|---|
 | `BACKUP_DIR` | path | `/var/backups/dwtgbot` | Inside backup container; volume-mounted |
 | `BACKUP_RETENTION_DAYS` | int ≥1 | `14` | Days of dumps kept |
-| `BACKUP_INTERVAL_SECONDS` | int | `86400` | Set on the backup container env (compose) |
+| `BACKUP_INTERVAL_SECONDS` | int ≥60 | `86400` | Pause between runs of `backup.sh` in the backup container; compose passes it from `.env` |
+| `BACKUP_SCRIPT` | path | `/app/deploy/scripts/backup.sh` | Script the backup worker runs; compose sets it, override only for tests |
 | `BACKUP_S3_BUCKET` | str | empty | S2 audit fix: off-site replication backend #1. When set, `deploy/scripts/backup.sh::replicate_offsite` uploads each fresh dump via `aws s3 cp`. Requires `awscli` (bundled in `docker/backup.Dockerfile`) + ambient AWS credentials (instance profile, env, or `~/.aws/credentials`). Leave empty to skip. |
 | `BACKUP_S3_PREFIX` | str | `dwtgbot` | Object-key prefix inside `BACKUP_S3_BUCKET`. |
 | `BACKUP_RCLONE_REMOTE` | str | empty | S2 audit fix: off-site replication backend #2. Any remote known to rclone (`rclone config`) — B2, GCS, SFTP, etc. Uploads via `rclone copyto`. `rclone` is bundled in `docker/backup.Dockerfile`. Pick exactly one of `BACKUP_S3_BUCKET` / `BACKUP_RCLONE_REMOTE`. |

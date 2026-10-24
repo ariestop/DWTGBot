@@ -5,13 +5,13 @@ We keep the actual backup logic (pg_dump, retention) in a shell script so
 it can also be run manually or by an external scheduler. This worker just
 provides a long-lived containerized loop for environments without cron.
 
-Interval is fixed daily by default; override with BACKUP_INTERVAL_SECONDS env.
+Interval and script come from ``Settings`` (``BACKUP_INTERVAL_SECONDS``,
+``BACKUP_SCRIPT``).
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
 import sys
 
@@ -19,15 +19,13 @@ from app.config import get_settings
 from app.logging_config import configure_logging, get_logger
 from app.observability.sentry import configure_sentry
 
-DEFAULT_INTERVAL = 24 * 60 * 60  # daily
-
 
 async def _run_backup() -> int:
     log = get_logger("dwtgbot.backup")
-    script = os.environ.get("BACKUP_SCRIPT", "/app/deploy/scripts/backup.sh")
+    script = get_settings().BACKUP_SCRIPT
     proc = await asyncio.create_subprocess_exec(
         "bash",
-        script,
+        str(script),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -46,7 +44,7 @@ async def _amain() -> int:
     configure_sentry(settings, role="backup")
     log = get_logger("dwtgbot.backup")
 
-    interval = int(os.environ.get("BACKUP_INTERVAL_SECONDS", DEFAULT_INTERVAL))
+    interval = settings.BACKUP_INTERVAL_SECONDS
     stop = asyncio.Event()
 
     def _stop(*_: object) -> None:
