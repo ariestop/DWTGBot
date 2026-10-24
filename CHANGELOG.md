@@ -30,9 +30,10 @@ none.
   драйвер (`redis`, `sqlalchemy`, `asyncpg`, `arq`, `yt_dlp`).
 - **R14.** Воркер бэкапов берёт `BACKUP_INTERVAL_SECONDS` и новый
   `BACKUP_SCRIPT` из `Settings`, а не из `os.environ`. Значения по
-  умолчанию прежние (86400 с, `/app/deploy/scripts/backup.sh`); ошибка в
-  значении теперь видна при старте, а не молча заменяется дефолтом. Новый
-  тест запрещает `os.environ` / `os.getenv` вне `app/config.py`.
+  умолчанию прежние (86400 с, `/app/deploy/scripts/backup.sh`); новое —
+  минимум 60 с для интервала, проверяется при старте вместе с остальной
+  конфигурацией. Новый тест запрещает `os.environ` / `os.getenv` вне
+  `app/config.py`.
 
 ### Added — действие `docker-prune` в «Server maintenance»
 
