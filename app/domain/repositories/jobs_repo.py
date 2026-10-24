@@ -59,3 +59,11 @@ class JobsRepository(ABC):
         Implementations MUST set ``error_message`` so operators can
         triage from logs / Grafana alerts.
         """
+
+    @abstractmethod
+    async def reap_orphan_pending(self, *, older_than_seconds: int) -> int:
+        """Mark jobs FAILED that are still ``PENDING`` past
+        ``older_than_seconds``: the publish after the insert failed, or
+        the queue lost the task. Like the PROCESSING reaper this
+        releases the per-user cap. Returns the number of rows touched.
+        """

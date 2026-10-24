@@ -13,7 +13,7 @@ from app.application.use_cases.auto_enqueue_download import (
     AutoEnqueueInput,
 )
 from app.domain.entities.media_info import DownloadOption, MediaInfo
-from app.domain.enums import MediaKind, Platform, ProgressStage
+from app.domain.enums import JobStatus, MediaKind, Platform, ProgressStage
 from app.exceptions import TooManyJobsError
 from app.tests.test_enqueue_use_case import _FakeJobsRepo, _FakeQueue
 
@@ -365,3 +365,30 @@ async def test_auto_enqueue_swallows_post_text_put_failure() -> None:
     # time uses ``EXISTS``, so a failed write degrades to "no button"
     # without confusing downstream logic.
     assert result.has_description is True
+
+
+@pytest.mark.asyncio
+async def test_auto_enqueue_failure_releases_row_and_skips_side_channels() -> None:
+    class _BrokenQueue:
+        async def enqueue_download(self, payload: WorkerJobPayload) -> None:
+            raise ConnectionError("redis down")
+
+    repo = _FakeJobsRepo()
+    reporter = _FakeProgressReporter()
+    post_text = _FakePostTextStore()
+    analyzed = _make_analyzed()
+    uc = _make_uc(
+        provider=_FakeProvider(default=analyzed.options[0]),
+        repo=repo,
+        queue=_BrokenQueue(),
+        reporter=reporter,
+        post_text=post_text,
+    )
+
+    with pytest.raises(ConnectionError):
+        await uc.execute(_make_input(analyzed))
+
+    (job,) = repo.created
+    assert job.status is JobStatus.FAILED
+    assert reporter.starts == []
+    assert post_text.puts == []

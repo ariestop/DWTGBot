@@ -159,6 +159,7 @@ Grouped by concern. **Bold** = required, no safe default.
 |---|---|---|---|
 | `CLEANUP_INTERVAL_SECONDS` | int ≥60 | `3600` (1 h) | Cleanup container loop |
 | `MEDIA_CACHE_TTL_SECONDS` | int ≥60 | `21600` (6 h) | Both metadata cache and Redis request state |
+| `ORPHAN_PENDING_AGE_SECONDS` | int ≥600 | `14400` | Cleanup worker marks a `download_jobs` row still `PENDING` after this long as `FAILED` (`orphan reaped: job never left the queue`), releasing the per-user cap. Covers a publish to Redis that failed after the insert (the enqueue use cases already release such a row) and a task the queue lost. Keep it well above the longest expected queue wait: a reaped job that is still queued is skipped by the worker. Logged at WARNING (`orphan_pending_jobs_reaped`). |
 | `ORPHAN_JOB_AGE_SECONDS` | int ≥60 | `3900` | S1 audit fix: the cleanup worker marks any `download_jobs` row stuck in `PROCESSING` older than this as `FAILED` with reason `internal_error`, releasing the per-user cap. **Must be ≥ 2 × `JOB_TIMEOUT_SECONDS`** so in-flight long jobs are never reaped. Non-zero reap counts are logged at WARNING (`orphan_jobs_reaped`) — a persistent signal means a worker is dying mid-job. |
 
 ### Backup

@@ -63,9 +63,14 @@ class _FakeMediaCache:
 class _FakeJobs:
     def __init__(self) -> None:
         self.reap_ages: list[int] = []
+        self.pending_reap_ages: list[int] = []
 
     async def reap_orphan_processing(self, *, older_than_seconds: int) -> int:
         self.reap_ages.append(older_than_seconds)
+        return 1
+
+    async def reap_orphan_pending(self, *, older_than_seconds: int) -> int:
+        self.pending_reap_ages.append(older_than_seconds)
         return 1
 
     async def get(self, job_id: int) -> None:
@@ -108,7 +113,7 @@ async def test_cycle_skips_a_failed_removal_and_runs_every_step(tmp_path: Path) 
         job_metrics=_FakeMetrics(),
     )
 
-    await _run_cycle(composition, orphan_age_seconds=5400)  # type: ignore[arg-type]
+    await _run_cycle(composition, orphan_age_seconds=5400, pending_age_seconds=14400)  # type: ignore[arg-type]
 
     # The PermissionError on b.mp4 does not stop c.mp4; a file that is
     # already gone is not touched.
@@ -117,6 +122,7 @@ async def test_cycle_skips_a_failed_removal_and_runs_every_step(tmp_path: Path) 
     assert composition.temp_links_repo.deactivated_calls == 1
     assert composition.media_cache_repo.calls == 1
     assert composition.jobs_repo.reap_ages == [5400]
+    assert composition.jobs_repo.pending_reap_ages == [14400]
     # No storage/jobs dir → orphan sweep removes nothing, no metric bump.
     assert composition.job_metrics.orphan_dirs == []
 
@@ -138,5 +144,5 @@ async def test_cycle_propagates_repository_errors(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConnectionError):
-        await _run_cycle(composition, orphan_age_seconds=5400)  # type: ignore[arg-type]
+        await _run_cycle(composition, orphan_age_seconds=5400, pending_age_seconds=14400)  # type: ignore[arg-type]
     assert composition.media_cache_repo.calls == 0

@@ -195,6 +195,20 @@ class SqlAlchemyJobsRepository(JobsRepository):
         so it bubbles to operators' dashboards and logs without
         getting confused with a genuine yt-dlp failure.
         """
+        return await self._reap(
+            JobStatus.PROCESSING,
+            older_than_seconds=older_than_seconds,
+            error_message="orphan reaped: worker did not heartbeat within the SLA window",
+        )
+
+    async def reap_orphan_pending(self, *, older_than_seconds: int) -> int:
+        return await self._reap(
+            JobStatus.PENDING,
+            older_than_seconds=older_than_seconds,
+            error_message="orphan reaped: job never left the queue",
+        )
+
+    async def _reap(self, status: JobStatus, *, older_than_seconds: int, error_message: str) -> int:
         if older_than_seconds < 1:
             raise ValueError("older_than_seconds must be >= 1")
         threshold = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
@@ -202,12 +216,12 @@ class SqlAlchemyJobsRepository(JobsRepository):
             stmt = (
                 update(DownloadJobModel)
                 .where(
-                    DownloadJobModel.status == JobStatus.PROCESSING,
+                    DownloadJobModel.status == status,
                     DownloadJobModel.updated_at < threshold,
                 )
                 .values(
                     status=JobStatus.FAILED,
-                    error_message=("orphan reaped: worker did not heartbeat within the SLA window"),
+                    error_message=error_message,
                     completed_at=datetime.now(UTC),
                 )
             )

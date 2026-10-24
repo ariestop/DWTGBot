@@ -32,6 +32,7 @@ async def _run_cycle(
     composition: CleanupComposition,
     *,
     orphan_age_seconds: int,
+    pending_age_seconds: int,
 ) -> None:
     log = get_logger("dwtgbot.cleanup")
 
@@ -64,6 +65,15 @@ async def _run_cycle(
     )
     if reaped:
         log.warning("orphan_jobs_reaped", count=reaped, age_threshold_s=orphan_age_seconds)
+    reaped_pending = await composition.jobs_repo.reap_orphan_pending(
+        older_than_seconds=pending_age_seconds,
+    )
+    if reaped_pending:
+        log.warning(
+            "orphan_pending_jobs_reaped",
+            count=reaped_pending,
+            age_threshold_s=pending_age_seconds,
+        )
 
     removed_orphan_dirs = await _sweep_orphan_job_dirs(composition, older_than_seconds=86_400)
     if removed_orphan_dirs:
@@ -142,6 +152,7 @@ async def _amain() -> int:
                 await _run_cycle(
                     composition,
                     orphan_age_seconds=settings.ORPHAN_JOB_AGE_SECONDS,
+                    pending_age_seconds=settings.ORPHAN_PENDING_AGE_SECONDS,
                 )
             except Exception:  # pragma: no cover
                 log.exception("cleanup_cycle_error")

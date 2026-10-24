@@ -65,6 +65,10 @@ class _AtomicRepo(JobsRepository):
         del older_than_seconds
         return 0
 
+    async def reap_orphan_pending(self, *, older_than_seconds: int) -> int:
+        del older_than_seconds
+        return 0
+
 
 class _FakeQueue:
     def __init__(self) -> None:

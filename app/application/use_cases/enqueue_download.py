@@ -8,11 +8,8 @@ publish. Heavy lifting (fetch, ffmpeg, deliver) happens in the worker.
 
 from __future__ import annotations
 
-from app.application.dto.jobs import (
-    EnqueueDownloadInput,
-    EnqueueDownloadResult,
-    WorkerJobPayload,
-)
+from app.application.dto.jobs import EnqueueDownloadInput, EnqueueDownloadResult
+from app.application.services.job_enqueue import enqueue_or_release
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.queue import QueueProducer
 from app.domain.entities.download_job import DownloadJob
@@ -70,8 +67,11 @@ class EnqueueDownloadUseCase:
             )
         assert created.id is not None  # repo contract
 
-        await self._queue.enqueue_download(
-            WorkerJobPayload(job_id=created.id, correlation_id=payload.correlation_id)
+        await enqueue_or_release(
+            jobs=self._jobs,
+            queue=self._queue,
+            job=created,
+            correlation_id=payload.correlation_id,
         )
         # Metric BEFORE the log so a Prometheus scrape sees the bump
         # in the same window as ``job_enqueued`` shows up in Loki.
