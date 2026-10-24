@@ -336,3 +336,28 @@ async def test_flood_wait_beyond_the_cap_goes_to_the_job_retry(
 
     assert len(sender.calls) == 1
     assert sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_gallery_item_is_retried_in_place(tmp_path: Path) -> None:
+    # Without in-place retries one blip on item 2 retried the whole job
+    # and sent item 1 again (audit R2).
+    files = []
+    for name in ("1.mp4", "2.mp4"):
+        f = tmp_path / name
+        f.write_bytes(b"x" * 100)
+        files.append(f)
+    result = DownloadResult(
+        files=tuple(str(f) for f in files),
+        total_size_bytes=200,
+        primary_mime="video/mp4",
+        title="Gallery",
+        kind=MediaKind.GALLERY,
+    )
+    sender = _SenderVideo(["id-1", DeliveryTransientError("reset"), "id-2"])
+
+    outcome = await _service(sender).deliver(job_id=42, chat_id=99, result=result)
+
+    sent = [c.file for c in sender.calls if c.kind == "video"]
+    assert sent == [files[0], files[1], files[1]]
+    assert outcome.primary_telegram_file_id == "id-1"

@@ -98,6 +98,17 @@ await self._pool.enqueue_job(
   job's bookkeeping has been cleaned up*. Use `arq` CLI tools (or a future
   admin endpoint) for forced re-runs; do not paper over with random ids.
 
+**Delivery is recorded before DONE.** The worker delivers first and
+writes `DONE` second; when anything fails in between (a database blip on
+that write, a crash), arq retries the job. Right after a successful
+delivery `ProcessDownloadUseCase` writes `delivered:{job_id}` to Redis
+(`RedisDeliveryLedger`, TTL = every attempt of the job + 1 h). A retry
+that finds it skips download and delivery and only writes `DONE`
+(`job_already_delivered`). Best-effort: with Redis down the retry
+delivers again, as before. Not covered: Telegram accepting an upload
+whose response timed out (`TimedOut`), and a gallery that fails midway
+after its in-place retries; both can still repeat items.
+
 ---
 
 ## 5. Worker startup / shutdown

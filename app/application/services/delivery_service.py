@@ -148,7 +148,17 @@ class DeliveryService:
         if small_each and len(files) <= MAX_INDIVIDUAL_FILES:
             primary_file_id: str | None = None
             for f in files:
-                fid = await self._upload_one(chat_id, f, kind=_infer_kind(f), caption=None)
+                # Same in-place retries as a single file: a failure here
+                # retries the whole job, which sends the earlier items again.
+                fid = await self._upload_one_with_retry(
+                    job_id=job_id,
+                    chat_id=chat_id,
+                    file=f,
+                    size=f.stat().st_size,
+                    kind=_infer_kind(f),
+                    caption=None,
+                    reply_markup=None,
+                )
                 primary_file_id = primary_file_id or fid
             await self._sender.send_text(
                 chat_id,

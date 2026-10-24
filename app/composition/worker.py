@@ -13,6 +13,7 @@ from app.application.services.temp_link_service import TempLinkService
 from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.composition.core import CoreInfra, build_core, build_metrics, build_provider_registry
 from app.config import Settings
+from app.infrastructure.cache.redis_delivery_ledger import RedisDeliveryLedger
 from app.infrastructure.cache.redis_job_cancellation import RedisJobCancellationStore
 from app.infrastructure.cache.redis_post_text_store import RedisPostTextStore
 from app.infrastructure.cache.redis_progress_reporter import RedisProgressReporter
@@ -121,6 +122,7 @@ def build_worker(settings: Settings) -> WorkerComposition:
         progress_reporter=progress_reporter,
         cancellation=cancellation,
         media_cache=SqlAlchemyMediaCacheRepository(core.sessionmaker),
+        delivery_ledger=RedisDeliveryLedger(redis=core.redis, settings=settings),
     )
     return WorkerComposition(
         core=core,
