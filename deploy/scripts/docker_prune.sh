@@ -4,6 +4,11 @@
 #
 #   sudo bash deploy/scripts/docker_prune.sh
 #
+# Removes stopped one-off containers (`compose run` leftovers, e.g. a
+# deploy preflight interrupted before --rm cleaned up): they pin old
+# images and are never started again. Other stopped containers are only
+# listed — they may belong to another project on the host.
+#
 # Keeps every image a container (running or stopped) uses and every
 # image of a last-good release (/var/lib/dwtgbot/last-good-*.env), so
 # deploy_update.sh can still roll back without a pull. Everything else
@@ -22,6 +27,18 @@ require_command docker
 
 log_step "Before"
 docker system df
+
+stopped=(--filter status=exited --filter status=created --filter status=dead)
+log_step "Stopped containers"
+docker ps -a "${stopped[@]}" \
+  --format '{{.Names}}  {{.Image}}  {{.Status}}  project={{.Label "com.docker.compose.project"}} oneoff={{.Label "com.docker.compose.oneoff"}}'
+mapfile -t oneoff < <(docker ps -aq "${stopped[@]}" --filter label=com.docker.compose.oneoff=True)
+if ((${#oneoff[@]} > 0)); then
+  docker rm "${oneoff[@]}" >/dev/null
+  log_ok "Removed ${#oneoff[@]} stopped one-off container(s)"
+else
+  log_info "No stopped one-off containers"
+fi
 
 declare -A keep=()
 while IFS= read -r image; do

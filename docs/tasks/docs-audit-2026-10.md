@@ -103,8 +103,12 @@ Status: Evolving
 journald: сообщения yt-dlp вида `Unsupported URL: <url>` и
 `No suitable extractor found for URL <url>` содержат его целиком. Тест
 `test_no_urls_in_logs.py` ловит только ключи `url=` и `source_url=`.
-Чинить в отдельном PR: логировать `error_class`, а текст ошибки пропускать
-через обрезку URL (`app/utils/url.py`).
+Там же нашлась утечка серьёзнее: httpx пишет запросы к Telegram на INFO
+как `https://api.telegram.org/bot<token>/getUpdates`, то есть токен бота
+оказывался в journald. ✅ Исправлено отдельным PR: процессор
+`redact_event_urls` (`app/utils/redact.py`) в цепочке structlog сокращает
+любой URL до `scheme://host/…`, Sentry — то же в `before_send` и без
+локальных переменных кадров.
 
 ---
 
@@ -116,7 +120,7 @@ journald: сообщения yt-dlp вида `Unsupported URL: <url>` и
 | 2 | Перенести правила Cursor и `docs/26` в Claude: `CLAUDE.md`, `.claude/rules/*.md` (по путям), `.claude/skills/` (`plan-change`, `finish-change`, `add-config-variable`, `db-migration`, `server-ops`); удалить `.cursor/` и `docs/26-cursor-rules.md` | ✅ этот PR |
 | 3 | Тест `app/tests/test_docs_references.py`: пути в обратных кавычках существуют, события в запросах к логам есть в коде, ссылки в `CLAUDE.md` и `.claude/` живые. На `main` до шага 1 находит около 50 расхождений | ✅ этот PR |
 | 4 | Сократить: из `28`–`30` оставить по одному рабочему рецепту на тип задачи, убрать гипотетические сценарии; затем снять их исключение в тесте шага 3 | ⏳ решение владельца |
-| — | Код: URL в `error=str(exc)` (§2.5) | ⏳ отдельный PR |
+| — | Код: URL в `error=str(exc)` и токен бота в строках httpx (§2.5) | ✅ отдельный PR |
 
 ## 4. Куда что переехало из `docs/26-cursor-rules.md`
 

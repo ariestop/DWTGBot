@@ -55,6 +55,7 @@ with bind_context(request_id=req_id, user_id=uid, chat_id=cid):
 - Полный токен временной ссылки — только `token[:8] + "..."`.
 - **URL источника, превью и загрузки — на любом уровне** (P11,
   `app/tests/test_no_urls_in_logs.py`). Логируйте `platform` / `host`.
-  Осторожно с `error=str(exc)`: текст ошибок yt-dlp может содержать URL
-  («Unsupported URL: …») — предпочитайте `error_class=type(exc).__name__`.
+  Страховка — процессор `redact_event_urls` (`app/utils/redact.py`): он
+  сокращает любой URL в строках лога, тексте ошибки и traceback до
+  `scheme://host/…`. На него не полагаться: URL явно не передавать.
 - Username, имя, телефон — только числовые `user_id` / `chat_id`.

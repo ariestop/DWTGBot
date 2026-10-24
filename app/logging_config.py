@@ -4,6 +4,9 @@ Centralized logging configuration based on structlog.
 - JSON output in production, human-friendly in development.
 - Correlation context (request_id / job_id / user_id / chat_id) is injected
   via structlog contextvars and propagated through async boundaries.
+- URLs in any string value (``error=str(exc)``, tracebacks, httpx request
+  lines with the bot token in the path) are cut to ``scheme://host/…``
+  before rendering (P11, :mod:`app.utils.redact`).
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import structlog
 from structlog.types import Processor
 
 from app.config import Settings
+from app.utils.redact import redact_event_urls
 
 
 def _add_logger_name_compat(
@@ -57,6 +61,8 @@ def configure_logging(settings: Settings) -> None:
         timestamper,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
+        # Last before the renderer: sees rendered tracebacks too.
+        redact_event_urls,
     ]
 
     if settings.LOG_JSON or settings.is_production:
@@ -89,7 +95,7 @@ class _StdlibFormatter(logging.Formatter):
 
     def __init__(self, renderer: Processor, shared: list[Processor]) -> None:
         super().__init__()
-        self._chain: list[Processor] = [*shared, renderer]
+        self._chain: list[Processor] = [*shared, _drop_record, renderer]
 
     def format(self, record: logging.LogRecord) -> str:
         event_dict: dict[str, Any] = {
@@ -105,6 +111,15 @@ class _StdlibFormatter(logging.Formatter):
         for proc in self._chain:
             event_dict = proc(None, record.levelname.lower(), event_dict)  # type: ignore[assignment]
         return event_dict if isinstance(event_dict, str) else str(event_dict)
+
+
+def _drop_record(
+    _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """Remove ``_record`` before rendering: its repr carries the raw message,
+    past :func:`redact_event_urls`, and is noise in the output."""
+    event_dict.pop("_record", None)
+    return event_dict
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

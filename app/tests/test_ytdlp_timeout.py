@@ -73,7 +73,8 @@ def _gone(pid: int) -> bool:
     """Dead or a zombie waiting for its (new) parent to reap it."""
     try:
         state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except (FileNotFoundError, IndexError):
+    except (FileNotFoundError, ProcessLookupError, IndexError):
+        # ProcessLookupError (ESRCH): the process went away between open and read.
         return True
     return state in ("Z", "X")
 
