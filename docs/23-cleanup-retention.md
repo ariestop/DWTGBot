@@ -188,7 +188,7 @@ single-purpose process.
 flowchart LR
   S[Tick: every CLEANUP_INTERVAL_SECONDS]
   S --> D[deactivate_expired<br/>UPDATE temp_links SET is_active=false<br/>WHERE expires_at &lt; now]
-  D --> L[list_inactive_with_files<br/>SELECT WHERE NOT is_active AND file_path IS NOT NULL<br/>LIMIT 500]
+  D --> L[list_inactive_with_files<br/>SELECT WHERE NOT is_active AND expires_at &gt; horizon<br/>ORDER BY expires_at DESC LIMIT 500]
   L --> P[per-row: storage.remove_path<br/>best-effort: log on failure]
   P --> M[media_cache.purge_expired<br/>DELETE WHERE expires_at &lt; now]
   M --> W[wait CLEANUP_INTERVAL_SECONDS or stop signal]
@@ -201,8 +201,15 @@ flowchart LR
 # 1. Mark expired temp_links inactive
 deactivated = await composition.temp_links_repo.deactivate_expired()
 
-# 2. Pull a bounded batch of inactive rows that still have files on disk
-inactive = await composition.temp_links_repo.list_inactive_with_files(limit=500)
+# 2. Inactive links that expired after the job-dir sweep horizon, newest
+#    first. Rows are never deleted, so without the window the query kept
+#    returning the same oldest 500 rows once that many had piled up.
+#    Older links are covered by the job-dir sweep below.
+job_dir_age_seconds = job_dir_sweep_age(TEMP_LINK_TTL_SECONDS)  # max(1 d, TTL + 1 h)
+horizon = now - timedelta(seconds=job_dir_age_seconds)
+inactive = await composition.temp_links_repo.list_inactive_with_files(
+    expired_after=horizon, limit=500
+)
 
 # 3. Delete the files (per-row best-effort)
 for link in inactive:
@@ -598,7 +605,7 @@ Future extension: an opt-in `--orphans` flag on `cleanup.sh` to run the same aud
 | Knob | Default | Steady-state behaviour |
 |---|---|---|
 | Cycle period | 1 h | Up to ~1 h delay between expiry and deletion |
-| Batch size | 500 (in-code, `list_inactive_with_files(limit=500)`) | Up to 12 000 deletes/day; covers ~99 % of installs |
+| Batch size | 500 (in-code, `list_inactive_with_files(limit=500)`), newest first, links expired within the job-dir horizon (`max(1 d, TTL + 1 h)`) | Up to 12 000 deletes/day; links that expired earlier go with the job-dir sweep |
 | TTL | 1 h | Files live ~2 h max from creation |
 | Cache TTL | 6 h | At most 1 day of provider info on disk |
 

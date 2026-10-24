@@ -32,14 +32,23 @@ async def _run_cycle(
     composition: CleanupComposition,
     *,
     orphan_age_seconds: int,
+    pending_age_seconds: int,
+    temp_link_ttl_seconds: int,
 ) -> None:
     log = get_logger("dwtgbot.cleanup")
+    # A job dir holds the file of a live temp link until the link expires,
+    # so the dir sweep waits at least that long. Links that expired before
+    # that horizon are left to the dir sweep.
+    job_dir_age_seconds = job_dir_sweep_age(temp_link_ttl_seconds)
+    horizon = datetime.now(UTC) - timedelta(seconds=job_dir_age_seconds)
 
     deactivated = await composition.temp_links_repo.deactivate_expired()
     if deactivated:
         log.info("temp_links_deactivated", count=deactivated)
 
-    inactive = await composition.temp_links_repo.list_inactive_with_files(limit=500)
+    inactive = await composition.temp_links_repo.list_inactive_with_files(
+        expired_after=horizon, limit=500
+    )
     removed_files = 0
     for link in inactive:
         path = Path(link.file_path)
@@ -64,11 +73,28 @@ async def _run_cycle(
     )
     if reaped:
         log.warning("orphan_jobs_reaped", count=reaped, age_threshold_s=orphan_age_seconds)
+    reaped_pending = await composition.jobs_repo.reap_orphan_pending(
+        older_than_seconds=pending_age_seconds,
+    )
+    if reaped_pending:
+        log.warning(
+            "orphan_pending_jobs_reaped",
+            count=reaped_pending,
+            age_threshold_s=pending_age_seconds,
+        )
 
-    removed_orphan_dirs = await _sweep_orphan_job_dirs(composition, older_than_seconds=86_400)
+    removed_orphan_dirs = await _sweep_orphan_job_dirs(
+        composition, older_than_seconds=job_dir_age_seconds
+    )
     if removed_orphan_dirs:
         composition.job_metrics.inc_storage_orphan_dirs_removed(count=removed_orphan_dirs)
         log.info("orphan_job_dirs_removed", count=removed_orphan_dirs)
+
+
+def job_dir_sweep_age(temp_link_ttl_seconds: int) -> int:
+    """Age after which a finished job's dir may go: a day, or the temp-link
+    TTL plus an hour when links live longer."""
+    return max(86_400, temp_link_ttl_seconds + 3_600)
 
 
 async def _sweep_orphan_job_dirs(
@@ -142,6 +168,8 @@ async def _amain() -> int:
                 await _run_cycle(
                     composition,
                     orphan_age_seconds=settings.ORPHAN_JOB_AGE_SECONDS,
+                    pending_age_seconds=settings.ORPHAN_PENDING_AGE_SECONDS,
+                    temp_link_ttl_seconds=settings.TEMP_LINK_TTL_SECONDS,
                 )
             except Exception:  # pragma: no cover
                 log.exception("cleanup_cycle_error")

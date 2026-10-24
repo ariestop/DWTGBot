@@ -381,6 +381,10 @@ class _FakeJobsRepo(JobsRepository):
         del older_than_seconds
         return 0
 
+    async def reap_orphan_pending(self, *, older_than_seconds: int) -> int:
+        del older_than_seconds
+        return 0
+
 
 class _FakeQueue(QueueProducer):
     def __init__(self) -> None:

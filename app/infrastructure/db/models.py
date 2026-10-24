@@ -29,6 +29,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
+    true,
 )
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.dialects.postgresql import JSONB
@@ -67,7 +69,11 @@ class DownloadJobModel(Base, TimestampMixin):
     selected_option_key: Mapped[str | None] = mapped_column(String(64))
     selected_format: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[JobStatus] = mapped_column(
-        job_status_enum, nullable=False, default=JobStatus.PENDING, index=True
+        job_status_enum,
+        nullable=False,
+        default=JobStatus.PENDING,
+        server_default=text("'pending'"),
+        index=True,
     )
     file_path: Mapped[str | None] = mapped_column(Text)
     file_size: Mapped[int | None] = mapped_column(BigInteger)
@@ -75,14 +81,15 @@ class DownloadJobModel(Base, TimestampMixin):
     telegram_file_id: Mapped[str | None] = mapped_column(String(255))
     public_url: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
-    retries_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    status_version: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default="0",
+    retries_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
     )
-    extra: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # Migration 0004 drops the server default after the backfill: every
+    # insert goes through the ORM, which sets 0.
+    status_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    extra: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     temp_links: Mapped[list[TempLinkModel]] = relationship(
@@ -112,7 +119,9 @@ class MediaCacheModel(Base, TimestampMixin):
     platform: Mapped[Platform] = mapped_column(platform_enum, nullable=False)
     media_id: Mapped[str | None] = mapped_column(String(128), index=True)
     title: Mapped[str | None] = mapped_column(String(512))
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
@@ -135,9 +144,15 @@ class TempLinkModel(Base, TimestampMixin):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
-    max_downloads: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    downloads_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    max_downloads: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    downloads_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true(), index=True
+    )
 
     job: Mapped[DownloadJobModel] = relationship(back_populates="temp_links")
 

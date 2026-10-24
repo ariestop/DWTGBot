@@ -34,14 +34,11 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.sql import text
 
 from app.domain.entities.download_job import DownloadJob
 from app.domain.entities.temp_link import TempLink
 from app.domain.enums import JobStatus, Platform
 from app.exceptions import JobConcurrentUpdateError
-from app.infrastructure.db.base import Base
 from app.infrastructure.db.repositories.jobs_repo_impl import SqlAlchemyJobsRepository
 from app.infrastructure.db.repositories.temp_links_repo_impl import (
     SqlAlchemyTempLinksRepository,
@@ -55,30 +52,6 @@ if not _DSN:
         "DWTGBOT_TEST_POSTGRES_URL is not set — skipping Postgres integration tests",
         allow_module_level=True,
     )
-
-
-@pytest.fixture
-async def sessionmaker():
-    engine = create_async_engine(_DSN, echo=False, future=True)
-    try:
-        async with engine.begin() as conn:
-            # Drop tables first; CASCADE removes FKs into temp_links, etc.
-            await conn.run_sync(Base.metadata.drop_all)
-            # Then drop the Postgres enum types (models declare create_type=False).
-            await conn.execute(text("DROP TYPE IF EXISTS job_status CASCADE"))
-            await conn.execute(text("DROP TYPE IF EXISTS platform CASCADE"))
-            await conn.execute(text("CREATE TYPE platform AS ENUM ('youtube', 'instagram')"))
-            await conn.execute(
-                text("CREATE TYPE job_status AS ENUM ('pending', 'processing', 'done', 'failed')")
-            )
-            await conn.run_sync(Base.metadata.create_all)
-        yield async_sessionmaker(engine, expire_on_commit=False)
-    finally:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.execute(text("DROP TYPE IF EXISTS job_status CASCADE"))
-            await conn.execute(text("DROP TYPE IF EXISTS platform CASCADE"))
-        await engine.dispose()
 
 
 # ----------------------------------------------------------------------

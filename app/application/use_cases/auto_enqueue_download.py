@@ -48,9 +48,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.application.dto.jobs import WorkerJobPayload
 from app.application.dto.media import AnalyzedMedia
 from app.application.ports.progress_reporter import ProgressReporter
+from app.application.services.job_enqueue import enqueue_or_release
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.post_text_store import PostTextStore
 from app.application.services.providers import ProviderRegistry
@@ -145,8 +145,11 @@ class AutoEnqueueDownloadUseCase:
             )
         assert created.id is not None  # repo contract
 
-        await self._queue.enqueue_download(
-            WorkerJobPayload(job_id=created.id, correlation_id=payload.correlation_id)
+        await enqueue_or_release(
+            jobs=self._jobs,
+            queue=self._queue,
+            job=created,
+            correlation_id=payload.correlation_id,
         )
         self._metrics.inc_job_created(platform=info.platform)
 

@@ -12,6 +12,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import get_settings
+from app.infrastructure.db import models as _models  # noqa: F401  registers the tables
 from app.infrastructure.db.base import Base
 
 config = context.config
@@ -39,6 +40,9 @@ def _database_url_for_migrations() -> str:
 _db_url = _database_url_for_migrations()
 config.set_main_option("sqlalchemy.url", _db_url)
 
+# ``_models`` above fills this. Without that import the metadata is empty
+# and ``alembic revision --autogenerate`` (make migration) proposes
+# dropping every table; ``alembic check`` in CI guards it.
 target_metadata = Base.metadata
 
 

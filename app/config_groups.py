@@ -151,6 +151,10 @@ class CleanupSettings(BaseModel):
     # legitimately-slow job (e.g. 4K re-encode) is never reaped while
     # still running. Default = 2 * JOB_TIMEOUT default + 5 min slack.
     ORPHAN_JOB_AGE_SECONDS: int = Field(3900, ge=60)
+    # Same for jobs stuck in PENDING (the publish after the insert failed,
+    # or the queue lost the task). Generous: a job that is merely waiting
+    # behind a backlog must not be reaped, or the worker later skips it.
+    ORPHAN_PENDING_AGE_SECONDS: int = Field(14_400, ge=600)
 
 
 class InstantDownloadSettings(BaseModel):

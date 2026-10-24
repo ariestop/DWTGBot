@@ -258,7 +258,8 @@ The cleanup pass does, in order:
    `temp_links_repo.deactivate_expired()` flips `is_active=false` for
    `expires_at < now()`.
 2. **Sweep files** for inactive links:
-   `temp_links_repo.list_inactive_with_files(limit=500)` →
+   `temp_links_repo.list_inactive_with_files(expired_after=horizon, limit=500)`
+   (links that expired within `max(1 d, TTL + 1 h)`, newest first) →
    `Path(link.file_path).unlink(missing_ok=True)`.
 3. **Sweep job dirs** that contain no remaining files (best-effort
    `rmdir`).

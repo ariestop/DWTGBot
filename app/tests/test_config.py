@@ -160,6 +160,15 @@ def test_orphan_age_must_exceed_job_timeout_margin(monkeypatch: pytest.MonkeyPat
     assert any("ORPHAN_JOB_AGE_SECONDS" in e for e in errors)
 
 
+def test_orphan_pending_age_default_and_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert get_settings().ORPHAN_PENDING_AGE_SECONDS == 14_400
+
+    monkeypatch.setenv("ORPHAN_PENDING_AGE_SECONDS", "60")
+    get_settings.cache_clear()
+    with pytest.raises(RuntimeError, match="ORPHAN_PENDING_AGE_SECONDS"):
+        get_settings()
+
+
 def test_max_concurrent_jobs_default() -> None:
     s = get_settings()
     assert s.MAX_CONCURRENT_JOBS_PER_USER == 2

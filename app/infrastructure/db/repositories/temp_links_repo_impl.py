@@ -60,12 +60,17 @@ class SqlAlchemyTempLinksRepository(TempLinksRepository):
             # rowcount. Same idiom used in media_cache_repo_impl.
             return result.rowcount or 0  # type: ignore[attr-defined]
 
-    async def list_inactive_with_files(self, limit: int = 500) -> list[TempLink]:
+    async def list_inactive_with_files(
+        self, *, expired_after: datetime, limit: int = 500
+    ) -> list[TempLink]:
         async with self._sm() as session:
             stmt = (
                 select(TempLinkModel)
-                .where(TempLinkModel.is_active.is_(False))
-                .order_by(TempLinkModel.expires_at.asc())
+                .where(
+                    TempLinkModel.is_active.is_(False),
+                    TempLinkModel.expires_at > expired_after,
+                )
+                .order_by(TempLinkModel.expires_at.desc())
                 .limit(limit)
             )
             result = await session.execute(stmt)

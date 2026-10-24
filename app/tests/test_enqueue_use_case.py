@@ -50,6 +50,10 @@ class _FakeJobsRepo(JobsRepository):
         del older_than_seconds
         return 0
 
+    async def reap_orphan_pending(self, *, older_than_seconds: int) -> int:
+        del older_than_seconds
+        return 0
+
 
 class _FakeQueue:
     def __init__(self) -> None:
@@ -116,3 +120,38 @@ def test_enqueue_constructor_rejects_zero_cap() -> None:
     queue = _FakeQueue()
     with pytest.raises(ValueError):
         EnqueueDownloadUseCase(jobs_repo=repo, queue=queue, max_concurrent_per_user=0)
+
+
+class _BrokenQueue:
+    async def enqueue_download(self, payload: WorkerJobPayload) -> None:
+        raise ConnectionError("redis down")
+
+
+@pytest.mark.asyncio
+async def test_enqueue_failure_releases_the_inserted_row() -> None:
+    # A PENDING row left behind would count against the per-user cap
+    # forever (audit R1).
+    repo = _FakeJobsRepo()
+    uc = EnqueueDownloadUseCase(jobs_repo=repo, queue=_BrokenQueue(), max_concurrent_per_user=2)
+
+    with pytest.raises(ConnectionError):
+        await uc.execute(_make_input())
+
+    (job,) = repo.created
+    assert job.status is JobStatus.FAILED
+    assert job.error_message == "enqueue failed: ConnectionError"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_failure_still_raises_when_release_fails() -> None:
+    # The cleanup worker's PENDING reaper covers this case.
+    class _RepoDownToo(_FakeJobsRepo):
+        async def update(self, job: DownloadJob) -> DownloadJob:
+            raise ConnectionError("postgres down")
+
+    uc = EnqueueDownloadUseCase(
+        jobs_repo=_RepoDownToo(), queue=_BrokenQueue(), max_concurrent_per_user=2
+    )
+
+    with pytest.raises(ConnectionError, match="redis down"):
+        await uc.execute(_make_input())

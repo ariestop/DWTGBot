@@ -284,8 +284,10 @@ schedule and:
 
 1. `temp_links_repo.deactivate_expired()` — flips `is_active=false` for
    `expires_at < now()`.
-2. `temp_links_repo.list_inactive_with_files(limit=500)` — returns rows
-   where the file should be removed.
+2. `temp_links_repo.list_inactive_with_files(expired_after=horizon, limit=500)`
+   — links that expired within `max(1 d, TTL + 1 h)`, newest first; older
+   ones are left to the job-dir sweep, which waits that same age so a
+   live link's file is never removed.
 3. For each, `Path(link.file_path).unlink(missing_ok=True)`.
 4. Optionally deletes the row (or keeps for audit; see config).
 

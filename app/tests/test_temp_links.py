@@ -84,7 +84,7 @@ class _FakeRepo(TempLinksRepository):
     async def deactivate_expired(self) -> int:
         return 0
 
-    async def list_inactive_with_files(self, limit: int = 500):
+    async def list_inactive_with_files(self, *, expired_after, limit: int = 500):
         return []
 
     async def try_register_use(self, token: str):
