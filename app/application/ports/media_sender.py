@@ -35,9 +35,8 @@ class InlineKeyboard:
 
 
 class MediaSender(Protocol):
-    # Exceptions a direct upload may raise that are worth retrying in
-    # place before the job-level (arq) retry takes over.
-    upload_retry_errors: tuple[type[BaseException], ...]
+    """Sends to a chat. Failures raise the ``DeliveryError`` subclasses
+    of ``app.exceptions``: transient, rejected, or recipient unavailable."""
 
     async def send_text(
         self,

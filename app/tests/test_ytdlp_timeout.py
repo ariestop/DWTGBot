@@ -7,10 +7,14 @@ mid-ffmpeg. We verify the timeout translates to ``DownloadTimeoutError``.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
+import threading
+import time
 from pathlib import Path
 
 import pytest
+from yt_dlp.utils import DownloadCancelled
 
 from app.config import Settings
 from app.exceptions import DownloadTimeoutError
@@ -78,3 +82,37 @@ async def test_download_completes_within_budget(
         target_dir=tmp_path,
     )
     assert isinstance(files, list)
+
+
+@pytest.mark.asyncio
+async def test_timed_out_download_thread_stops_at_its_next_progress_frame(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # asyncio.wait_for cannot stop the thread; the cancel hook does (audit R13).
+    runner = _make_runner(monkeypatch, timeout_s=1)
+    frames: list[int] = []
+    finished = threading.Event()
+    stopped_by: list[BaseException] = []
+
+    def _slow_download(url: str, opts: dict) -> None:
+        try:
+            for i in range(60):
+                frames.append(i)
+                for hook in opts["progress_hooks"]:
+                    hook({"status": "downloading", "downloaded_bytes": i, "total_bytes": 100})
+                time.sleep(0.1)
+        except BaseException as exc:
+            stopped_by.append(exc)
+            raise
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(runner, "_download_sync", staticmethod(_slow_download))
+
+    with pytest.raises(DownloadTimeoutError):
+        await runner.download("https://example.com/slow", format_spec="best", target_dir=tmp_path)
+
+    assert await asyncio.to_thread(finished.wait, 2)
+    assert isinstance(stopped_by[0], DownloadCancelled)
+    assert len(frames) < 20

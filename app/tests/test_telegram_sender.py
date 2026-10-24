@@ -14,10 +14,23 @@ from typing import Any
 import pytest
 from telegram import InlineKeyboardMarkup, InputFile
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import (
+    BadRequest,
+    ChatMigrated,
+    Forbidden,
+    NetworkError,
+    RetryAfter,
+    TelegramError,
+    TimedOut,
+)
 
 from app.application.ports.media_sender import InlineButton, InlineKeyboard
 from app.config import get_settings
+from app.exceptions import (
+    DeliveryRejectedError,
+    DeliveryTransientError,
+    RecipientUnavailableError,
+)
 from app.infrastructure.telegram import sender as sender_mod
 from app.infrastructure.telegram.sender import TelegramSender
 
@@ -160,8 +173,45 @@ async def test_missing_keyboard_is_sent_as_none(bot: _FakeBot) -> None:
     assert bot.calls[0][1]["reply_markup"] is None
 
 
-def test_upload_retry_errors_cover_all_telegram_errors() -> None:
-    assert TelegramSender.upload_retry_errors == (TelegramError,)
+@pytest.mark.parametrize(
+    ("ptb_error", "expected"),
+    [
+        (TimedOut("upload stalled"), DeliveryTransientError),
+        (NetworkError("connection reset"), DeliveryTransientError),
+        (RetryAfter(17), DeliveryTransientError),
+        # BadRequest subclasses NetworkError in PTB; it must not read as transient.
+        (BadRequest("wrong file identifier"), DeliveryRejectedError),
+        (Forbidden("bot was blocked by the user"), RecipientUnavailableError),
+        (ChatMigrated(-100123), RecipientUnavailableError),
+        (TelegramError("unknown"), DeliveryTransientError),
+    ],
+)
+async def test_ptb_errors_become_delivery_errors(
+    bot: _FakeBot, ptb_error: TelegramError, expected: type[Exception]
+) -> None:
+    async def _fail(**_: Any) -> Any:
+        raise ptb_error
+
+    bot.send_message = _fail  # type: ignore[method-assign]
+    sender = TelegramSender(get_settings())
+
+    with pytest.raises(expected) as caught:
+        await sender.send_text(1, "hi")
+
+    assert caught.value.__cause__ is ptb_error
+
+
+async def test_retry_after_carries_the_wait(bot: _FakeBot, media_file: Path) -> None:
+    async def _flood(**_: Any) -> Any:
+        raise RetryAfter(17)
+
+    bot.send_document = _flood  # type: ignore[method-assign]
+    sender = TelegramSender(get_settings())
+
+    with pytest.raises(DeliveryTransientError) as caught:
+        await sender.send_document(1, media_file)
+
+    assert caught.value.retry_after_s == 17.0
 
 
 @pytest.mark.parametrize(

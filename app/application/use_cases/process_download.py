@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from app.application.ports.media_sender import MediaSender
 from app.application.ports.media_storage import MediaStorage
 from app.application.ports.progress_reporter import NoopProgressReporter, ProgressReporter
-from app.application.services.delivery_service import DeliveryOutcome, DeliveryService
+from app.application.services.delivery_ledger import DeliveredRecord, DeliveryLedger
+from app.application.services.delivery_service import DeliveryService
 from app.application.services.job_cancellation import JobCancellationStore
 from app.application.services.job_metrics import JobMetrics, NoopJobMetrics
 from app.application.services.media_cache_codec import info_from_cache, is_stale_youtube_cache
@@ -28,6 +29,7 @@ from app.exceptions import (
     FileTooLargeError,
     JobCancelledError,
     JobConcurrentUpdateError,
+    RecipientUnavailableError,
     SizeUnknownError,
     StorageError,
 )
@@ -58,6 +60,7 @@ class ProcessDownloadUseCase:
         progress_reporter: ProgressReporter | None = None,
         cancellation: JobCancellationStore | None = None,
         media_cache: MediaCacheRepository | None = None,
+        delivery_ledger: DeliveryLedger | None = None,
     ) -> None:
         self._jobs = jobs_repo
         self._providers = providers
@@ -81,6 +84,9 @@ class ProcessDownloadUseCase:
         # wires a ``RedisJobCancellationStore``.
         self._cancellation = cancellation
         self._media_cache = media_cache
+        # Audit R2: a retry after a successful delivery must not send the
+        # file again. ``None`` (unit tests) disables the check.
+        self._ledger = delivery_ledger
 
     async def execute(self, payload: ProcessDownloadInput) -> None:
         job = await self._jobs.get(payload.job_id)
@@ -115,6 +121,10 @@ class ProcessDownloadUseCase:
             job = transitioned
 
         try:
+            if attempt > 1 and await self._finish_if_delivered(
+                job, started_monotonic=started_monotonic
+            ):
+                return
             await self._download_and_deliver(job, started_monotonic=started_monotonic)
         except JobCancelledError:
             # Cooperative cancel — user-initiated, non-retryable. The
@@ -186,20 +196,48 @@ class ProcessDownloadUseCase:
             chat_id=job.chat_id,
             result=result,
         )
-
-        job.title = info.title
-        job.media_id = info.media_id
-        job.selected_format = selected.container or selected.label
-        job.mark_done(
-            file_path=outcome.delivered_path,
+        delivered = DeliveredRecord(
+            method=outcome.method,
+            public_url=outcome.public_url,
+            primary_telegram_file_id=outcome.primary_telegram_file_id,
+            delivered_path=outcome.delivered_path,
             file_size=outcome.file_size,
             mime_type=result.primary_mime,
-            telegram_file_id=outcome.primary_telegram_file_id,
-            public_url=outcome.public_url,
+            title=info.title,
+            media_id=info.media_id,
+            selected_format=selected.container or selected.label,
+        )
+        if self._ledger is not None and job.id is not None:
+            await self._ledger.record(job_id=job.id, delivered=delivered)
+        await self._complete(job, delivered, started_monotonic=started_monotonic)
+
+    async def _finish_if_delivered(self, job: DownloadJob, *, started_monotonic: float) -> bool:
+        """Retry of a job that already reached the user: only write DONE."""
+        if self._ledger is None or job.id is None:
+            return False
+        delivered = await self._ledger.get(job_id=job.id)
+        if delivered is None:
+            return False
+        _logger.info("job_already_delivered", method=delivered.method.value)
+        await self._complete(job, delivered, started_monotonic=started_monotonic)
+        return True
+
+    async def _complete(
+        self, job: DownloadJob, delivered: DeliveredRecord, *, started_monotonic: float
+    ) -> None:
+        job.title = delivered.title
+        job.media_id = delivered.media_id
+        job.selected_format = delivered.selected_format
+        job.mark_done(
+            file_path=delivered.delivered_path,
+            file_size=delivered.file_size,
+            mime_type=delivered.mime_type,
+            telegram_file_id=delivered.primary_telegram_file_id,
+            public_url=delivered.public_url,
         )
         job = await self._persist_done(job)
         await self._finish_progress(job.id)
-        self._record_done(outcome, started_monotonic=started_monotonic)
+        self._record_done(delivered, started_monotonic=started_monotonic)
 
     def _assert_free_space(self) -> None:
         """S10 (audit fix): backpressure on a near-full disk.
@@ -300,7 +338,7 @@ class ProcessDownloadUseCase:
         except Exception:  # pragma: no cover  defensive
             _logger.exception("progress_finish_failed", job_id=job_id)
 
-    def _record_done(self, outcome: DeliveryOutcome, *, started_monotonic: float) -> None:
+    def _record_done(self, outcome: DeliveredRecord, *, started_monotonic: float) -> None:
         # Duration first so the Histogram + the Counter land on the same
         # scrape; then the status-change + log keep the events paired (P11).
         duration_seconds = time.monotonic() - started_monotonic
@@ -511,6 +549,9 @@ class ProcessDownloadUseCase:
                 _logger.exception("progress_fail_failed", job_id=job.id)
         try:
             await self._sender.send_text(job.chat_id, f"⚠️ {user_text}")
+        except RecipientUnavailableError:
+            # Blocked the bot or left the chat: nobody to tell, not an error.
+            _logger.info("notify_user_skipped_recipient_unavailable")
         except Exception:  # pragma: no cover  best-effort
             _logger.exception("notify_user_about_failure_failed")
 

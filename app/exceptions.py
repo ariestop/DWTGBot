@@ -159,6 +159,51 @@ class UpstreamUnavailableError(DownloadError):
     user_message = "Источник временно ограничивает скачивание. Попробуйте через несколько минут."
 
 
+# ----- Delivery to Telegram -----
+#
+# TelegramSender translates PTB errors into these, so the application
+# layer never imports ``telegram`` (ADR-0012).
+
+
+class DeliveryError(AppError):
+    """Base for a failed send to Telegram."""
+
+    user_message = "Не удалось отправить файл в Telegram. Попробуйте позже."
+
+
+class DeliveryTransientError(DeliveryError):
+    """Timeout, network error or flood control (``RetryAfter``): worth
+    retrying, in place first and then as a whole job."""
+
+    is_retryable = True
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        retry_after_s: float | None = None,
+        user_message: str | None = None,
+    ) -> None:
+        super().__init__(message, user_message=user_message)
+        self.retry_after_s = retry_after_s
+
+
+class DeliveryRejectedError(DeliveryError):
+    """Telegram answered ``BadRequest``. Retried in place (a CDN blip
+    sometimes clears), but a new download would get the same answer."""
+
+    user_message = "Telegram не принял файл. Попробуйте другое качество или другую ссылку."
+    is_retryable = False
+
+
+class RecipientUnavailableError(DeliveryError):
+    """The chat cannot receive messages: the user blocked the bot, the
+    bot left the group, or the group moved. Never retried."""
+
+    user_message = "Не удалось отправить сообщение в этот чат."
+    is_retryable = False
+
+
 # ----- Cancellation (ADR-0010 §2.1 cancel-job) -----
 
 

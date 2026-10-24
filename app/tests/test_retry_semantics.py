@@ -32,6 +32,8 @@ from app.domain.entities.download_job import DownloadJob
 from app.domain.enums import JobStatus, Platform
 from app.exceptions import (
     AppError,
+    DeliveryRejectedError,
+    DeliveryTransientError,
     DownloadError,
     DownloadTimeoutError,
     FfmpegError,
@@ -40,6 +42,7 @@ from app.exceptions import (
     MediaNotFoundError,
     MediaPrivateError,
     ProviderError,
+    RecipientUnavailableError,
 )
 from app.infrastructure.queue.tasks import process_download_job
 
@@ -64,6 +67,11 @@ from app.infrastructure.queue.tasks import process_download_job
         (FileTooLargeError, False),
         (FfmpegError, False),
         (InvalidUrlError, False),
+        # Telegram delivery (audit R3): only the transient kind repeats
+        # the job; a rejected payload or a blocked bot would not change.
+        (DeliveryTransientError, True),
+        (DeliveryRejectedError, False),
+        (RecipientUnavailableError, False),
         # Base class default: opt-in to retries to avoid hidden looping.
         (AppError, False),
     ],
@@ -175,6 +183,31 @@ async def test_run_marks_failed_for_permanent_apperror() -> None:
     await uc.execute(ProcessDownloadInput(job_id=1, correlation_id="c"))
 
     assert repo.update_statuses == [JobStatus.PROCESSING, JobStatus.FAILED]
+
+
+@pytest.mark.asyncio
+async def test_blocked_recipient_fails_the_job_without_a_notice_error() -> None:
+    """The user blocked the bot: the FAILED notice cannot be sent either,
+    and that is not an error worth an exception log."""
+
+    class _BlockedSender(_NoopSender):
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def send_text(self, _chat_id: int, _text: str) -> None:
+            self.attempts += 1
+            raise RecipientUnavailableError("bot was blocked by the user")
+
+    job = _make_job()
+    repo = _RecordingJobsRepo(job)
+    uc = _make_use_case(repo, RecipientUnavailableError("bot was blocked by the user"))
+    sender = _BlockedSender()
+    uc._sender = sender  # type: ignore[assignment]
+
+    await uc.execute(ProcessDownloadInput(job_id=1, correlation_id="c"))
+
+    assert repo.update_statuses == [JobStatus.PROCESSING, JobStatus.FAILED]
+    assert sender.attempts == 1
 
 
 @pytest.mark.asyncio
