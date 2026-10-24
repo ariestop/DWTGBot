@@ -291,7 +291,7 @@ schedule and:
 3. For each, `Path(link.file_path).unlink(missing_ok=True)`.
 4. Optionally deletes the row (or keeps for audit; see config).
 
-The exact retention policy lives in `app/workers/cleanup/runner.py` and is
+The exact retention policy lives in `app/workers/cleanup_worker.py` and is
 covered in [`09-queue-and-workers.md`](09-queue-and-workers.md).
 
 ---

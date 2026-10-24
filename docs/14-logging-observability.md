@@ -138,7 +138,7 @@ adding structured fields over inflating the message.
 |---|---|
 | `<subject>_<action>_<outcome>` | `link_rejected`, `job_done`, `temp_link_issued`, `temp_link_served` |
 | `<subject>_<state>` | `worker_started`, `worker_stopped` |
-| `<subject>_<action>_failed` | `job_failed_app_error`, `job_failed_unexpected`, `notify_user_about_failure_failed` |
+| `<subject>_<action>_failed` | `job_failed_permanent`, `job_failed_unexpected`, `notify_user_about_failure_failed` |
 | `<subject>_check_failed` | `worker_startup_check_failed` |
 
 Existing events you'll see in the codebase (non-exhaustive):
@@ -154,7 +154,7 @@ Existing events you'll see in the codebase (non-exhaustive):
 | `worker_started` / `worker_stopped` | worker | INFO | arq lifecycle |
 | `worker_startup_check_failed` | worker | ERROR | `validate_runtime` errors |
 | `job_done` | worker | INFO | success path; carries `total_seconds`, `file_size_class` (see ADR-0007 §2.4) |
-| `job_failed_app_error` | worker | WARNING | mapped failure |
+| `job_failed_permanent` | worker | WARNING | mapped failure |
 | `job_failed_unexpected` | worker | ERROR (with `exc_info`) | bug or external chaos |
 | `job_status_changed` | worker | INFO | every state transition; fields: `from_`, `to`, `reason_class` ∈ {`ok`, `user_error`, `provider_error`, `network_error`, `internal_error`} (ADR-0007 §2.3) |
 | `bot_message_handled` | bot middleware | INFO | every PTB handler entry; fields: `outcome` ∈ {`ok`, `user_error`, `internal_error`}, `latency_ms`, `latency_bucket` (ADR-0007 §2.1) |

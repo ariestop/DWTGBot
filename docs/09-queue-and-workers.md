@@ -303,7 +303,7 @@ Recommended Grafana/Loki queries (template, paste into your dashboards):
 
 | Goal | Query |
 |---|---|
-| Failures per provider | `{app="dwtgbot",service="worker"} \| json \| event="job_failed_app_error" \| count_over_time[5m]` |
+| Failures per provider | `{app="dwtgbot",service="worker"} \| json \| event="job_failed_permanent" \| count_over_time[5m]` |
 | P95 job latency | `quantile_over_time(0.95, ...)` (use the `job_done` event with `latency_ms`) |
 | Retries | grep for `arq` warnings about `requeueing` |
 | Stuck jobs | `download_jobs` rows with `status=PROCESSING AND updated_at < now() - interval '2 * JOB_TIMEOUT_SECONDS seconds'` |

@@ -4,20 +4,28 @@
 > Audience: every engineer or AI agent making code changes in DWTGBot.
 > Companion docs:
 > [`25-agent-guide.md`](25-agent-guide.md) — operating manual (the "why"),
-> [`26-cursor-rules.md`](26-cursor-rules.md) — operational protocol for AI tools,
+> [`CLAUDE.md`](../CLAUDE.md) + `.claude/skills/` — operational protocol for AI tools,
 > [`27-coding-standards.md`](27-coding-standards.md) — code-level rules,
 > [`adr/0005-locked-architectural-assumptions.md`](adr/0005-locked-architectural-assumptions.md)
 > — twelve locked rows.
 
+> ⚠️ **Примеры частично описывают ранний дизайн (аудит документации 2026-10).**
+> Пути вроде `app/infrastructure/runners/*`, `app/workers/tasks/*`,
+> `app/bot/application_factory.py`, `app/workers/settings.py` и сценарии
+> TikTok / zip — иллюстрации, таких файлов нет. Реальная раскладка —
+> [`03-project-structure.md`](03-project-structure.md); перед правкой
+> сверяйтесь с кодом. Сокращение плейбуков — этап 4 в
+> [`tasks/docs-audit-2026-10.md`](tasks/docs-audit-2026-10.md).
+
 > ⚠️ **Read this BEFORE you start a non-trivial change in DWTGBot.**
 >
-> `25-` tells you how to *think*. `26-` tells you what to *type or refuse to type*.
+> `25-` tells you how to *think*. `CLAUDE.md` and the skills tell you what to *type or refuse to type*.
 > **This document tells you, kind-of-task by kind-of-task, exactly what to do.**
 > Treat each playbook as a checklist a pilot reads before takeoff.
 >
 > The eleven principles **P1–P11** referenced throughout are defined
 > canonically in [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register)
-> and [`26-` §1.A](26-cursor-rules.md#1a-mandatory-principles-p1p11--operational-register).
+> and [`CLAUDE.md`](../CLAUDE.md).
 > If you don't know what `P7` means, stop and read those tables first.
 
 ---
@@ -36,7 +44,7 @@ It is **not**:
 
 - a tutorial on Python, Telegram, yt-dlp, ffmpeg, Docker, or Nginx;
 - a re-statement of `25-agent-guide.md` (which is the *why*);
-- a re-statement of `26-cursor-rules.md` (which is the AI-agent *protocol*);
+- a re-statement of `CLAUDE.md` / `.claude/skills/` (the AI-agent *protocol*);
 - a re-statement of the topic docs (`docs/06-…` to `docs/24-…`), which
   are the *specs*.
 
@@ -54,7 +62,7 @@ It **is**:
 |---|---|
 | **Developer** | A pre-flight checklist that survives "I'll just quickly…" |
 | **Tech lead / reviewer** | A reference for "what should this PR have touched?" |
-| **AI agent (Cursor / Claude / Codex / bespoke)** | An executable script per task class, cross-linked to refusal protocols |
+| **AI agent (Claude / Codex / bespoke)** | An executable script per task class, cross-linked to refusal protocols |
 | **DevOps / SRE** | A canonical place for deploy / Docker / Nginx / CI playbooks |
 | **First-day joiner** | A way to make a real change in week 1 without breaking anything |
 
@@ -107,7 +115,7 @@ PR lands.
 These are the eleven principles every change is graded against
 (canonical definitions live in
 [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register)
-and [`26-` §1.A](26-cursor-rules.md#1a-mandatory-principles-p1p11--operational-register)).
+and [`CLAUDE.md`](../CLAUDE.md)).
 Listed here in working-style language so they read as **mindsets**,
 not rules.
 
@@ -215,9 +223,9 @@ it, you are not yet in the next step.
 
 | # | Step | This step is done when… |
 |---|---|---|
-| 1 | **Understand the request** | You can write the goal in **one sentence**, name the surfaces involved (bot/api/worker/infra), and list the explicit constraints. If you can't, ask the user (do **not** guess; see `26-` §17.9.D). |
+| 1 | **Understand the request** | You can write the goal in **one sentence**, name the surfaces involved (bot/api/worker/infra), and list the explicit constraints. If you can't, ask the user (do **not** guess; see `refusals.md`, script D). |
 | 2 | **Classify the change** | The change has a class letter from §4 (small bugfix / feature / provider / queue / DB / deploy / …). The class drives what's mandatory below. |
-| 3 | **Read the relevant docs** | You have read at least the universal floor (`README` + `00` + `02` + `03` + `25` + `26`) and the topic doc(s) for this class (per §3.4). |
+| 3 | **Read the relevant docs** | You have read at least the universal floor (`README` + `00` + `02` + `03` + `25` + `CLAUDE.md`) and the topic doc(s) for this class (per §3.4). |
 | 4 | **Identify affected layers** | You can name every layer this change touches and one it does *not* touch. Use `02-architecture.md` §3 + §6 of this doc. |
 | 5 | **Build impact map** | Per `§22 What must be updated together`, you have a complete list of files that must change, including docs/tests/config/migration/compose. |
 | 6 | **Determine minimum scope (P1)** | You have answered: *"Can this be smaller? Can it split into two PRs (refactor first, behaviour second)?"* If the answer is yes, do it. |
@@ -363,7 +371,7 @@ the agent makes with the reviewer about what is and is not in scope.
 ### 5.1 Planning note template (verbatim — emit before any file edit)
 
 This is the same template as [`25-` §6.A](25-agent-guide.md#6a-plan-template-verbatim--emit-before-any-file-edit)
-and [`26-` §3.7](26-cursor-rules.md#37-plan-output-template-verbatim) —
+and [skill `plan-change`](../.claude/skills/plan-change/SKILL.md) —
 reproduced here so the playbook is self-contained.
 
 ```markdown
@@ -373,7 +381,7 @@ reproduced here so the playbook is self-contained.
 - **Class (per §4):** <A | B | C | D | E | F | G | H | I | J | K | L>
 - **Principles in play (§2):** <P1, P3, P4, … — list every P this change touches>
 - **ADR-0005 §2 row touched?** <No | Yes — row N → STOP, draft superseding ADR (P2)>
-- **Reading done:** README, 00, 02, 03, 25, 26, ADR-0005 §2, <topic doc(s)>
+- **Reading done:** README, 00, 02, 03, 25, CLAUDE.md, ADR-0005 §2, <topic doc(s)>
 - **Files to ADD:**
   - `path/to/new_file.py` — <why>
 - **Files to MODIFY:**
@@ -452,7 +460,7 @@ If after refining the plan once you still have:
 - a missing referenced file/doc,
 
 **stop and surface to the user** using the appropriate refusal script
-from [`26-` §17.9](26-cursor-rules.md#179-refusal-scripts-verbatim--copy-fill--send).
+from [`refusals.md`](../.claude/skills/plan-change/refusals.md).
 
 ---
 
@@ -2212,7 +2220,7 @@ walk this table and ask "did the author update each row?".
 | **Operator script (restore / firewall / cleanup)** | `20-deployment.md`, `22-backup-restore.md`, `23-cleanup-retention.md`, `24-runbooks.md` |
 | **CI workflow** | `21-cicd.md` |
 | **Coding rule** | `27-coding-standards.md` |
-| **Workflow / agent rule** | `25-agent-guide.md` and `26-cursor-rules.md` (and the matching `.cursor/rules/*.mdc` if exists) |
+| **Workflow / agent rule** | `25-agent-guide.md`, `CLAUDE.md`, the matching `.claude/rules/*.md` / `.claude/skills/` |
 | **A locked decision** | New ADR (`docs/adr/NNNN-<slug>.md`) supersedes the row of ADR-0005 §2 + every doc that referenced the old decision |
 | **A new term used in 3+ docs** | `33-glossary.md` |
 
@@ -2759,7 +2767,7 @@ playbook treats partial fulfilment as not done — there is no
 ### 27.11 Principles compliance (P1–P11) gate
 
 Same as [`25-` §19.9](25-agent-guide.md#199-principles-compliance-p1p11-gate)
-and [`26-` §19](26-cursor-rules.md#19-final-operating-procedure-checklist).
+and [skill `finish-change`](../.claude/skills/finish-change/SKILL.md).
 A single unchecked P box means "not done"; document any exception in
 the PR description with reviewer sign-off and (for P2 / P11) a
 superseding ADR.
@@ -2794,7 +2802,7 @@ playbook, keep these.
     `ensure_within`, `sanitize_filename`, secrets-via-`Settings`.
 14. **Docs / tests / config travel with code (P4).** Same PR, no
     exceptions.
-15. **When in doubt, refuse and ask.** Use [`26-` §17.9](26-cursor-rules.md#179-refusal-scripts-verbatim--copy-fill--send)
+15. **When in doubt, refuse and ask.** Use [`refusals.md`](../.claude/skills/plan-change/refusals.md)
     refusal scripts; never invent architecture silently.
 
 ---
@@ -3285,13 +3293,11 @@ comm -23 \
 # Non-empty output = an event is emitted but not catalogued. Add it.
 ```
 
-### C.15 — Cursor-rules drift
+### C.15 — Agent rules drift
 
-```bash
-# .cursor/rules content must mirror the canonical doc claim:
-diff -u <(grep -A 100 'principles' docs/26-cursor-rules.md | head -50) \
-        <(grep -A 100 'principles' .cursor/rules/00-project-overview.mdc | head -50)
-```
+`CLAUDE.md` повторяет реестр P1–P11 из `25-agent-guide.md` §1.A одной
+строкой на принцип: меняя один, правьте второй в том же PR. Пути и события
+в документации проверяет `app/tests/test_docs_references.py`.
 
 ### C.16 — Quick "all of the above" pre-flight
 
@@ -3311,12 +3317,12 @@ If you remember nothing else, remember **where to look**:
 | Need | Place |
 |---|---|
 | Why this project insists on these rules | §1, §2, ADR-0005 |
-| What the eleven principles **mean** | [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register), [`26-` §1.A](26-cursor-rules.md#1a-mandatory-principles-p1p11--operational-register) |
+| What the eleven principles **mean** | [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register), [`CLAUDE.md`](../CLAUDE.md) |
 | The verbatim plan template | §5.1 (or [`25-` §6.A](25-agent-guide.md#6a-plan-template-verbatim--emit-before-any-file-edit)) |
 | What to do for class X of change | §§7–21 |
 | What to update alongside what | §22 |
 | What never to do | §23, §24 |
 | Did I forget anything? | §25 (10 checklists), §27 (DoD) |
-| Quick refusal scripts | [`26-` §17.9](26-cursor-rules.md#179-refusal-scripts-verbatim--copy-fill--send) |
+| Quick refusal scripts | [`refusals.md`](../.claude/skills/plan-change/refusals.md) |
 | Code skeletons | Appendix B |
 | Pre-merge mechanical sweep | Appendix C |

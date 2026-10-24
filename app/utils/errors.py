@@ -1,7 +1,7 @@
 """Classify unexpected exceptions without importing the drivers.
 
 The bot layer may not import ``redis`` / ``sqlalchemy`` (see
-``.cursor/rules/20-architecture-layers.mdc``), yet it has to tell a user
+``.claude/rules/architecture.md``), yet it has to tell a user
 whether a failure means "the service is down, retry in a minute" or
 "something about this link went wrong". The check goes by the exception
 class's top-level package and name, walking ``__cause__`` /

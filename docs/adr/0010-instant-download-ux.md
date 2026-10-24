@@ -1,6 +1,6 @@
 # ADR-0010: Instant-download UX and progress side-channel
 
-> Status: Proposed (2026-04-20)
+> Status: Accepted (proposed 2026-04-20; реализовано, см. §History)
 > Audience: contributors, AI agents, reviewers, on-call
 > Tags: bot-ux, queue, redis, worker, breaking-change
 > Relates to: ADR-0001 (two-server topology), ADR-0005 (locked assumptions),
@@ -318,13 +318,14 @@ and a graceful "no longer available" alert is adequate.
   constructed only in `app/composition/`. Reviewers reject any PR
   that instantiates them elsewhere (§9 anti-pattern 2).
 - **Tests:**
-  - `app/tests/unit/test_progress_reporter_protocol.py` — contract
+  - `app/tests/test_progress_reporter_protocol.py` — contract
     tests with FakeRedis.
-  - `app/tests/unit/test_progress_updater.py` — debounce,
+  - `app/tests/test_progress_updater.py` — debounce,
     rate-limit, watchdog.
-  - `app/tests/unit/test_post_text_handler.py` — TTL expiry path.
-  - `app/tests/integration/test_end_to_end_auto_download.py` —
-    progress 0 → 100 and final delivery.
+  - `app/tests/test_post_text_handler.py` — TTL expiry path.
+  - `app/tests/test_process_download_progress.py`,
+    `app/tests/test_handle_link_instant_flow.py` — progress 0 → 100 and
+    final delivery (end-to-end: `app/tests/e2e/test_full_download_flow.py`).
 - **CI:** existing `ruff check`, `ruff format --check`, `mypy app/`.
   No new tooling.
 - **Docs:** update
@@ -376,4 +377,5 @@ and a graceful "no longer available" alert is adequate.
 
 | Date | Status | Note |
 |---|---|---|
-| 2026-04-20 | Proposed | Drafted alongside `docs/tasks/instant-download-ux.md`. |
+| 2026-04-20 | Proposed | Drafted alongside `docs/tasks/archive/instant-download-ux.md`. |
+| 2026-10-24 | Accepted | Реализовано и работает в проде (progress side-channel, `ProgressUpdater`, instant-flow); статус приведён в соответствие (аудит документации). |

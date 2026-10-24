@@ -479,7 +479,7 @@ ZIP path is decided by the delivery service, not the provider.
 
 These eleven principles are referenced throughout the agent-facing docs
 ([`25-agent-guide.md`](25-agent-guide.md),
-[`26-cursor-rules.md`](26-cursor-rules.md),
+[`CLAUDE.md`](../CLAUDE.md),
 [`28-implementation-playbook.md`](28-implementation-playbook.md),
 [`29-feature-development-guide.md`](29-feature-development-guide.md),
 [`30-add-new-provider-guide.md`](30-add-new-provider-guide.md)). The

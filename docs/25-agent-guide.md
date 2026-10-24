@@ -3,8 +3,8 @@
 > Status: Stable
 > Audience: AI coding agents (Cursor, Claude, Codex, Copilot Workspace,
 > bespoke pipelines) and the humans who work through them.
-> Read next: [`26-cursor-rules.md`](26-cursor-rules.md) (strict
-> operating protocol), [`27-coding-standards.md`](27-coding-standards.md),
+> Read next: [`CLAUDE.md`](../CLAUDE.md) (always-on rules; procedures in
+> `.claude/skills/`), [`27-coding-standards.md`](27-coding-standards.md),
 > [`28-implementation-playbook.md`](28-implementation-playbook.md).
 
 > ⚠️ **Read this BEFORE you write any code in DWTGBot.**
@@ -41,20 +41,16 @@ Everything else in `docs/` is **specification** — what the system
 does. This file is the **operating manual** for *making changes to
 that specification's implementation*.
 
-If you are running as Cursor specifically, also read
-[`26-cursor-rules.md`](26-cursor-rules.md), which is shorter and
-strictly operational.
+Claude загружает [`CLAUDE.md`](../CLAUDE.md) всегда, правила из
+`.claude/rules/` — по путям файлов, процедуры — из `.claude/skills/`
+(`plan-change`, `finish-change`, `add-config-variable`, `db-migration`,
+`server-ops`). Они короче и операционнее этого документа.
 
-> 🧭 **Relationship to `26-cursor-rules.md`.** `25-` (this document)
+> 🧭 **Relationship to `CLAUDE.md` and `.claude/`.** `25-` (this document)
 > is the canonical source for the **why**: principles, layers,
-> protocol, escalation reasoning. `26-` is the *operational
-> projection* — Cursor-specific "do this / don't do that" derived
-> from the same principles. Whenever the two could disagree, **`25-`
-> wins on the why; `26-` wins on the what-to-do step**. The exact
-> per-section authority map lives in
-> [`26-` Appendix C](26-cursor-rules.md#appendix-c--cross-reference--deduplication-map).
-> Before extending an explanation in `26-`, check that map — most
-> topics belong here, with only a one-line projection there.
+> protocol, escalation reasoning. `CLAUDE.md`, `.claude/rules/` and
+> `.claude/skills/` are the short operational projection for the agent.
+> If they disagree, fix the projection in the same PR.
 
 ---
 
@@ -62,7 +58,7 @@ strictly operational.
 
 These are the **eleven principles** every change in DWTGBot is
 graded against. They are referenced by code (P1…P11) throughout
-this guide and `26-cursor-rules.md`. The codes are **stable** —
+this guide, `CLAUDE.md` and the skills. The codes are **stable** —
 do not renumber, do not drop, do not rephrase silently.
 
 | Code | Principle | One-line meaning | Primary enforcement |
@@ -89,15 +85,14 @@ do not renumber, do not drop, do not rephrase silently.
   violates so the cure is unambiguous.
 - **Definition of done (§19)** — closes with an explicit
   "P1–P11 compliance" pass.
-- **Refusal templates (§20.6 / `26-` §17.9)** — invoked when the
+- **Refusal templates (§20.6 / [`refusals.md`](../.claude/skills/plan-change/refusals.md))** — invoked when the
   request would force a P-violation the agent cannot accept.
 
 If you cannot map your change onto P1–P11, you have not understood
 the change yet. Stop and re-read.
 
-> The same register, with identical codes and labels, is mirrored
-> in [`26-cursor-rules.md`](26-cursor-rules.md) §1.A. The two must
-> stay in lockstep — if you edit one, edit the other in the same
+> A one-line version of the register is in [`CLAUDE.md`](../CLAUDE.md).
+> Keep both in lockstep — if you edit one, edit the other in the same
 > PR (P4).
 
 ---
@@ -326,8 +321,8 @@ broken PRs:
 4. [`docs/03-project-structure.md`](03-project-structure.md) —
    dependency matrix.
 5. This file (`docs/25-agent-guide.md`).
-6. [`docs/26-cursor-rules.md`](26-cursor-rules.md) (if running as
-   Cursor).
+6. [`CLAUDE.md`](../CLAUDE.md) and the `.claude/rules/` files for the paths
+   you touch.
 
 ### 4.2 Topic-specific lookup
 
@@ -371,8 +366,8 @@ If you can't tell what reading budget applies, default upward.
 These are the phrases that historically cost the most rework when an
 agent took them at face value. If any appear in the request, **pause
 before classifying** and react per the right column. The companion
-operational protocol for Cursor is in
-[`26-cursor-rules.md`](26-cursor-rules.md) §3.8 (with the same table
+checklist version is in skill `plan-change`
+([`SKILL.md`](../.claude/skills/plan-change/SKILL.md) §2, with the same table
 phrased as a hard checklist).
 
 | Trigger phrase (RU / EN) | What it usually hides | Agent's required reaction |
@@ -466,7 +461,7 @@ unchanged.
 - **Class (per §5):** <A | B | C | D | E | F | G | H | I | J | K>
 - **Principles in play (§1.A):** <P1, P3, P4, … — list every P this change touches; "none" only for pure typo fixes>
 - **ADR-0005 §2 row touched?** <No | Yes — row N → STOP, draft superseding ADR (P2)>
-- **Reading done:** README, 00, 02, 03, 25, 26, ADR-0005 §2, <topic doc(s)>
+- **Reading done:** README, 00, 02, 03, 25, CLAUDE.md, ADR-0005 §2, <topic doc(s)>
 - **Files to ADD:**
   - `path/to/new_file.py` — <why>
 - **Files to MODIFY:**
@@ -498,7 +493,7 @@ Hard rules about the plan:
   classified the change.
 - If `Files to MODIFY` exceeds 5 entries, the change is **not**
   small (P1) — re-classify per §5 and treat it as a multi-step
-  change per `26-` §7.
+  change (skill `plan-change` §3: design note + staged commits).
 - If `Files / layers explicitly NOT touched` is empty, the agent
   hasn't thought about scope (P1, P3) — refuse to start coding
   until that field has at least one concrete entry.
@@ -966,7 +961,7 @@ Never:
 | Cleanup behavior | `23-cleanup-retention.md` |
 | New incident pattern | `24-runbooks.md` |
 | Coding rule | `27-coding-standards.md` (rare) |
-| Workflow / agent rule | this file (`25-`) and `26-cursor-rules.md` |
+| Workflow / agent rule | this file (`25-`), `CLAUDE.md`, `.claude/rules/`, `.claude/skills/` |
 | New term used in 3+ docs | `33-glossary.md` |
 
 ### 13.2 ADR obligation
@@ -1417,10 +1412,10 @@ When a request triggers §4.4 red flags or hits an authority limit,
 the agent must respond with one of the templates below **before**
 producing a plan or any code. Use the closest match. The full set
 (with full RU/EN wording) lives in
-[`26-cursor-rules.md`](26-cursor-rules.md) §17.9; below is the
+[`refusals.md`](../.claude/skills/plan-change/refusals.md); below is the
 short index agents can navigate during a conversation.
 
-| Situation | Template id (in `26-` §17.9) | Defends | Headline of the response |
+| Situation | Template id (in `refusals.md`) | Defends | Headline of the response |
 |---|---|---|---|
 | Request touches a row in ADR-0005 §2 | A | P2 (often P11) | "This change touches a locked row; I need a superseding ADR before any code" |
 | Drive-by / scope-creep ask added on top of original request | B | P1, P3 | "The extra ask is out of scope for this PR; I will surface it as a follow-up" |

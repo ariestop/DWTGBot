@@ -68,8 +68,14 @@ explicitly supersedes the corresponding row of §3.
 | 8 | **Temp links for large files** (tokenized HTTPS URLs with TTL + use counter, served via Nginx `X-Accel-Redirect`) | [ADR-0004](0004-temp-links-via-nginx-x-accel.md); [`10-temp-links-and-delivery.md`](../10-temp-links-and-delivery.md) |
 | 9 | **Structured JSON logging** (`structlog`, correlation IDs propagated via `contextvars`) | This ADR; [`14-logging-observability.md`](../14-logging-observability.md) |
 | 10 | **Docker-first deployment** (Docker + Docker Compose v2; no bare-metal, no host-installed Python services) | This ADR; [`19-docker-architecture.md`](../19-docker-architecture.md), [`20-deployment.md`](../20-deployment.md) |
-| 11 | **GitHub Actions for CI/CD** (lint + typecheck + test + image build + manual SSH-based deploy) | This ADR; [`21-cicd.md`](../21-cicd.md) |
+| 11 | **GitHub Actions for CI/CD** (lint + typecheck + test + image build + SSH-based deploy) | This ADR; [`21-cicd.md`](../21-cicd.md) |
 | 12 | **Bash TUI installer** as the operator-facing entry point (`deploy/scripts/install.sh` with menu) | This ADR; [`20-deployment.md`](../20-deployment.md) |
+
+> **Дополнено (2026-10-24):** в строке 11 деплой был «manual SSH-based».
+> Решение (деплой по SSH из GitHub Actions) не изменилось, но сейчас
+> `deploy.yml` запускается сам после успешного `build-images.yml` на `main`
+> (`workflow_run`); ручной запуск (`workflow_dispatch`) остался.
+> См. [`21-cicd.md`](../21-cicd.md).
 
 These are **operationally coherent as a set.** Changing any one of them
 likely cascades through several others — see §3.13 (interlocks) below.
@@ -83,7 +89,7 @@ likely cascades through several others — see §3.13 (interlocks) below.
   2. Refuse to write the code;
   3. Propose drafting a superseding ADR instead.
   This obligation is encoded in [`25-agent-guide.md`](../25-agent-guide.md)
-  §3 and [`26-cursor-rules.md`](../26-cursor-rules.md) §5.
+  §3, [`CLAUDE.md`](../../CLAUDE.md) and [`refusals.md`](../../.claude/skills/plan-change/refusals.md) (script A).
 - "Locked" is **not** "frozen forever". It is "changeable only with a
   written, reviewed decision." The protocol for change is in §6 below.
 
@@ -459,8 +465,8 @@ The following docs reference this ADR and must stay consistent with it:
 - [`docs/21-cicd.md`](../21-cicd.md) (GHA workflows).
 - [`docs/25-agent-guide.md`](../25-agent-guide.md) §3 (architecture
   rules).
-- [`docs/26-cursor-rules.md`](../26-cursor-rules.md) §5 (architecture
-  preservation).
+- [`.claude/rules/architecture.md`](../../.claude/rules/architecture.md) (architecture
+  preservation for agents).
 - [`docs/28-implementation-playbook.md`](../28-implementation-playbook.md)
   §5 (locked-decisions list).
 

@@ -42,7 +42,7 @@ MAX_INDIVIDUAL_FILES = 10
 _POST_TEXT_BUTTON_LABEL = "Получить текст поста 👇"
 
 # Wire format ``pt|<job_id>``. Inlined here to avoid an
-# application → bot import (see `.cursor/rules/20-architecture-layers`).
+# application → bot import (see `.claude/rules/architecture.md`).
 # Source of truth for decoding: ``app.bot.callbacks.codec.PostTextCallback``.
 _POST_TEXT_CALLBACK_PREFIX = "pt"
 

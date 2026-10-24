@@ -56,7 +56,8 @@
 - **Контейнеризация** — multi-stage Dockerfile'ы, non-root пользователи, два
   стека `docker-compose`, bootstrap SSL через Certbot.
 - **CI/CD** — GitHub Actions: ruff + mypy + pytest + shellcheck, публикация
-  образов в GHCR, ручной SSH deploy.
+  образов в GHCR, деплой по SSH сразу после сборки образов на `main`
+  (и вручную из Actions).
 
 ---
 

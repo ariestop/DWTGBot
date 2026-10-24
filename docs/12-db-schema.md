@@ -266,8 +266,9 @@ alembic upgrade head
 
 ### Production rollout
 
-The `bot` container runs `alembic upgrade head` at startup (see
-`docker/bot.entrypoint.sh`). For risky migrations:
+Миграции применяет одноразовый сервис `migrate` (`alembic upgrade head`,
+`deploy/compose/control.yml`); `bot`, а в `single` также api/worker/cleanup,
+стартуют только после его успешного завершения. For risky migrations:
 1. Run migrations manually first via `deploy/scripts/deploy_update.sh`
    (NL-1 mode; в `single` — `deploy_update.sh single`).
 2. Take a backup *before* (`deploy/scripts/backup.sh`).

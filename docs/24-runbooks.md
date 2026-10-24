@@ -135,21 +135,21 @@ $NL2 ps
 bash deploy/scripts/healthcheck.sh                    # auto-detects single/nl1/nl2
 
 # Logs (last 200 lines, follow)
-$NL1 logs -f --tail=200 bot
-$NL1 logs -f --tail=200 api
-$NL2 logs -f --tail=200 worker
-$NL2 logs -f --tail=200 nginx
-$NL2 logs -f --tail=200 cleanup
+$NL1 logs --no-log-prefix -f --tail=200 bot
+$NL1 logs --no-log-prefix -f --tail=200 api
+$NL2 logs --no-log-prefix -f --tail=200 worker
+$NL2 logs --no-log-prefix -f --tail=200 nginx
+$NL2 logs --no-log-prefix -f --tail=200 cleanup
 
 # JSON-filter logs (errors only)
-$NL1 logs --no-color --since=10m bot \
+$NL1 logs --no-log-prefix --no-color --since=10m bot \
   | jq -c 'select(.level=="error")'
 
 # Filter by request_id / job_id
-$NL2 logs --no-color --since=1h worker \
+$NL2 logs --no-log-prefix --no-color --since=1h worker \
   | jq -c 'select(.request_id == "a1b2c3d4")'
-$NL2 logs --no-color --since=1h worker \
-  | jq -c 'select(.job_id == "j_xxx")'
+$NL2 logs --no-log-prefix --no-color --since=1h worker \
+  | jq -c 'select(.job_id == 123)'
 
 # DB / Redis quick-poke
 docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot
@@ -197,7 +197,7 @@ without committing the same change to the repo.
 
 - Users say `/start` returns nothing for ≥ 1 minute.
 - `bot` container shows no recent activity in logs.
-- `bot_unhandled_update` events present but no replies.
+- `bot_error` events present but no replies.
 
 ### 1.2 Likely causes
 
@@ -215,7 +215,7 @@ without committing the same change to the repo.
 ```bash
 NL1='docker compose -f deploy/nl1/docker-compose.yml'
 $NL1 ps bot
-$NL1 logs --tail=400 --no-color bot | tail -60
+$NL1 logs --no-log-prefix --tail=400 --no-color bot | tail -60
 docker exec dwtgbot_bot curl -fsS --max-time 5 https://api.telegram.org/bot${BOT_TOKEN}/getMe
 docker exec dwtgbot_bot pgrep -af 'app.main_bot|python'
 docker inspect dwtgbot_bot -f '{{.State.Status}} {{.RestartCount}} OOM={{.State.OOMKilled}}'
@@ -262,7 +262,7 @@ docker exec dwtgbot_bot curl -fsS https://api.telegram.org/bot${BOT_TOKEN}/getMe
 
 - Users see "🔄 Скачиваю..." but progress never starts.
 - `download_jobs.status='queued'` count grows; `running` stays low/0.
-- No `worker_job_done` events in the last few minutes.
+- No `job_done` events in the last few minutes.
 
 ### 2.2 Likely causes
 
@@ -281,7 +281,7 @@ docker exec dwtgbot_bot curl -fsS https://api.telegram.org/bot${BOT_TOKEN}/getMe
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 $NL2 ps worker
-$NL2 logs --tail=400 --no-color worker | tail -60
+$NL2 logs --no-log-prefix --tail=400 --no-color worker | tail -60
 docker exec dwtgbot_worker pgrep -af 'arq|app.main_worker'
 
 # Queue depth (Redis)
@@ -314,7 +314,7 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 ### 2.5 Verify
 
 ```bash
-$NL2 logs --since=2m worker | grep -c worker_job_done            # > 0
+$NL2 logs --no-log-prefix --since=2m worker | grep -c job_done            # > 0
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ZCARD arq:queue
 # Manual: submit a fresh URL via Telegram → completes within expected time.
 ```
@@ -323,7 +323,7 @@ docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ZCARD arq:queue
 
 - Liveness/readiness probes for the worker that fail when the arq
   pool is not consuming.
-- Alert on `worker_job_done` rate dropping to 0 for > 5 min while
+- Alert on `job_done` rate dropping to 0 for > 5 min while
   `arq:queue` ZCARD > 0.
 - Image base test in CI: `docker run … which yt-dlp ffmpeg`.
 - Bound `MAX_PARALLEL_DOWNLOADS` in `Settings` (`ge=1`).
@@ -357,7 +357,7 @@ docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ZCARD arq:queue
 ```bash
 NL1='docker compose -f deploy/nl1/docker-compose.yml'
 $NL1 ps redis
-$NL1 logs --tail=200 --no-color redis | tail -40
+$NL1 logs --no-log-prefix --tail=200 --no-color redis | tail -40
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ping
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" info clients | head -10
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" info memory \
@@ -394,7 +394,7 @@ df -h /var/lib/docker/volumes/dwtgbot_redis_data/_data
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ping       # PONG
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" info replication | head
 bash deploy/scripts/healthcheck.sh nl1                              # all green
-# Manual: submit URL via bot; worker logs show `worker_job_done`.
+# Manual: submit URL via bot; worker logs show `job_done`.
 ```
 
 ### 3.6 Prevent
@@ -431,7 +431,7 @@ bash deploy/scripts/healthcheck.sh nl1                              # all green
 ```bash
 NL1='docker compose -f deploy/nl1/docker-compose.yml'
 $NL1 ps postgres
-$NL1 logs --tail=400 --no-color postgres | tail -60
+$NL1 logs --no-log-prefix --tail=400 --no-color postgres | tail -60
 docker exec dwtgbot_postgres pg_isready -U dwtgbot -d dwtgbot
 docker inspect dwtgbot_postgres -f '{{.State.OOMKilled}} restarts={{.RestartCount}}'
 df -h /var/lib/docker/volumes/dwtgbot_postgres_data/_data
@@ -510,7 +510,7 @@ bash deploy/scripts/healthcheck.sh nl1                              # all green
 
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
-$NL2 logs --since=30m --no-color worker \
+$NL2 logs --no-log-prefix --since=30m --no-color worker \
   | jq -c 'select(.event | test("classified_error"))' \
   | jq -c '{platform: .provider, error_class, ts: .timestamp}' \
   | sort | uniq -c | sort -rn | head
@@ -585,7 +585,7 @@ docker exec dwtgbot_worker yt-dlp -j --no-warnings 'https://www.youtube.com/watc
 ```bash
 docker exec dwtgbot_worker yt-dlp -j --no-warnings '<canonical url for platform>' \
   | jq -r '.id, .title' | head
-$NL2 logs --since=5m --no-color worker | jq -c 'select(.event=="<x>_classified_error")' | wc -l
+$NL2 logs --no-log-prefix --since=5m --no-color worker | jq -c 'select(.event=="<x>_classified_error")' | wc -l
 # expected: error count ≈ 0 in the last 5 min
 # Manual: submit URL via Telegram; download succeeds.
 ```
@@ -625,7 +625,7 @@ $NL2 logs --since=5m --no-color worker | jq -c 'select(.event=="<x>_classified_e
 
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
-$NL2 logs --since=30m --no-color worker \
+$NL2 logs --no-log-prefix --since=30m --no-color worker \
   | jq -c 'select(.event=="<provider>_classified_error" and .error_class=="ffmpeg_failed")' \
   | head
 
@@ -659,7 +659,7 @@ docker exec dwtgbot_worker bash -lc \
 docker exec dwtgbot_worker ffmpeg -version | head -1
 # Manual: submit a YouTube URL → request audio MP3; result
 # arrives, plays in Telegram, MIME `audio/mpeg`, size > 0.
-$NL2 logs --since=5m --no-color worker \
+$NL2 logs --no-log-prefix --since=5m --no-color worker \
   | jq -c 'select(.event=="<x>_classified_error" and .error_class=="ffmpeg_failed")' | wc -l   # 0
 ```
 
@@ -680,7 +680,7 @@ $NL2 logs --since=5m --no-color worker \
 ### 7.1 Symptoms
 
 - User sees "Скачиваю…" then "Готово ✓" but no file/link arrives.
-- `worker_job_done` events present but `download_jobs.delivered_at`
+- `job_done` events present but `download_jobs.delivered_at`
   stays NULL.
 - `DownloadResult.files=()` warnings in logs.
 
@@ -690,7 +690,7 @@ $NL2 logs --since=5m --no-color worker \
 |---|---|
 | Provider returned empty result silently | `DownloadError("empty_result")` in logs |
 | Disk full mid-download | `OSError: [Errno 28]` |
-| Download succeeded but delivery failed | `worker_delivery_failed`; Telegram 413 (file too large for Telegram); temp link not created |
+| Download succeeded but delivery failed | `telegram_upload_retries_exhausted`; Telegram 413 (file too large for Telegram); temp link not created |
 | Worker wrote outside `target_dir` (cleanup nuked it) | files exist in `/tmp` instead of `STORAGE_PATH/jobs/<id>/` |
 | `STORAGE_PATH` permission issue | `PermissionError` on write |
 | Telegram API rejected upload (size/format) | `Request Entity Too Large` (413), `BadRequest: PHOTO_INVALID_DIMENSIONS` |
@@ -700,7 +700,7 @@ $NL2 logs --since=5m --no-color worker \
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 JOB_ID=<id>
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c "select(.job_id == \"$JOB_ID\")" | tail -30
 
 # Inspect the job's target dir
@@ -741,8 +741,8 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 # After re-submit, the new job should reach delivered_at NOT NULL
 docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
   "SELECT id, status, delivered_at FROM download_jobs ORDER BY created_at DESC LIMIT 5;"
-$NL2 logs --since=2m worker | grep -c worker_job_done                  # > 0
-$NL2 logs --since=2m worker | grep -c worker_delivery_failed           # 0
+$NL2 logs --no-log-prefix --since=2m worker | grep -c job_done                  # > 0
+$NL2 logs --no-log-prefix --since=2m worker | grep -c telegram_upload_retries_exhausted           # 0
 # Manual: submit URL, file or link arrives.
 ```
 
@@ -764,7 +764,7 @@ $NL2 logs --since=2m worker | grep -c worker_delivery_failed           # 0
 
 - Tap on `https://media.example.com/d/<token>` returns 404 / 410 /
   403 unexpectedly.
-- Logs: `temp_link_not_found`, `temp_link_expired`,
+- Logs: `temp_link_served` with `result` = `not_found` / `expired` / `gone`,
   `temp_link_path_invalid`.
 - Users complain links from "5 minutes ago" don't work.
 
@@ -784,7 +784,7 @@ $NL2 logs --since=2m worker | grep -c worker_delivery_failed           # 0
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 TOKEN=<token>
 
-$NL2 logs --since=30m --no-color api \
+$NL2 logs --no-log-prefix --since=30m --no-color api \
   | jq -c "select(.token_short == \"${TOKEN:0:8}\")" | head
 
 docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
@@ -862,8 +862,8 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 $NL2 ps nginx api
-$NL2 logs --tail=200 --no-color nginx | tail -40
-$NL2 logs --tail=200 --no-color api   | tail -40
+$NL2 logs --no-log-prefix --tail=200 --no-color nginx | tail -40
+$NL2 logs --no-log-prefix --tail=200 --no-color api   | tail -40
 
 docker exec dwtgbot_nginx nginx -t
 docker exec dwtgbot_nginx curl -fsS http://api:8080/readyz --max-time 3 \
@@ -894,7 +894,7 @@ docker exec dwtgbot_api curl -fsS http://localhost:8080/readyz --max-time 3
 
 ```bash
 docker exec dwtgbot_nginx nginx -t                                   # syntax ok
-$NL2 logs --tail=20 nginx | grep -E ' (502|503|504) '                # empty
+$NL2 logs --no-log-prefix --tail=20 nginx | grep -E ' (502|503|504) '                # empty
 curl -fsS --max-time 5 https://media.example.com/healthz             # ok
 curl -I --max-time 5 https://media.example.com/d/<active-token>      # 200
 ```
@@ -937,7 +937,7 @@ curl -I --max-time 5 https://media.example.com/d/<active-token>      # 200
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 $NL2 ps certbot
-$NL2 logs --tail=200 --no-color certbot | tail -40
+$NL2 logs --no-log-prefix --tail=200 --no-color certbot | tail -40
 
 # Cert expiry from outside
 echo | openssl s_client -connect media.example.com:443 \
@@ -1137,7 +1137,7 @@ identified the dominant directory.)
 
 ```bash
 df -h /var/lib/dwtgbot /var/backups/dwtgbot 2>/dev/null              # < 70%
-$NL2 logs --since=5m worker | grep -c 'No space left'                # 0
+$NL2 logs --no-log-prefix --since=5m worker | grep -c 'No space left'                # 0
 # Manual: submit a download → completes.
 ```
 
@@ -1159,7 +1159,7 @@ $NL2 logs --since=5m worker | grep -c 'No space left'                # 0
 
 - Monitoring: `arq:queue` ZCARD > N (usually > a few hundred).
 - Users wait minutes between submission and download start.
-- Worker logs show steady `worker_job_done` but new submissions
+- Worker logs show steady `job_done` but new submissions
   outpace throughput.
 
 ### 13.2 Likely causes
@@ -1170,7 +1170,7 @@ $NL2 logs --since=5m worker | grep -c 'No space left'                # 0
 | Worker container constantly retrying a poisoned job | repeated `Retry` logs for one `job_id` (§20) |
 | Upstream throttling (yt-dlp 429 cycle) | `RetryableError("upstream_5xx")` spike (§5) |
 | Scheduled task storm (e.g., cleanup re-enqueueing) | `cleanup_*` events flooding |
-| Abuse / spam (one user submitting hundreds) | `bot_url_submitted` per user_id histogram skewed |
+| Abuse / spam (one user submitting hundreds) | `update_received` per user_id histogram skewed |
 
 ### 13.3 Quick diagnosis
 
@@ -1184,12 +1184,12 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
   "SELECT status, count(*) FROM download_jobs GROUP BY 1;"
 
 # Throughput in the last 10 min
-$NL2 logs --since=10m --no-color worker \
-  | jq -c 'select(.event=="worker_job_done")' | wc -l
+$NL2 logs --no-log-prefix --since=10m --no-color worker \
+  | jq -c 'select(.event=="job_done")' | wc -l
 
 # Top submitters in the last hour (abuse?)
-$NL1 logs --since=1h --no-color bot \
-  | jq -r 'select(.event=="bot_url_submitted") | .user_id' \
+$NL1 logs --no-log-prefix --since=1h --no-color bot \
+  | jq -r 'select(.event=="update_received") | .user_id' \
   | sort | uniq -c | sort -rn | head
 ```
 
@@ -1212,7 +1212,7 @@ $NL1 logs --since=1h --no-color bot \
 
 ```bash
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ZCARD arq:queue   # decreasing
-$NL2 logs --since=5m worker | grep -c worker_job_done                      # > 0
+$NL2 logs --no-log-prefix --since=5m worker | grep -c job_done                      # > 0
 # Monitoring: queue depth trending down toward steady state.
 ```
 
@@ -1231,7 +1231,7 @@ $NL2 logs --since=5m worker | grep -c worker_job_done                      # > 0
 
 ### 14.1 Symptoms
 
-- `worker_job_done` events with high duration (`duration_ms`
+- `job_done` events with high duration (`total_seconds`
   field).
 - Users complain "it used to be faster".
 - `download_jobs.completed_at - started_at` p95 increased.
@@ -1253,9 +1253,9 @@ $NL2 logs --since=5m worker | grep -c worker_job_done                      # > 0
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 
 # Recent job durations
-$NL2 logs --since=30m --no-color worker \
-  | jq -c 'select(.event=="worker_job_done") | {job_id, duration_ms, kind: .download_kind}' \
-  | jq -s 'sort_by(.duration_ms) | reverse | .[0:10]'
+$NL2 logs --no-log-prefix --since=30m --no-color worker \
+  | jq -c 'select(.event=="job_done") | {job_id, total_seconds, method}' \
+  | jq -s 'sort_by(.total_seconds) | reverse | .[0:10]'
 
 # Host load
 top -bn1 | head -20
@@ -1291,8 +1291,8 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 ### 14.5 Verify
 
 ```bash
-$NL2 logs --since=10m --no-color worker \
-  | jq -c 'select(.event=="worker_job_done") | .duration_ms' \
+$NL2 logs --no-log-prefix --since=10m --no-color worker \
+  | jq -c 'select(.event=="job_done") | .total_seconds' \
   | jq -s 'add/length, max'
 # Mean and max should drop within an hour after the fix.
 
@@ -1317,7 +1317,7 @@ $NL2 logs --since=10m --no-color worker \
 - Bot logs: `telegram.error.RetryAfter`, `BadRequest`,
   `Unauthorized`, `TimedOut`.
 - Sends fail; user sees the bot "thinking" but no message.
-- Spike of `bot_send_failed` events.
+- Spike of `bot_error` events.
 
 ### 15.2 Likely causes
 
@@ -1335,9 +1335,9 @@ $NL2 logs --since=10m --no-color worker \
 ```bash
 NL1='docker compose -f deploy/nl1/docker-compose.yml'
 
-$NL1 logs --since=15m --no-color bot \
+$NL1 logs --no-log-prefix --since=15m --no-color bot \
   | jq -c 'select(.event | test("send_failed|telegram_error"))' | head
-$NL1 logs --since=15m --no-color bot \
+$NL1 logs --no-log-prefix --since=15m --no-color bot \
   | jq -c 'select(.error_class)' \
   | jq -r '.error_class' | sort | uniq -c | sort -rn
 
@@ -1350,8 +1350,9 @@ docker exec dwtgbot_bot curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/getW
 ### 15.4 Step-by-step fix
 
 1. **`RetryAfter`** → respect `retry_after`. The bot library
-   should already back off; if not, lower the per-chat send rate
-   in `app/bot/middleware/throttling`.
+   should already back off (`app/infrastructure/telegram/sender.py`
+   ждёт `retry_after`, до 60 с); если нет — снизьте лимиты в
+   `app/application/services/rate_limit.py` (`RL_*`, `docs/36-rate-limiting.md`).
 2. **Telegram outage** → check status.telegram.org; nothing to do
    on our side except wait. Communicate in your channel.
 3. **`Unauthorized`** → token rotated; update
@@ -1372,7 +1373,7 @@ docker exec dwtgbot_bot curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/getW
 
 ```bash
 docker exec dwtgbot_bot curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/getMe" | jq '.ok'
-$NL1 logs --since=5m bot | grep -c bot_send_failed                   # 0 or low
+$NL1 logs --no-log-prefix --since=5m bot | grep -c bot_error                   # 0 or low
 # Manual: DM /start → reply.
 ```
 
@@ -1596,7 +1597,7 @@ bash deploy/scripts/healthcheck.sh nl1
 | Cause | Signal |
 |---|---|
 | Cleanup container crash-loop | `$NL2 ps cleanup` shows not Up |
-| Cleanup script error | `cleanup_failed` event in logs |
+| Cleanup script error | `cleanup_cycle_error` event in logs |
 | `STORAGE_PATH` perms wrong | `PermissionError` |
 | Cron schedule wrong inside container | last run timestamp old |
 | Path mismatch (script and worker write under different paths) | files exist but cleanup looks elsewhere |
@@ -1607,11 +1608,11 @@ bash deploy/scripts/healthcheck.sh nl1
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 $NL2 ps cleanup
-$NL2 logs --tail=200 --no-color cleanup | tail -40
+$NL2 logs --no-log-prefix --tail=200 --no-color cleanup | tail -40
 
 # Last successful cleanup
-$NL2 logs --since=24h --no-color cleanup \
-  | jq -c 'select(.event=="cleanup_done") | {ts: .timestamp, removed_files, freed_bytes}' \
+$NL2 logs --no-log-prefix --since=24h --no-color cleanup \
+  | jq -c 'select(.event=="temp_link_files_removed") | {ts: .timestamp, count}' \
   | tail
 
 ls -la /var/lib/dwtgbot/storage/jobs/ 2>/dev/null | head
@@ -1641,8 +1642,8 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 
 ```bash
 bash deploy/scripts/cleanup.sh                          # exits 0
-$NL2 logs --since=2m --no-color cleanup \
-  | jq -c 'select(.event=="cleanup_done")' | tail -1
+$NL2 logs --no-log-prefix --since=2m --no-color cleanup \
+  | jq -c 'select(.event=="temp_link_files_removed")' | tail -1
 df -h /var/lib/dwtgbot/storage                           # decreasing
 docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
   "SELECT count(*) FROM temp_links WHERE expires_at < now() AND is_active=true;"   # 0
@@ -1652,7 +1653,7 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 
 - `cleanup` container with a healthcheck that fails when no
   successful run in last 25 hours.
-- Alert on `cleanup_done` event missing for > 25 h.
+- Alert on `temp_link_files_removed` event missing for > 25 h.
 - Single source of truth for `STORAGE_PATH` (Settings → both
   services).
 - Daily cron + on-demand script (see [`23-cleanup-retention.md`](23-cleanup-retention.md)).
@@ -1686,7 +1687,7 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 ```bash
 NL1='docker compose -f deploy/nl1/docker-compose.yml'
 $NL1 ps backup
-$NL1 logs --tail=200 --no-color backup | tail -40
+$NL1 logs --no-log-prefix --tail=200 --no-color backup | tail -40
 
 ls -laht /var/backups/dwtgbot/*.sql.gz 2>/dev/null | head
 df -h /var/backups
@@ -1775,7 +1776,7 @@ echo "restore drill OK"
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 JOB_ID=<id>
 
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c "select(.job_id == \"$JOB_ID\")" | tail -50
 
 # Subprocesses inside the worker
@@ -1831,7 +1832,7 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
   "SELECT id, status FROM download_jobs WHERE id='<id>';"           # failed
 docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" \
   EXISTS "arq:job:job:<id>"                                          # 0
-$NL2 logs --since=2m worker | grep -c worker_job_done                # > 0
+$NL2 logs --no-log-prefix --since=2m worker | grep -c job_done                # > 0
 # Manual: user re-submits → succeeds with a new job_id.
 ```
 
@@ -1911,13 +1912,13 @@ Before you call an incident "resolved" and close the page.
       hosts (many incidents cross planes).
 - [ ] `curl -fsS https://media.example.com/healthz` → `200`.
 - [ ] No new ERROR-level log lines in the last 5 minutes:
-      `for s in nl1 nl2; do docker compose -f deploy/$s/docker-compose.yml logs --since=5m --no-color | jq -c 'select(.level=="error")' | head; done`
+      `for s in nl1 nl2; do docker compose -f deploy/$s/docker-compose.yml logs --no-log-prefix --since=5m --no-color | jq -c 'select(.level=="error")' | head; done`
 
 **Confirm no collateral damage**
 - [ ] No services restarting in a loop (`docker compose ps` —
       uptime growing, not flapping).
 - [ ] Worker is processing again: at least one fresh
-      `worker_job_done` event since the fix, OR queue intentionally
+      `job_done` event since the fix, OR queue intentionally
       empty.
 - [ ] Disk usage on NL-2 is below the alert threshold (`df -h`).
 - [ ] Postgres connections normal:
@@ -1991,9 +1992,9 @@ $NL1 ps                                    # NL-1: bot, api, postgres, redis, ba
 $NL2 ps                                    # NL-2: worker, nginx, certbot, cleanup, api
 
 # Logs (live; history across deploys: journalctl CONTAINER_NAME=dwtgbot_bot --since -1d -o cat)
-$NL1 logs -f --tail=200 bot
-$NL2 logs -f --tail=200 worker
-$NL2 logs -f --tail=200 nginx
+$NL1 logs --no-log-prefix -f --tail=200 bot
+$NL2 logs --no-log-prefix -f --tail=200 worker
+$NL2 logs --no-log-prefix -f --tail=200 nginx
 
 # Restart one service (graceful)
 $NL1 restart bot
@@ -2022,14 +2023,14 @@ docker exec dwtgbot_postgres pg_isready -U dwtgbot -d dwtgbot
 
 ```bash
 # Errors in the last 10 min
-$NL1 logs --since=10m --no-color bot | jq -c 'select(.level=="error")'
+$NL1 logs --no-log-prefix --since=10m --no-color bot | jq -c 'select(.level=="error")'
 
 # By correlation id
-$NL2 logs --no-color --since=1h worker \
+$NL2 logs --no-log-prefix --no-color --since=1h worker \
   | jq -c 'select(.request_id == "<id>" or .job_id == "<id>")'
 
 # Histogram of error classes
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -r 'select(.error_class) | .error_class' | sort | uniq -c | sort -rn
 ```
 

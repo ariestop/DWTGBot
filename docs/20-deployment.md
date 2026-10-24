@@ -841,7 +841,7 @@ NL2='docker compose -f deploy/nl2/docker-compose.yml'
 $NL2 ps
 
 # Worker is consuming
-$NL2 logs --tail=50 worker | jq -c 'select(.event | test("worker_started|worker_job"))' | head
+$NL2 logs --no-log-prefix --tail=50 worker | jq -c 'select(.event | test("worker_started|worker_job"))' | head
 
 # Public health (TLS)
 curl -fsS https://media.example.com/healthz   | jq
@@ -1269,7 +1269,7 @@ docker exec dwtgbot_api curl -fsS -H "X-Internal-Token: $(grep ^API_INTERNAL_TOK
   http://localhost:8080/readyz | jq
 
 # Worker is alive and consuming
-$NL2 logs --tail=200 worker | jq -c 'select(.event | test("worker_started|worker_job_started"))' | head
+$NL2 logs --no-log-prefix --tail=200 worker | jq -c 'select(.event | test("worker_started|job_status_changed"))' | head
 
 # Public HTTPS (end-to-end through nginx)
 curl -fsS https://media.example.com/healthz | jq
@@ -1368,7 +1368,7 @@ If anything fails, jump to [`24-runbooks.md`](24-runbooks.md) and [`31-troublesh
         `rclone lsd $BACKUP_RCLONE_REMOTE:` — see last-modified timestamp)
 [ ] S1: `docker logs dwtgbot_cleanup | jq -c 'select(.event=="orphan_jobs_reaped")'`
        is empty (non-zero reap counts indicate a worker is crashing mid-job)
-[ ] Cleanup ran (`docker logs dwtgbot_cleanup | jq -c 'select(.event=="cleanup_done")' | tail`)
+[ ] Cleanup ran (`docker logs dwtgbot_cleanup | jq -c 'select(.event=="temp_link_files_removed")' | tail`)
 [ ] L5: if upstream throttling happened, `docker exec dwtgbot_redis redis-cli KEYS 'cb:*'`
        shows breaker keys only for the affected host(s) and they clear within
        `CB_COOLDOWN_SECONDS`
@@ -1575,7 +1575,7 @@ Honest scope: with two single hosts and Docker Compose, **true zero-downtime is 
 - Multiple bot replicas polling the same Telegram token (Telegram allows only one polling client) — true blue/green for the bot would need webhooks behind a load balancer.
 - Zero-downtime Postgres failover without a managed service / replica.
 
-If you need either, design that in `26-cursor-rules.md` first; it crosses ADR-0005 / ADR-0011 and changes the topology.
+If you need either, design that as an ADR first (skill `plan-change`); it crosses ADR-0005 / ADR-0011 and changes the topology.
 
 ---
 
@@ -1596,9 +1596,9 @@ $NL2 ps
 docker stats --no-stream
 
 # ── Logs (JSON) ───────────────────────────────────────────
-$NL1 logs --tail=200 bot      | jq -c 'select(.level=="error" or .level=="warning")'
-$NL2 logs --tail=500 worker   | jq -c 'select(.event | test("classified_error"))'
-$NL2 logs --tail=200 nginx
+$NL1 logs --no-log-prefix --tail=200 bot      | jq -c 'select(.level=="error" or .level=="warning")'
+$NL2 logs --no-log-prefix --tail=500 worker   | jq -c 'select(.event | test("classified_error"))'
+$NL2 logs --no-log-prefix --tail=200 nginx
 
 # ── Health ────────────────────────────────────────────────
 curl -fsS https://media.example.com/healthz | jq
@@ -1619,7 +1619,7 @@ ls -laht /var/backups/dwtgbot | head
 
 # ── Cleanup ───────────────────────────────────────────────
 sudo bash deploy/scripts/cleanup.sh
-$NL2 logs --since=24h cleanup | jq -c 'select(.event=="cleanup_done")' | tail
+$NL2 logs --no-log-prefix --since=24h cleanup | jq -c 'select(.event=="temp_link_files_removed")' | tail
 
 # ── SSL ───────────────────────────────────────────────────
 sudo bash deploy/scripts/certbot_init.sh --domain media.example.com --email ops@example.com
@@ -1661,4 +1661,4 @@ du -sh /var/lib/dwtgbot/storage/jobs/* | sort -h | tail
 - Image signing verification at pull time (cosign + admission).
 - Postgres streaming replica on NL-2 (read-only) for fast failover.
 
-Each of these crosses an ADR-0005 assumption — propose in `26-cursor-rules.md` and add an ADR before implementing.
+Each of these crosses an ADR-0005 assumption — propose it (skill `plan-change`) and add an ADR before implementing.

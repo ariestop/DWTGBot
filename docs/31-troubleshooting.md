@@ -58,7 +58,7 @@ Before forming hypotheses:
 - Get the **exact** failing input from the user (URL, command,
   timestamp).
 - Get a **correlation ID** if available (the bot logs
-  `bot_url_submitted` with `request_id`; ask for the
+  `update_received` with `request_id` for every update; ask for the
   approximate timestamp + user id).
 - Run the **same input** in staging or with a minimal local
   setup — does it fail the same way?
@@ -82,9 +82,11 @@ Every log line emitted by the project carries a small set of
 |---|---|---|
 | `request_id` | bot handler entry / API request entry | end of the request |
 | `user_id`, `chat_id` | bot handler entry | end of the request |
-| `job_id` | use case `enqueue_job` | end of the worker task |
-| `provider`, `option_key` | provider methods | scope of the provider call |
-| `url_host`, `url_path_hash` | provider methods | scope of the provider call |
+| `job_id` | `ProcessDownloadUseCase` (worker), callback handlers | end of the worker task |
+| `platform` / `provider`, `host` | passed per call, not bound | that log line only |
+
+URL в логах нет ни на одном уровне (P11, `app/tests/test_no_urls_in_logs.py`):
+ищите по `platform` / `host`.
 
 **Reading rule:** if you have **any one** of `{request_id,
 job_id, user_id+timestamp_window}`, you can fetch the entire
@@ -127,11 +129,26 @@ restart:
 > …) одинаковы в обеих топологиях, поэтому команды `docker exec dwtgbot_*`
 > работают без изменений. Вместо `deploy/nl1/.env` / `deploy/nl2/.env` в
 > `single` используется один `deploy/single/.env`.
+>
+> **Логи в проде (`single`, journald).** Контейнеры пишут в journald
+> (`deploy/scripts/journald_setup.sh`, 30 дней). Есть три способа читать логи:
+>
+> ```bash
+> # история за весь срок хранения, переживает пересоздание контейнера при деплое
+> sudo journalctl -o cat CONTAINER_NAME=dwtgbot_worker --since "-2h" | jq -c 'select(.level=="error")'
+> # только текущий контейнер (с последнего деплоя)
+> docker logs --since 2h dwtgbot_worker 2>&1 | jq -c 'select(.level=="error")'
+> # через compose: без --no-log-prefix каждая строка начинается с «service |», и jq её не разберёт
+> $NL2 logs --no-log-prefix --since=2h worker | jq -c 'select(.level=="error")'
+> ```
+>
+> Без доступа к серверу: workflow «Server diagnostics» (Actions) печатает
+> состояние и обезличенную сводку логов (`docs/24-runbooks.md` §27).
 
 ```bash
 # Snapshot logs FIRST
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
-$NL2 logs --no-color --tail=2000 worker > /tmp/worker.before-restart.$(date +%s).log
+$NL2 logs --no-log-prefix --no-color --tail=2000 worker > /tmp/worker.before-restart.$(date +%s).log
 # Now restart
 $NL2 restart worker
 ```
@@ -154,7 +171,7 @@ $NL1 ps; $NL2 ps
 echo "== 2) Last ERRORs across the system =="
 for s in single nl1 nl2; do
   test -f deploy/$s/.env \
-    && docker compose -f deploy/$s/docker-compose.yml logs \
+    && docker compose -f deploy/$s/docker-compose.yml logs --no-log-prefix \
        --no-color --since=$SINCE \
        | jq -c 'select(.level == "error" or .level == "warning")' 2>/dev/null \
        | head -30
@@ -163,7 +180,7 @@ done
 echo "== 3) Top error_class histogram =="
 for s in single nl1 nl2; do
   test -f deploy/$s/.env \
-    && docker compose -f deploy/$s/docker-compose.yml logs --no-color --since=$SINCE \
+    && docker compose -f deploy/$s/docker-compose.yml logs --no-log-prefix --no-color --since=$SINCE \
        | jq -r 'select(.error_class) | .error_class' 2>/dev/null \
        | sort | uniq -c | sort -rn
 done
@@ -196,18 +213,18 @@ the first command to run.
 | # | Pattern signature | Suspect subsystem | First command | Detail |
 |---|---|---|---|---|
 | 1 | Bot silent; nothing in `bot` logs | Telegram polling stopped / token rotated | `docker exec dwtgbot_bot curl -fsS https://api.telegram.org/bot${BOT_TOKEN}/getMe` | §4.6 |
-| 2 | Bot replies 'analyzing…' but never the keyboard | provider `get_info` failing or hanging | `$NL1 logs --since=10m bot \| jq -c 'select(.event \| test("classified_error"))'` | §4.2 |
+| 2 | Bot replies 'analyzing…' but never the keyboard | provider `get_info` failing or hanging | `$NL1 logs --no-log-prefix --since=10m bot \| jq -c 'select(.event \| test("classified_error"))'` | §4.2 |
 | 3 | Keyboard appears, click → 'queued', then nothing | worker idle or queue not consumed | `docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ZCARD arq:queue` + §3.5 | §4.4 |
 | 4 | Worker logs show start then silence (no `_done`) | hung subprocess (yt-dlp / ffmpeg) | `docker exec dwtgbot_worker pgrep -af 'yt-dlp\|ffmpeg'` | §5.8 |
-| 5 | `worker_job_done` present but user got no file | delivery failed (Telegram 413, temp link not created) | grep `worker_delivery_failed`; check `temp_links` row | §4.6 / §5.4 |
-| 6 | Big file: link arrives, click → 502/504/403 | nginx / api / `temp_links.file_path` mismatch | `$NL2 logs nginx \| tail; $NL2 logs api \| tail` | §4.3 |
+| 5 | `job_done` present but user got no file | delivery failed (Telegram 413, temp link not created) | grep `telegram_upload_retries_exhausted`; check `temp_links` row | §4.6 / §5.4 |
+| 6 | Big file: link arrives, click → 502/504/403 | nginx / api / `temp_links.file_path` mismatch | `$NL2 logs --no-log-prefix nginx \| tail; $NL2 logs --no-log-prefix api \| tail` | §4.3 |
 | 6a | Big file: link click → 410 "Link expired or exhausted" before user downloaded | temp-link counter consumed by preview/crawler or repeated probes | nginx logs for `TelegramBot (like TwitterBot)` and DB `downloads_count` | §5.10 |
 | 6b | Firefox shows "Corrupted Content Error" / "Ошибка искажения содержимого" | client/content-encoding mismatch, duplicate headers, or a local TLS-inspecting client | `curl --compressed -D /tmp/headers.txt -o /tmp/body.bin https://.../d/<token>` | §5.10 |
 | 7 | One platform broken, others fine | provider / yt-dlp upstream change | `docker exec dwtgbot_worker yt-dlp --version` + reproduce | §5.6 |
 | 8 | All platforms broken at once | yt-dlp itself missing / image regression | `docker exec dwtgbot_worker which yt-dlp ffmpeg` | §5.6 |
 | 9 | Spike of 5xx in API logs | DB or Redis behind it; or readiness false | §1.6 step 4 + 5 | §4.4 / §4.5 |
 | 10 | "It worked yesterday" generic regression | recent deploy | `git log --oneline --since=48h` + `docker inspect <c> -f '{{.Image}}'` | §6 |
-| 11 | Disk fills despite cleanup | cleanup container down or stuck | `$NL2 ps cleanup` + `$NL2 logs cleanup` | §4.9 |
+| 11 | Disk fills despite cleanup | cleanup container down or stuck | `$NL2 ps cleanup` + `$NL2 logs --no-log-prefix cleanup` | §4.9 |
 | 12 | Long jobs get killed mid-way | arq `task_timeout` or ffmpeg timeout | grep `worker_task_timeout`, `subprocess.TimeoutExpired` | §5.1 |
 | 13 | "Random" failures with no pattern | flapping (§2.4) | sample 20 failures, look at common field | §2.4 |
 | 14 | Container restart loop with no obvious cause | OOM / failing healthcheck | `docker inspect <c> -f '{{.State.OOMKilled}}'`; check probe | §4.9 |
@@ -220,7 +237,7 @@ One root cause looks like ten symptoms. Recognize the pattern by
 
 | Root | Surface symptoms (in order) |
 |---|---|
-| Postgres down | bot fails on URL submit → `bot_send_failed` → users re-submit → queue depth grows → workers idle → /readyz red |
+| Postgres down | bot fails on URL submit → `bot_error` → users re-submit → queue depth grows → workers idle → /readyz red |
 | Redis down | bot fails on enqueue → users re-submit → bot logs `link_analysis_unexpected_error` → workers idle |
 | Disk full on NL-2 | worker fails on download → ffmpeg fails → temp link writes fail → cleanup also fails |
 | yt-dlp upstream change (one platform) | spike of `<x>_classified_error` for that platform → workers seem busy → users on **other** platforms unaffected |
@@ -231,7 +248,7 @@ One root cause looks like ten symptoms. Recognize the pattern by
 **earliest** ERROR/WARNING — that's usually the root.
 
 ```bash
-$NL1 logs --since=1h --no-color bot \
+$NL1 logs --no-log-prefix --since=1h --no-color bot \
   | jq -c 'select(.level=="error" or .level=="warning")' \
   | jq -s 'sort_by(.timestamp) | .[0:5]'
 ```
@@ -242,7 +259,7 @@ Hardest class. Examples and tell-tales:
 
 | Symptom | Tell-tale | Probe |
 |---|---|---|
-| `worker_job_done` but `delivered_at` NULL | delivery service returned without writing the row | grep `worker_delivery_*` for that `job_id` |
+| `job_done` but `delivered_at` NULL | delivery service returned without writing the row | grep `telegram_upload_*` for that `job_id` |
 | Audio MP3 is 0 bytes; logs say "done" | provider returned `DownloadResult.files=()` and worker accepted | `ls -la /var/lib/dwtgbot/storage/jobs/<id>/`; provider P4 violation |
 | Same URL works in dev, fails in prod | env / cookies / IP geo difference | reproduce inside the prod worker: `docker exec … yt-dlp -j …` |
 | Wrong file delivered | `option_key` confused; provider mapped wrong format | grep `<provider>_download_done`; inspect `option_key` and `kind` |
@@ -258,14 +275,14 @@ Definition: failure rate is non-zero but not 100%. Steps:
 
 1. **Quantify**: count failures over time:
    ```bash
-   $NL2 logs --since=1h --no-color worker \
+   $NL2 logs --no-log-prefix --since=1h --no-color worker \
      | jq -c 'select(.event | test("classified_error"))' \
      | jq -r '.timestamp[0:16]' | sort | uniq -c
    ```
-2. **Group**: by `provider` / `error_class` / `url_host`:
+2. **Group**: by `platform` / `error_class` / `host`:
    ```bash
-   $NL2 logs --since=1h --no-color worker \
-     | jq -c 'select(.error_class) | {p: .provider, e: .error_class, h: .url_host}' \
+   $NL2 logs --no-log-prefix --since=1h --no-color worker \
+     | jq -c 'select(.error_class) | {p: .platform, e: .error_class, h: .host}' \
      | sort | uniq -c | sort -rn | head
    ```
 3. **Compare**: is one bucket dominant? If yes, your "random"
@@ -315,14 +332,14 @@ renderer). Mandatory fields per line:
 |---|---|---|---|
 | `timestamp` | RFC3339 string | yes | UTC |
 | `level` | `info` / `warning` / `error` / `debug` | yes | |
-| `event` | constant string | yes | e.g. `worker_job_done` |
+| `event` | constant string | yes | e.g. `job_done` |
 | `logger` | dotted module name | yes | `app.workers.tasks.download` |
 | `request_id` | UUID-like | when in a request scope | bound by handler |
-| `job_id` | string | when in a worker task | bound by use case |
+| `job_id` | int | when in a worker task | bound by use case |
 | `user_id` / `chat_id` | int | when in bot handler | bound by handler |
 | `error_class` | constant string | on failure paths | maps to taxonomy in `16-` |
 | `details_truncated` | string ≤ 500 chars | on classified errors | sanitized |
-| `provider`, `option_key`, `url_host`, `url_path_hash` | string | provider methods | bound by provider |
+| `platform`, `host` | string | provider / runner calls | passed per call |
 
 **Event names are constants** — never f-strings (P4). If you see
 an f-string event name, file a bug.
@@ -347,7 +364,7 @@ for the canonical event catalogue.
 
 Access via `docker compose -f deploy/<host>/docker-compose.yml
 logs <service>`. В топологии `single` все перечисленные сервисы работают
-на одном хосте: `docker compose -f deploy/single/docker-compose.yml logs <service>`.
+на одном хосте: `docker compose -f deploy/single/docker-compose.yml logs --no-log-prefix <service>`.
 
 ### 3.3 The ten essential `jq` queries
 
@@ -357,69 +374,70 @@ NL1='docker compose -f deploy/nl1/docker-compose.yml'
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 
 # 1. Errors only
-$NL1 logs --since=10m --no-color bot \
+$NL1 logs --no-log-prefix --since=10m --no-color bot \
   | jq -c 'select(.level == "error")'
 
 # 2. Warnings + errors
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c 'select(.level == "warning" or .level == "error")'
 
 # 3. Filter by event name
-$NL2 logs --since=1h --no-color worker \
-  | jq -c 'select(.event == "worker_job_done")'
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
+  | jq -c 'select(.event == "job_done")'
 
 # 4. Filter by request_id (one bot flow)
-$NL1 logs --no-color --since=1h bot \
+$NL1 logs --no-log-prefix --no-color --since=1h bot \
   | jq -c 'select(.request_id == "a1b2c3d4")'
 
 # 5. Filter by job_id (one worker task)
-$NL2 logs --no-color --since=1h worker \
-  | jq -c 'select(.job_id == "j_xxx")'
+$NL2 logs --no-log-prefix --no-color --since=1h worker \
+  | jq -c 'select(.job_id == 123)'
 
 # 6. Filter by user_id (one user's recent activity)
-$NL1 logs --since=1h --no-color bot \
+$NL1 logs --no-log-prefix --since=1h --no-color bot \
   | jq -c 'select(.user_id == 12345678)'
 
 # 7. Histogram of error_class
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -r 'select(.error_class) | .error_class' \
   | sort | uniq -c | sort -rn
 
 # 8. Histogram of providers raising errors
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c 'select(.event | test("classified_error"))' \
   | jq -r '.provider // "unknown"' \
   | sort | uniq -c | sort -rn
 
 # 9. Per-minute timeseries of an event
-$NL2 logs --since=1h --no-color worker \
-  | jq -r 'select(.event == "worker_job_done") | .timestamp[0:16]' \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
+  | jq -r 'select(.event == "job_done") | .timestamp[0:16]' \
   | sort | uniq -c
 
 # 10. Top N slowest jobs
-$NL2 logs --since=1h --no-color worker \
-  | jq -c 'select(.event == "worker_job_done" and .duration_ms != null) | {job_id, duration_ms}' \
-  | jq -s 'sort_by(.duration_ms) | reverse | .[0:10]'
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
+  | jq -c 'select(.event == "job_done") | {job_id, total_seconds}' \
+  | jq -s 'sort_by(.total_seconds) | reverse | .[0:10]'
 ```
 
 ### 3.4 Following one `request_id` end-to-end
 
-A typical analyze flow has these events, in order:
+Ссылка в сообщении (instant-flow, ADR-0010). `request_id`, `user_id` и
+`chat_id` привязывает `app/bot/middleware/logging_mw.py`, поэтому они
+есть у каждой строки обработки апдейта.
 
-| Order | Event | Service | Source line example |
+| Порядок | Событие | Сервис | Где в коде |
 |---|---|---|---|
-| 1 | `bot_url_submitted` | bot | `app/bot/handlers/url.py` |
-| 2 | `<provider>_get_info_started` | bot (via provider) | `app/infrastructure/providers/<x>.py` |
-| 3 | `<provider>_get_info_done` (or `_classified_error`) | bot | same |
-| 4 | `bot_options_rendered` | bot | `app/bot/keyboards/options.py` |
-| 5 | `bot_option_clicked` | bot | `app/bot/handlers/callbacks.py` |
-| 6 | `use_case_enqueue_job` | bot | `app/application/use_cases/enqueue_download.py` |
+| 1 | `update_received` | bot | `app/bot/middleware/logging_mw.py` |
+| 2 | `link_rejected` (не та ссылка) или `link_analysis_failed` | bot | `app/bot/handlers/links.py` |
+| 3 | `job_auto_enqueued` (или `instant_enqueue_rejected_cap` / `instant_enqueue_failed`) | bot | `app/application/use_cases/auto_enqueue_download.py`, `app/bot/handlers/links.py` |
+| 3a | `job_enqueued` — задача из кнопки выбора формата | bot | `app/application/use_cases/enqueue_download.py` |
+| 4 | `bot_message_handled` (`outcome`, длительность) | bot | `app/bot/middleware/metrics_mw.py` |
 
 Fetch the whole flow:
 
 ```bash
 RID=a1b2c3d4
-$NL1 logs --no-color --since=1h bot \
+$NL1 logs --no-log-prefix --no-color --since=1h bot \
   | jq -c "select(.request_id == \"$RID\")" \
   | jq -s 'sort_by(.timestamp) | .[] | {ts: .timestamp, level, event, error_class}'
 ```
@@ -427,37 +445,38 @@ $NL1 logs --no-color --since=1h bot \
 What to look at:
 
 - The **last** event before silence is your hypothesis seed.
-- Missing event 4 → provider failed at step 3 (look for `_classified_error`).
-- Missing event 6 → enqueue failed (Redis? See §4.4).
+- Есть 1, нет 2–3 → обработчик упал: ищите `bot_error` с тем же `request_id`.
+- `link_analysis_failed` → провайдер не смог получить метаданные (§5.6).
+- `instant_enqueue_failed` → enqueue failed (Redis? See §4.4).
 
 ### 3.5 Following one `job_id` end-to-end
 
-Worker task events:
+События задачи в worker (`job_id` — целое число из `download_jobs.id`):
 
-| Order | Event | Where |
+| Порядок | Событие | Где в коде |
 |---|---|---|
-| 1 | `worker_job_started` | `app/workers/tasks/download.py` |
-| 2 | `<provider>_download_started` | provider |
-| 3 | `<provider>_download_done` (or `_classified_error`) | provider |
-| 4 | `worker_delivery_started` | delivery service |
-| 5 | `worker_delivery_done` (or `worker_delivery_failed`) | delivery service |
-| 6 | `worker_job_done` | worker task |
+| 1 | `job_status_changed` (`to=processing`) | `app/application/use_cases/process_download.py` |
+| 2 | `job_info_from_cache` или `job_size_probed` / `job_size_unknown` | там же |
+| 3 | `telegram_upload_retry` (если были повторы) или `delivered_via_temp_link` | `app/application/services/delivery_service.py` |
+| 4 | `job_done` (`method`, `size`, `total_seconds`) и `job_status_changed` (`to=done`) | `app/application/use_cases/process_download.py` |
+| — | ошибка: `job_failed_retryable` → `job_will_retry`, `job_failed_permanent`, `job_failed_unexpected` | `process_download.py`, `app/infrastructure/queue/tasks.py` |
 
 Fetch:
 
 ```bash
-JID=j_xxx
-$NL2 logs --no-color --since=2h worker \
-  | jq -c "select(.job_id == \"$JID\")" \
-  | jq -s 'sort_by(.timestamp) | .[] | {ts: .timestamp, level, event, error_class, files_count, total_bytes}'
+JID=123
+$NL2 logs --no-log-prefix --no-color --since=2h worker \
+  | jq -c "select(.job_id == $JID)" \
+  | jq -s 'sort_by(.timestamp) | .[] | {ts: .timestamp, level, event, error_class, size, total_seconds}'
 ```
 
 What to look at:
 
-- Missing event 3 → §5.6 (yt-dlp issue) or §5.5 (ffmpeg).
-- Event 3 OK but 5 missing → §5.4 (Telegram-side).
-- Event 5 = `worker_delivery_failed` → check `error_class` field.
-- Event 6 missing → worker hung (§5.8) or crashed (`worker_unexpected_error`).
+- Нет 2 → yt-dlp не получил метаданные (§5.6).
+- Есть 2, нет 3–4 → загрузка или ffmpeg (§5.6, §5.5); после таймаута —
+  `DownloadTimeoutError` в `job_failed_*`.
+- `telegram_upload_retries_exhausted` → Telegram не принял файл (§5.4), см. `error_class`.
+- Нет ни 4, ни `job_failed_*` → worker завис (§5.8) или контейнер перезапустился.
 
 ### 3.6 Aggregations / histograms
 
@@ -466,24 +485,24 @@ ask "what's the dominant signal?". Recipes:
 
 ```bash
 # Most frequent error_class in the last hour
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -r 'select(.error_class) | .error_class' \
   | sort | uniq -c | sort -rn | head
 
 # Failures per provider per minute (spotting upstream incidents)
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c 'select(.event | test("classified_error"))' \
   | jq -r '"\(.timestamp[0:16]) \(.provider // "unknown") \(.error_class // "?")"' \
   | sort | uniq -c | sort -rn | head -20
 
 # 95p / max duration in the last 30 minutes
-$NL2 logs --since=30m --no-color worker \
-  | jq -r 'select(.event=="worker_job_done") | .duration_ms' \
+$NL2 logs --no-log-prefix --since=30m --no-color worker \
+  | jq -r 'select(.event=="job_done") | .total_seconds' \
   | sort -n | awk '{a[NR]=$1} END{print "p50",a[int(NR*0.5)]," p95",a[int(NR*0.95)]," max",a[NR]}'
 
 # Top N most active users
-$NL1 logs --since=1h --no-color bot \
-  | jq -r 'select(.event=="bot_url_submitted") | .user_id' \
+$NL1 logs --no-log-prefix --since=1h --no-color bot \
+  | jq -r 'select(.event=="update_received") | .user_id' \
   | sort | uniq -c | sort -rn | head
 ```
 
@@ -553,11 +572,11 @@ and translated to one of:
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 JID=<job>
-$NL2 logs --no-color --since=2h worker \
+$NL2 logs --no-log-prefix --no-color --since=2h worker \
   | jq -c "select(.job_id==\"$JID\" and .event | test(\"classified_error\"))"
 
 # What the provider did just before
-$NL2 logs --no-color --since=2h worker \
+$NL2 logs --no-log-prefix --no-color --since=2h worker \
   | jq -c "select(.job_id==\"$JID\")" \
   | jq -s 'sort_by(.timestamp) | .[] | {ts: .timestamp, event, error_class, details_truncated}'
 ```
@@ -645,7 +664,7 @@ docker exec -it dwtgbot_postgres psql -U dwtgbot -d dwtgbot -c \
 
 **Distinguishing from worker-not-running**: queue full + worker
 silent → queue OR worker. Test:
-`$NL2 logs --since=2m worker | grep worker_job_started`. If 0
+`$NL2 logs --no-log-prefix --since=2m worker | grep job_status_changed`. If 0
 when ZCARD > 0, the **worker** isn't consuming (likely connection
 to Redis broken from the worker side — check `REDIS_URL` /
 password); if non-zero, the worker is consuming and just slow.
@@ -714,7 +733,7 @@ docker exec dwtgbot_bot curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/getM
 docker exec dwtgbot_bot curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo" | jq
 
 # Last failed sends
-$NL1 logs --since=15m --no-color bot \
+$NL1 logs --no-log-prefix --since=15m --no-color bot \
   | jq -c 'select(.event | test("send_failed|telegram_error"))' | head
 ```
 
@@ -796,7 +815,7 @@ docker exec dwtgbot_worker yt-dlp -j --no-warnings '<failing url>' 2>&1 | tail -
 docker exec dwtgbot_worker yt-dlp -F --no-warnings '<failing url>' 2>&1 | head -30
 
 # Failure histogram by platform / message
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c 'select(.event | test("classified_error"))' \
   | jq -r '"\(.provider) \(.error_class)"' | sort | uniq -c | sort -rn
 ```
@@ -858,7 +877,7 @@ Cure: §12 (disk) / §11 (containers) of `24-`.
 # Which layer? Look at the stack trace and the elapsed time.
 # A subprocess timeout shows the runner; a network timeout shows httpx; a Postgres timeout shows psycopg.
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c 'select(.event | test("timeout|TimedOut"))' | head
 ```
 
@@ -936,7 +955,7 @@ yt-dlp problem (§4.2 / §5.6), not a URL problem.
 
 ### 5.4 Telegram-side delivery failures
 
-**Telltales**: `worker_job_done` emitted; `worker_delivery_failed`
+**Telltales**: `job_done` emitted; `telegram_upload_retries_exhausted`
 also emitted (or no `worker_delivery_done`); user receives nothing.
 
 **Recipes**:
@@ -944,7 +963,7 @@ also emitted (or no `worker_delivery_done`); user receives nothing.
 ```bash
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 JID=<job>
-$NL2 logs --no-color --since=2h worker \
+$NL2 logs --no-log-prefix --no-color --since=2h worker \
   | jq -c "select(.job_id == \"$JID\" and (.event | test(\"delivery\")))"
 ```
 
@@ -1012,9 +1031,9 @@ See §14 of `24-` for the operational fix. Diagnostic recipes:
 
 ```bash
 # Top 10 slowest jobs in last 30 min
-$NL2 logs --since=30m --no-color worker \
-  | jq -c 'select(.event=="worker_job_done") | {job_id, duration_ms, kind: .download_kind, total_bytes}' \
-  | jq -s 'sort_by(.duration_ms) | reverse | .[0:10]'
+$NL2 logs --no-log-prefix --since=30m --no-color worker \
+  | jq -c 'select(.event=="job_done") | {job_id, total_seconds, method, size}' \
+  | jq -s 'sort_by(.total_seconds) | reverse | .[0:10]'
 
 # Host-side bottleneck
 top -bn1 | head -20
@@ -1164,7 +1183,7 @@ hunts. Match the symptom; correct the approach.
 | 3 | Changed three things at once | Cannot tell which fix worked | One change, observe, iterate |
 | 4 | Treated `RetryableError` rate as the symptom, not the cause | "Increased `max_tries`" — masks upstream issue | Look at `details_truncated`; classify upstream cause first |
 | 5 | Added `try: ... except Exception: pass` to silence | Symptom hidden, not gone | Classify the exception, raise typed error per `16-` |
-| 6 | Logged the failing URL verbatim "for visibility" | Token / signed URL leak (P11) | `url_host` + `url_path_hash` only |
+| 6 | Logged the failing URL verbatim "for visibility" | Token / signed URL leak (P11) | `platform` / `host` only |
 | 7 | Bumped yt-dlp inside a live container with `pip install` | Drift; next deploy reverts | Update pin in image; rebuild; deploy |
 | 8 | Diagnosed using a fresh dev DB | "Can't reproduce"; prod has different data | Reproduce inside a prod-shaped environment (or read prod logs) |
 | 9 | Inferred the cause from a single log line | Wrong subsystem suspected | Use §3.4 / §3.5 to fetch the **whole** flow |
@@ -1270,54 +1289,54 @@ NL1='docker compose -f deploy/nl1/docker-compose.yml'
 NL2='docker compose -f deploy/nl2/docker-compose.yml'
 
 # A.1 Errors only
-$NL1 logs --since=15m --no-color bot | jq -c 'select(.level=="error")'
+$NL1 logs --no-log-prefix --since=15m --no-color bot | jq -c 'select(.level=="error")'
 
 # A.2 By request_id
-$NL1 logs --no-color --since=1h bot \
+$NL1 logs --no-log-prefix --no-color --since=1h bot \
   | jq -c 'select(.request_id == "<id>")'
 
 # A.3 By job_id (across worker + bot)
 for s in single nl1 nl2; do
   test -f deploy/$s/.env || continue
-  docker compose -f deploy/$s/docker-compose.yml logs --no-color --since=2h \
+  docker compose -f deploy/$s/docker-compose.yml logs --no-log-prefix --no-color --since=2h \
     | jq -c 'select(.job_id == "<id>")'
 done
 
 # A.4 Sorted timeline of one flow
-$NL2 logs --no-color --since=2h worker \
+$NL2 logs --no-log-prefix --no-color --since=2h worker \
   | jq -c 'select(.job_id == "<id>")' \
   | jq -s 'sort_by(.timestamp) | .[]'
 
 # A.5 Top error_class
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -r 'select(.error_class) | .error_class' \
   | sort | uniq -c | sort -rn | head
 
 # A.6 Failures grouped by provider
-$NL2 logs --since=1h --no-color worker \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
   | jq -c 'select(.event | test("classified_error"))' \
   | jq -r '"\(.provider) \(.error_class)"' \
   | sort | uniq -c | sort -rn
 
 # A.7 Per-minute event count
-$NL2 logs --since=1h --no-color worker \
-  | jq -r 'select(.event=="worker_job_done") | .timestamp[0:16]' \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
+  | jq -r 'select(.event=="job_done") | .timestamp[0:16]' \
   | sort | uniq -c
 
 # A.8 P50/P95/Max duration
-$NL2 logs --since=1h --no-color worker \
-  | jq -r 'select(.event=="worker_job_done") | .duration_ms' \
+$NL2 logs --no-log-prefix --since=1h --no-color worker \
+  | jq -r 'select(.event=="job_done") | .total_seconds' \
   | sort -n | awk '{a[NR]=$1} END{
       print "p50",a[int(NR*0.5)]; print "p95",a[int(NR*0.95)]; print "max",a[NR]
     }'
 
 # A.9 Top users by submission count
-$NL1 logs --since=1h --no-color bot \
-  | jq -r 'select(.event=="bot_url_submitted") | .user_id' \
+$NL1 logs --no-log-prefix --since=1h --no-color bot \
+  | jq -r 'select(.event=="update_received") | .user_id' \
   | sort | uniq -c | sort -rn | head
 
 # A.10 Anything WITHOUT a request_id (correlation gaps)
-$NL1 logs --since=1h --no-color bot \
+$NL1 logs --no-log-prefix --since=1h --no-color bot \
   | jq -c 'select((.request_id == null) and (.level=="info" or .level=="warning"))'
 ```
 
@@ -1396,21 +1415,21 @@ The shortest path from symptom to evidence. One line per symptom.
 | Symptom | First command |
 |---|---|
 | Bot silent | `docker exec dwtgbot_bot curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/getMe"` |
-| Bot 'analyzing' forever | `$NL1 logs --since=10m bot \| jq -c 'select(.event \| test("classified_error"))'` |
+| Bot 'analyzing' forever | `$NL1 logs --no-log-prefix --since=10m bot \| jq -c 'select(.event \| test("classified_error"))'` |
 | Click → nothing | `docker exec dwtgbot_redis redis-cli -a "$REDIS_PASSWORD" ZCARD arq:queue` |
-| Worker silent | `$NL2 ps worker; $NL2 logs --tail=200 worker` |
+| Worker silent | `$NL2 ps worker; $NL2 logs --no-log-prefix --tail=200 worker` |
 | Worker started, never finishes | `docker exec dwtgbot_worker pgrep -af 'yt-dlp\|ffmpeg'` |
 | One platform broken | `docker exec dwtgbot_worker yt-dlp -j --no-warnings '<url>' \| tail -30` |
 | All platforms broken | `docker exec dwtgbot_worker which yt-dlp ffmpeg && yt-dlp --version` |
-| Link 502/504/403 | `$NL2 logs nginx \| tail -40 ; $NL2 logs api \| tail -40` |
+| Link 502/504/403 | `$NL2 logs --no-log-prefix nginx \| tail -40 ; $NL2 logs --no-log-prefix api \| tail -40` |
 | Link 410 unexpected | `psql … 'SELECT expires_at, downloads_count, max_downloads FROM temp_links WHERE token=…'` |
 | TLS warning in browser | `echo \| openssl s_client -connect media.example.com:443 -servername media.example.com 2>/dev/null \| openssl x509 -noout -dates` |
 | Disk full warning | `df -h /var/lib/dwtgbot ; du -sh /var/lib/dwtgbot/storage/jobs/* \| sort -h \| tail` |
-| Queue keeps growing | `$NL2 logs --since=10m worker \| grep -c worker_job_done` |
-| Slow downloads | `$NL2 logs --since=30m worker \| jq -c 'select(.event=="worker_job_done")\|{job_id,duration_ms}' \| jq -s 'sort_by(.duration_ms)\|reverse\|.[0:10]'` |
+| Queue keeps growing | `$NL2 logs --no-log-prefix --since=10m worker \| grep -c job_done` |
+| Slow downloads | `$NL2 logs --no-log-prefix --since=30m worker \| jq -c 'select(.event=="job_done")\|{job_id,total_seconds}' \| jq -s 'sort_by(.total_seconds)\|reverse\|.[0:10]'` |
 | Telegram 401 | `docker exec dwtgbot_bot curl -fsS https://api.telegram.org/bot${BOT_TOKEN}/getMe \| jq` |
 | Migration error | `docker compose -f deploy/nl1/docker-compose.yml run --rm migrate alembic upgrade head` (single: `-f deploy/single/docker-compose.yml`) |
-| Cleanup not running | `$NL2 logs --since=24h cleanup \| jq -c 'select(.event=="cleanup_done")' \| tail` |
+| Cleanup not running | `$NL2 logs --no-log-prefix --since=24h cleanup \| jq -c 'select(.event=="temp_link_files_removed")' \| tail` |
 | Backup not fresh | `ls -laht /var/backups/dwtgbot/*.sql.gz \| head` |
 | Container restart loop | `docker inspect <c> -f '{{.State.OOMKilled}} {{.RestartCount}}'` |
 | "Worked yesterday" regression | `git log --oneline --since=48h ; for c in dwtgbot_bot dwtgbot_worker; do docker inspect "$c" -f "{{.Name}} {{.Image}}"; done` |

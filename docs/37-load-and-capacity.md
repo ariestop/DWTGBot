@@ -47,7 +47,7 @@ Where:
 | Symbol | What it is | Where it comes from |
 |---|---|---|
 | `WORKER_CONCURRENCY` | concurrent jobs per worker process | `deploy/nl2/.env` ([`13-`](13-config-and-env.md)) |
-| `avg_job_seconds` | avg total seconds from `job_created` → `job_completed` | observed (A4 / A5 in [`35-`](35-metrics-and-slo.md)) |
+| `avg_job_seconds` | avg total seconds from `job_enqueued` → `job_done` | observed (A4 / A5 in [`35-`](35-metrics-and-slo.md)) |
 
 This isn't theoretical — it's **the only number that matters**. If
 you remember nothing else from this doc, remember the equation.
@@ -386,15 +386,14 @@ time:
 | post-WORKER=4 | YYYY-MM-DD | Small | c=4 | 240 | 14 s | 78 s | 0 | concurrency = ceiling |
 | storage-stress | YYYY-MM-DD | 1 GB files | c=2 | 30 | n/a | 320 s | 2 (timeout) | disk write |
 
-Keep this in `docs/tests/load-history.md` (operator-maintained; not
-shipped). Refer to it when you next consider scaling.
+Ведите эту таблицу у себя (файла в репозитории нет). Refer to it when you next consider scaling.
 
 ### 6.5 Spotting a real-world bottleneck
 
 | Symptom | Likely bottleneck | Confirmation |
 |---|---|---|
 | `WORKER_CONCURRENCY` doubles, jobs/h doesn't | upstream throttle | A4/A5 p95 doesn't drop; per-domain L4 deny rate ([`36-`](36-rate-limiting.md)) up |
-| Queue stays empty but A4/A5 climbs | per-job slowdown (ffmpeg / disk / single-threaded provider) | `pidstat`, `iostat -xz 1`, ffmpeg vs download time split in `event=job_completed` |
+| Queue stays empty but A4/A5 climbs | per-job slowdown (ffmpeg / disk / single-threaded provider) | `pidstat`, `iostat -xz 1`, ffmpeg vs download time split in `event=job_done` |
 | Queue backs up but workers idle | bot can't enqueue (PTB rate-limit / DB slowness) | A1 falls; worker active < concurrency |
 | Disk fills before jobs/h ceiling | TTL too long for current rate | §2.2 math; tighten TTL |
 | Egress saturates before everything else | NIC limit | host `ifstat` 1 — sustained ≥ 80 % of NIC capacity |
@@ -575,7 +574,7 @@ Avg jobs/hour:                  ____
 Peak jobs/hour (max 5-m window):____
 Avg file size:                  ____ MiB
 % files > 50 MB:                ____
-Avg job seconds (job_completed):____ s
+Avg job seconds (job_done):____ s
 WORKER_CONCURRENCY today:       ____
 
 === Compute ===

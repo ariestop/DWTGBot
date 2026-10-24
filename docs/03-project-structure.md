@@ -295,9 +295,9 @@ app/utils/
 **Purpose:** ad-hoc operator-facing CLIs. Each script must be runnable as
 `python -m app.tools.<name>`.
 
-Examples (planned):
-- `app/tools/requeue.py` — re-enqueue a stuck job by ID.
-- `app/tools/list_jobs.py` — query and pretty-print recent jobs.
+Папки пока нет: создайте её вместе с первым инструментом. Идеи:
+`requeue` (повторно поставить зависшую задачу по ID), `list_jobs`
+(последние задачи из БД).
 
 These exist outside production runtime; they may import from anywhere.
 

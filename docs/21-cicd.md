@@ -263,12 +263,14 @@ You can reproduce all of CI locally:
 
 ```bash
 # Core CI jobs:
-ruff format --check . && ruff check . && mypy app && pytest -m "not integration"
-pytest -m "integration" --no-cov
+ruff format --check . && ruff check . && mypy app && pytest
+# integration: без этих переменных тесты пропускаются (skip), а не падают
+DWTGBOT_TEST_POSTGRES_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/dwtgbot_test \
+DWTGBOT_TEST_REDIS_URL=redis://127.0.0.1:6379/15 pytest app/tests/integration --no-cov
 shellcheck deploy/scripts/*.sh
 ```
 
-Or via `make ci` (if defined).
+Или по частям: `make lint`, `make typecheck`, `make test`.
 
 ---
 
@@ -767,7 +769,7 @@ Confirm each image tag matches the ref you intended to deploy.
 ```bash
 SINCE=10m
 for s in nl1 nl2; do
-  docker compose -f deploy/$s/docker-compose.yml logs --since=$SINCE --no-color \
+  docker compose -f deploy/$s/docker-compose.yml logs --no-log-prefix --since=$SINCE --no-color \
     | jq -c 'select(.level=="error" or .level=="warning")' 2>/dev/null \
     | head -30
 done
@@ -799,7 +801,7 @@ The two newest rows should be `completed`.
 | `docker inspect ... -f '{{.RestartCount}}'` | unchanged from pre-deploy (no restart loops) |
 | Top `error_class` histogram (`31-` Appendix A.5) | no new entries |
 | Queue depth (`ZCARD arq:queue`) | trending toward 0 |
-| `worker_job_done` rate | matches pre-deploy baseline |
+| `job_done` rate | matches pre-deploy baseline |
 | `https://.../healthz` | returns `{"status":"ok"}` |
 | TLS expiry | unchanged (>30 days) |
 
@@ -817,7 +819,7 @@ Per-stage table of common failures, how they manifest, and what to do. Always re
 |---|---|---|---|
 | `lint` | `ruff check` errors | new code violates a rule | run `ruff check . --fix` locally; commit |
 | `lint` | `ruff format --check` non-zero | unformatted file | run `ruff format .`; commit |
-| `typecheck` | `mypy` errors | new code introduced a type regression | fix types in code; do **not** add `# type: ignore` blanket — see `26-cursor-rules.md` |
+| `typecheck` | `mypy` errors | new code introduced a type regression | fix types in code; do **not** add `# type: ignore` blanket |
 | `tests` | one or more pytest failures | broken behaviour | reproduce locally with the same env block (§3.3); fix |
 | `tests` | timeouts / flakes | test reads network or filesystem state | mark `@pytest.mark.integration` if appropriate, or fix the test |
 | `shell-lint` | shellcheck warnings | new bash issues | fix in `deploy/scripts/`; SC1091 for sourced files needs `# shellcheck source=…` annotation |
@@ -1098,4 +1100,4 @@ Print this. Pin it near the deploy button.
 - **Canary deploy**: split worker concurrency across two image tags briefly.
 
 Each of these crosses an ADR-0005 assumption — propose in
-`26-cursor-rules.md` and add an ADR before implementing.
+an ADR (skill `plan-change`) before implementing.
