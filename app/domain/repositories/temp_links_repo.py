@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from app.domain.entities.temp_link import TempLink
 
@@ -19,8 +20,15 @@ class TempLinksRepository(ABC):
         """Mark expired links as inactive. Returns number of rows touched."""
 
     @abstractmethod
-    async def list_inactive_with_files(self, limit: int = 500) -> list[TempLink]:
-        """Return inactive/expired links that may still have files on disk."""
+    async def list_inactive_with_files(
+        self, *, expired_after: datetime, limit: int = 500
+    ) -> list[TempLink]:
+        """Inactive links that expired after ``expired_after``, newest first.
+
+        Rows are never deleted or marked once their file is gone, so an
+        unbounded query would return the same oldest rows every cycle.
+        Older links are covered by the cleanup worker's job-dir sweep.
+        """
 
     @abstractmethod
     async def try_register_use(self, token: str) -> TempLink | None:

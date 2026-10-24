@@ -45,7 +45,9 @@ class _AtomicRepo(TempLinksRepository):
     async def deactivate_expired(self) -> int:  # pragma: no cover
         return 0
 
-    async def list_inactive_with_files(self, limit: int = 500):  # pragma: no cover
+    async def list_inactive_with_files(
+        self, *, expired_after, limit: int = 500
+    ):  # pragma: no cover
         return []
 
     async def try_register_use(self, token: str) -> TempLink | None:

@@ -185,3 +185,23 @@ async def test_deactivate_expired_touches_only_expired_active_links(sessionmaker
     live = await links.get_by_token("live")
     assert expired is not None and expired.is_active is False
     assert live is not None and live.is_active is True
+
+
+async def test_list_inactive_with_files_returns_recent_links_newest_first(sessionmaker) -> None:
+    # Rows are never deleted, so without the window the sweep would keep
+    # getting the same oldest 500 rows whose files are long gone (R6).
+    jobs = SqlAlchemyJobsRepository(sessionmaker)
+    links = SqlAlchemyTempLinksRepository(sessionmaker)
+    job_id = await _job(jobs, user_id=4, status=JobStatus.DONE)
+    await _link(links, job_id, token="ancient", expires_in=timedelta(days=-3))
+    await _link(links, job_id, token="older", expires_in=timedelta(hours=-5))
+    await _link(links, job_id, token="newer", expires_in=timedelta(minutes=-5))
+    await _link(links, job_id, token="live", expires_in=timedelta(hours=1))
+    await links.deactivate_expired()
+
+    horizon = datetime.now(UTC) - timedelta(days=1)
+    found = await links.list_inactive_with_files(expired_after=horizon, limit=500)
+    assert [link.token for link in found] == ["newer", "older"]
+
+    capped = await links.list_inactive_with_files(expired_after=horizon, limit=1)
+    assert [link.token for link in capped] == ["newer"]

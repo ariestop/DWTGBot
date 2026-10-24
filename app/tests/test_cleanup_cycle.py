@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from app.domain.entities.temp_link import TempLink
-from app.workers.cleanup_worker import _run_cycle
+from app.workers.cleanup_worker import _run_cycle, job_dir_sweep_age
 
 
 def _link(link_id: int, path: Path) -> TempLink:
@@ -28,13 +29,17 @@ class _FakeTempLinks:
     def __init__(self, inactive: list[TempLink]) -> None:
         self.inactive = inactive
         self.deactivated_calls = 0
+        self.expired_after: list[datetime] = []
 
     async def deactivate_expired(self) -> int:
         self.deactivated_calls += 1
         return 2
 
-    async def list_inactive_with_files(self, limit: int = 500) -> list[TempLink]:
+    async def list_inactive_with_files(
+        self, *, expired_after: datetime, limit: int = 500
+    ) -> list[TempLink]:
         assert limit == 500
+        self.expired_after.append(expired_after)
         return self.inactive
 
 
@@ -113,7 +118,9 @@ async def test_cycle_skips_a_failed_removal_and_runs_every_step(tmp_path: Path) 
         job_metrics=_FakeMetrics(),
     )
 
-    await _run_cycle(composition, orphan_age_seconds=5400, pending_age_seconds=14400)  # type: ignore[arg-type]
+    await _run_cycle(
+        composition, orphan_age_seconds=5400, pending_age_seconds=14400, temp_link_ttl_seconds=3600
+    )  # type: ignore[arg-type]
 
     # The PermissionError on b.mp4 does not stop c.mp4; a file that is
     # already gone is not touched.
@@ -123,6 +130,10 @@ async def test_cycle_skips_a_failed_removal_and_runs_every_step(tmp_path: Path) 
     assert composition.media_cache_repo.calls == 1
     assert composition.jobs_repo.reap_ages == [5400]
     assert composition.jobs_repo.pending_reap_ages == [14400]
+    # Links that expired before the job-dir sweep horizon are left to it.
+    (expired_after,) = composition.temp_links_repo.expired_after
+    expected = datetime.now(UTC) - timedelta(days=1)
+    assert abs((expired_after - expected).total_seconds()) < 60
     # No storage/jobs dir → orphan sweep removes nothing, no metric bump.
     assert composition.job_metrics.orphan_dirs == []
 
@@ -144,5 +155,55 @@ async def test_cycle_propagates_repository_errors(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConnectionError):
-        await _run_cycle(composition, orphan_age_seconds=5400, pending_age_seconds=14400)  # type: ignore[arg-type]
+        await _run_cycle(
+            composition,
+            orphan_age_seconds=5400,
+            pending_age_seconds=14400,
+            temp_link_ttl_seconds=3600,
+        )  # type: ignore[arg-type]
     assert composition.media_cache_repo.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("ttl", "expected"),
+    [(3_600, 86_400), (86_400, 90_000), (7 * 86_400, 7 * 86_400 + 3_600)],
+)
+def test_job_dir_sweep_waits_for_the_longest_temp_link(ttl: int, expected: int) -> None:
+    # A DONE job's dir holds the file of its temp link; deleting it before
+    # the link expires turns the link into a 410 Gone.
+    assert job_dir_sweep_age(ttl) == expected
+
+
+@pytest.mark.asyncio
+async def test_job_dir_sweep_keeps_dirs_younger_than_the_link_ttl(tmp_path: Path) -> None:
+    jobs_dir = tmp_path / "jobs"
+    two_days_old = jobs_dir / "41"
+    two_days_old.mkdir(parents=True)
+    (two_days_old / "video.mp4").write_bytes(b"x")
+    stamp = (datetime.now(UTC) - timedelta(days=2)).timestamp()
+    os.utime(two_days_old, (stamp, stamp))
+
+    class _DirStorage(_FakeStorage):
+        def remove_path(self, path: Path) -> None:
+            self.removed.append(path)
+
+    def _composition() -> _FakeComposition:
+        return _FakeComposition(
+            temp_links_repo=_FakeTempLinks([]),
+            storage=_DirStorage(tmp_path, broken=set()),
+            media_cache_repo=_FakeMediaCache(),
+            jobs_repo=_FakeJobs(),
+            job_metrics=_FakeMetrics(),
+        )
+
+    week_ttl = _composition()
+    await _run_cycle(  # type: ignore[arg-type]
+        week_ttl, orphan_age_seconds=5400, pending_age_seconds=14400, temp_link_ttl_seconds=604_800
+    )
+    assert week_ttl.storage.removed == []
+
+    hour_ttl = _composition()
+    await _run_cycle(  # type: ignore[arg-type]
+        hour_ttl, orphan_age_seconds=5400, pending_age_seconds=14400, temp_link_ttl_seconds=3600
+    )
+    assert hour_ttl.storage.removed == [two_days_old]
