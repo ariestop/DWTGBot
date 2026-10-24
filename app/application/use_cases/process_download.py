@@ -340,11 +340,10 @@ class ProcessDownloadUseCase:
 
     def _record_done(self, outcome: DeliveredRecord, *, started_monotonic: float) -> None:
         # Duration first so the Histogram + the Counter land on the same
-        # scrape; then the status-change + log keep the events paired (P11).
+        # scrape; then job_done and the status change stay paired (P11).
         duration_seconds = time.monotonic() - started_monotonic
         size_class = file_size_class(outcome.file_size)
         self._metrics.observe_job_duration(file_size_class=size_class, seconds=duration_seconds)
-        self._metrics.inc_status_change(to=JobStatus.DONE, reason_class=ReasonClass.OK)
         _logger.info(
             "job_done",
             method=outcome.method.value,
@@ -352,11 +351,20 @@ class ProcessDownloadUseCase:
             total_seconds=round(duration_seconds, 3),
             file_size_class=size_class.value,
         )
+        self._emit_transition(JobStatus.PROCESSING, JobStatus.DONE, ReasonClass.OK)
+
+    def _emit_transition(self, previous: JobStatus, to: JobStatus, reason: ReasonClass) -> None:
+        """Metric + ``job_status_changed`` for a transition Postgres accepted.
+
+        Every status change ends here, after the write, so a Prometheus
+        scrape never counts a transition the database rejected.
+        """
+        self._metrics.inc_status_change(to=to, reason_class=reason)
         _logger.info(
             "job_status_changed",
-            from_=JobStatus.PROCESSING.value,
-            to=JobStatus.DONE.value,
-            reason_class=ReasonClass.OK.value,
+            from_=previous.value,
+            to=to.value,
+            reason_class=reason.value,
         )
 
     def _guard_replay(self, job: DownloadJob) -> bool:
@@ -445,17 +453,8 @@ class ProcessDownloadUseCase:
     async def _transition_to(
         self, job: DownloadJob, target: JobStatus, reason: ReasonClass
     ) -> DownloadJob | None:
-        """Mutate-persist-emit. Centralised so every status change goes
-        through one place that owns metric + log emission. The DB
-        update has to happen before the metric so a Prometheus scrape
-        racing the failure path can never observe a transition that
-        Postgres rejected (rare, but keeps the dashboard honest).
-
-        ``mark_processing`` is the only mutator we call from here for
-        now; ``mark_done`` / ``mark_failed`` carry extra payload and
-        are inlined in ``_run`` / ``_fail`` to avoid an awkward
-        signature.
-        """
+        """PENDING → PROCESSING. A conflict with a replayed task (the row
+        moved on meanwhile) ends the run quietly via ``_guard_replay``."""
         previous = job.status
         if target is JobStatus.PROCESSING:
             job.mark_processing()
@@ -471,13 +470,7 @@ class ProcessDownloadUseCase:
             if self._guard_replay(latest):
                 return None
             raise
-        self._metrics.inc_status_change(to=target, reason_class=reason)
-        _logger.info(
-            "job_status_changed",
-            from_=previous.value,
-            to=target.value,
-            reason_class=reason.value,
-        )
+        self._emit_transition(previous, target, reason)
         return job
 
     async def mark_terminally_failed(self, job_id: int, exc: BaseException) -> None:
@@ -522,26 +515,15 @@ class ProcessDownloadUseCase:
     ) -> None:
         previous = job.status
         job.mark_failed(error_repr)
-        try:
-            job = await self._jobs.update(job)
-        except JobConcurrentUpdateError:
-            latest = await self._jobs.get(job.id or 0)
-            if latest is not None and latest.status in (JobStatus.DONE, JobStatus.FAILED):
-                _logger.warning(
-                    "job_fail_conflict_ignored",
-                    job_id=job.id,
-                    attempted_status=job.status.value,
-                    current_status=latest.status.value,
-                )
-                return
-            raise
-        self._metrics.inc_status_change(to=JobStatus.FAILED, reason_class=reason)
-        _logger.info(
-            "job_status_changed",
-            from_=previous.value,
-            to=JobStatus.FAILED.value,
-            reason_class=reason.value,
+        saved = await self._save_unless_terminal(
+            job,
+            conflict_event="job_fail_conflict_ignored",
+            attempted_status=job.status.value,
         )
+        if saved is None:
+            return
+        job = saved
+        self._emit_transition(previous, JobStatus.FAILED, reason)
         if job.id is not None:
             try:
                 await self._reporter.fail(job_id=job.id, reason=user_text)
@@ -576,33 +558,38 @@ class ProcessDownloadUseCase:
         # instant-download-ux.md §4 PR 5 "cancel MVP".
         previous = job.status
         job.mark_failed("cancelled by user")
-        try:
-            job = await self._jobs.update(job)
-        except JobConcurrentUpdateError:
-            latest = await self._jobs.get(job.id or 0)
-            if latest is not None and latest.status in (JobStatus.DONE, JobStatus.FAILED):
-                _logger.warning(
-                    "job_cancel_conflict_ignored",
-                    job_id=job.id,
-                    current_status=latest.status.value,
-                )
-                return
-            raise
+        saved = await self._save_unless_terminal(job, conflict_event="job_cancel_conflict_ignored")
+        if saved is None:
+            return
+        job = saved
         # USER_ERROR is the right SLO bucket — cancellation is the
         # user's choice, not a service regression. Matches how
         # ``TooManyJobsError`` is classified in reason_class.py.
-        self._metrics.inc_status_change(to=JobStatus.FAILED, reason_class=ReasonClass.USER_ERROR)
-        _logger.info(
-            "job_status_changed",
-            from_=previous.value,
-            to=JobStatus.FAILED.value,
-            reason_class=ReasonClass.USER_ERROR.value,
-        )
+        self._emit_transition(previous, JobStatus.FAILED, ReasonClass.USER_ERROR)
         if self._cancellation is not None and job.id is not None:
             try:
                 await self._cancellation.clear(job_id=job.id)
             except Exception:  # pragma: no cover  defensive
                 _logger.exception("cancel_flag_clear_failed", job_id=job.id)
+
+    async def _save_unless_terminal(
+        self, job: DownloadJob, *, conflict_event: str, **log_fields: str
+    ) -> DownloadJob | None:
+        """Write ``job``; ``None`` when a concurrent writer already made
+        the row terminal (DONE / FAILED), any other conflict re-raises."""
+        try:
+            return await self._jobs.update(job)
+        except JobConcurrentUpdateError:
+            latest = await self._jobs.get(job.id or 0)
+            if latest is not None and latest.status in (JobStatus.DONE, JobStatus.FAILED):
+                _logger.warning(
+                    conflict_event,
+                    job_id=job.id,
+                    **log_fields,
+                    current_status=latest.status.value,
+                )
+                return None
+            raise
 
     async def _persist_done(self, job: DownloadJob) -> DownloadJob:
         try:
