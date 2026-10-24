@@ -19,6 +19,7 @@ from typing import Any
 
 from app.config import Settings
 from app.logging_config import get_logger
+from app.utils.redact import redact_urls
 
 _logger = get_logger(__name__)
 
@@ -70,6 +71,9 @@ def configure_sentry(settings: Settings, *, role: str) -> None:
             # it explicit so no one later reads the docs and flips
             # the default by accident.
             send_default_pii=False,
+            # Frame locals hold source URLs and request objects with the
+            # bot token; the SDK sends them by default (P11).
+            include_local_variables=False,
             attach_stacktrace=True,
             # The ``role`` shows up on every event as a first-class
             # tag, which is what most incident queries filter by.
@@ -96,6 +100,25 @@ def _tag_role(role: str) -> Any:
     def _before_send(event: Any, _hint: Any) -> Any:
         tags = event.setdefault("tags", {})
         tags.setdefault("role", role)
+        _redact_event(event)
         return event
 
     return _before_send
+
+
+def _redact_event(event: dict[str, Any]) -> None:
+    """Cut URLs in the texts Sentry would store (P11): the log message,
+    exception values and breadcrumb messages. Frame locals are not sent at
+    all (``include_local_variables=False``)."""
+    logentry = event.get("logentry") or {}
+    for key in ("message", "formatted"):
+        if isinstance(logentry.get(key), str):
+            logentry[key] = redact_urls(logentry[key])
+    if isinstance(event.get("message"), str):
+        event["message"] = redact_urls(event["message"])
+    for exc in (event.get("exception") or {}).get("values") or []:
+        if isinstance(exc.get("value"), str):
+            exc["value"] = redact_urls(exc["value"])
+    for crumb in (event.get("breadcrumbs") or {}).get("values") or []:
+        if isinstance(crumb.get("message"), str):
+            crumb["message"] = redact_urls(crumb["message"])

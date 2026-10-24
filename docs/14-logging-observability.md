@@ -246,6 +246,14 @@ If you don't have Loki/Datadog yet, `docker compose logs --since 1h` +
   Sentry when `SENTRY_DSN` is set). Log `platform` or `host` instead;
   `app/tests/test_no_urls_in_logs.py` rejects `url=` / `source_url=` /
   `thumbnail=`-style keys in logger calls.
+  Вторая линия защиты — процессор `redact_event_urls`
+  (`app/utils/redact.py`) последним в цепочке перед рендером: любой URL в
+  строковых полях (`error=str(exc)` с текстом ошибки yt-dlp, отрендеренный
+  traceback, строки httpx / PTB через stdlib) сокращается до
+  `scheme://host/…`. Так же Sentry в `before_send` обрабатывает message,
+  exception value и breadcrumbs; локальные переменные кадров в Sentry не
+  уходят (`include_local_variables=False`). Проверяет
+  `app/tests/test_redact_urls.py`.
 - **Raw HTTP request bodies / Telegram updates** in production. They can
   contain user-controlled content. Use DEBUG sparingly when diagnosing.
 
