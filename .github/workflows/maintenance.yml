@@ -7,6 +7,9 @@ name: Server maintenance
 #
 #   journald-setup  deploy/scripts/journald_setup.sh — journald retention
 #                   drop-in (30 days, <= 2G, >= 4G free) + restart
+#   docker-prune    deploy/scripts/docker_prune.sh — remove images no
+#                   container and no last-good release uses, and the
+#                   build cache
 
 on:
   workflow_dispatch:
@@ -21,7 +24,7 @@ on:
         description: "What to apply"
         type: choice
         required: true
-        options: [journald-setup]
+        options: [journald-setup, docker-prune]
         default: journald-setup
 
 concurrency:
@@ -54,6 +57,10 @@ jobs:
             journald-setup)
               files=(scripts/helpers.sh scripts/journald_setup.sh systemd/journald-dwtgbot.conf)
               entry=scripts/journald_setup.sh
+              ;;
+            docker-prune)
+              files=(scripts/helpers.sh scripts/docker_prune.sh)
+              entry=scripts/docker_prune.sh
               ;;
             *) echo "::error::unknown action ${ACTION}"; exit 1 ;;
           esac
