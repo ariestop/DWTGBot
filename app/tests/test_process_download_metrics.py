@@ -9,11 +9,14 @@ with the right ``reason_class``.
 
 from __future__ import annotations
 
+import pytest
+
 from app.application.use_cases.process_download import ProcessDownloadUseCase
 from app.config import get_settings
 from app.domain.entities.download_job import DownloadJob
 from app.domain.enums import JobStatus, Platform
 from app.domain.reason_class import ReasonClass
+from app.exceptions import JobConcurrentUpdateError
 
 
 class _FakeJobsRepo:
@@ -128,5 +131,64 @@ async def test_fail_emits_status_change_for_user_error() -> None:
     job = _make_job()
 
     await uc._fail(job, "bad url", "InvalidUrlError(...)", ReasonClass.USER_ERROR)
+
+    assert metrics.status_changes == [(JobStatus.FAILED, ReasonClass.USER_ERROR)]
+
+
+class _ConflictRepo(_FakeJobsRepo):
+    """The row changed under us: ``update`` loses, ``get`` shows ``current``."""
+
+    def __init__(self, current: JobStatus) -> None:
+        super().__init__()
+        self._current = current
+
+    async def update(self, job: DownloadJob) -> DownloadJob:
+        raise JobConcurrentUpdateError("stale status_version")
+
+    async def get(self, _id):
+        latest = _make_job()
+        latest.status = self._current
+        return latest
+
+
+def _conflicting_use_case(metrics: _RecordingMetrics, current: JobStatus) -> ProcessDownloadUseCase:
+    uc = _make_use_case(metrics)
+    uc._jobs = _ConflictRepo(current)  # type: ignore[assignment]
+    return uc
+
+
+@pytest.mark.parametrize("current", [JobStatus.DONE, JobStatus.FAILED])
+async def test_fail_after_a_concurrent_terminal_write_is_a_no_op(current: JobStatus) -> None:
+    metrics = _RecordingMetrics()
+    uc = _conflicting_use_case(metrics, current)
+
+    await uc._fail(_make_job(), "user msg", "repr", ReasonClass.PROVIDER_ERROR)
+
+    assert metrics.status_changes == []
+
+
+async def test_fail_conflict_with_a_live_row_re_raises() -> None:
+    metrics = _RecordingMetrics()
+    uc = _conflicting_use_case(metrics, JobStatus.PROCESSING)
+
+    with pytest.raises(JobConcurrentUpdateError):
+        await uc._fail(_make_job(), "user msg", "repr", ReasonClass.PROVIDER_ERROR)
+    assert metrics.status_changes == []
+
+
+async def test_cancel_after_a_concurrent_terminal_write_is_a_no_op() -> None:
+    metrics = _RecordingMetrics()
+    uc = _conflicting_use_case(metrics, JobStatus.DONE)
+
+    await uc._handle_cancellation(_make_job())
+
+    assert metrics.status_changes == []
+
+
+async def test_cancel_records_a_user_error_transition() -> None:
+    metrics = _RecordingMetrics()
+    uc = _make_use_case(metrics)
+
+    await uc._handle_cancellation(_make_job())
 
     assert metrics.status_changes == [(JobStatus.FAILED, ReasonClass.USER_ERROR)]
