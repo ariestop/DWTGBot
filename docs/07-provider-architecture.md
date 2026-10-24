@@ -36,7 +36,7 @@ flowchart TB
     P1 --> YDL[YtDlpRunner]
     P2 --> YDL
     Pn --> YDL
-    YDL -.thread pool.- ytdlp[(yt_dlp library)]
+    YDL -.thread pool / child process.- ytdlp[(yt_dlp library)]
     P1 --> ST[(LocalStorage)]
 ```
 
@@ -81,8 +81,9 @@ class BaseProvider(ABC):
   about large downloads.
 
 ### `download(url, option, *, target_dir)`
-- Async; all blocking work delegated to `YtDlpRunner` (which uses
-  `asyncio.to_thread`) or `asyncio.create_subprocess_exec` for ffmpeg.
+- Async; all blocking work delegated to `YtDlpRunner` (downloads run in
+  a child process, ADR-0014) or `asyncio.create_subprocess_exec` for ffmpeg.
+- `extra_opts` for a download must be JSON-serialisable: they cross a pipe.
 - `target_dir` is a fresh, job-specific subdirectory under `STORAGE_PATH`.
   The provider must write only inside it.
 - Returns a `DownloadResult` with absolute paths to all produced files.

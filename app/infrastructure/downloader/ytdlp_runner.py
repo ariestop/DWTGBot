@@ -1,10 +1,12 @@
 """
 Async wrapper around yt-dlp's ``YoutubeDL`` Python API.
 
-The library is synchronous, so we run heavy operations inside
-``asyncio.to_thread`` to avoid blocking the event loop. Errors are translated
-into the project's exception hierarchy so the upper layers can map them to
-user messages.
+The library is synchronous. Metadata calls (``extract_info``,
+``probe_size``) run inside ``asyncio.to_thread``; ``download`` runs in a
+child process (``ytdlp_child``, audit R16) so a timeout or a cancelled
+job can kill it, ffmpeg included. Errors are translated into the
+project's exception hierarchy so the upper layers can map them to user
+messages.
 
 L5 (audit fix): upstream throttling is short-circuited through a
 per-host :class:`RedisCircuitBreaker`. N consecutive throttle-shaped
@@ -21,9 +23,13 @@ Option builders live in ``ytdlp_opts``, outcome interpretation in
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
+import os
 import shutil
-import threading
-from collections.abc import Callable
+import signal
+import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,12 +48,7 @@ from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.infrastructure.downloader import ytdlp_opts
 from app.infrastructure.downloader.http_probe import head_content_length
 from app.infrastructure.downloader.mobile_compat import make_mobile_compatible
-from app.infrastructure.downloader.ytdlp_opts import (
-    YtDlpOpts,
-    host_of,
-    make_cancel_hook,
-    make_progress_hook,
-)
+from app.infrastructure.downloader.ytdlp_opts import YtDlpOpts, host_of
 from app.infrastructure.downloader.ytdlp_results import (
     classify_error,
     extract_known_size,
@@ -58,6 +59,14 @@ from app.logging_config import get_logger
 
 _logger = get_logger(__name__)
 
+CHILD_ARGV = (sys.executable, "-m", "app.infrastructure.downloader.ytdlp_child")
+# The directory holding the ``app`` package: ``-m`` resolves from here.
+_APP_ROOT = Path(__file__).resolve().parents[3]
+
+
+class _ChildFailedError(RuntimeError):
+    """The download process failed outside yt-dlp or died without an answer."""
+
 
 class YtDlpRunner:
     """Thin async facade over yt-dlp."""
@@ -67,9 +76,11 @@ class YtDlpRunner:
         settings: Settings,
         *,
         breaker: RedisCircuitBreaker | None = None,
+        child_argv: tuple[str, ...] = CHILD_ARGV,
     ) -> None:
         self._settings = settings
         self._breaker = breaker
+        self._child_argv = child_argv
 
     async def extract_info(
         self,
@@ -81,7 +92,7 @@ class YtDlpRunner:
         opts = self._finalize(ytdlp_opts.extract_opts(), extra_opts)
         return await self._guarded(
             url,
-            lambda: self._extract_sync(url, opts),
+            lambda: asyncio.to_thread(self._extract_sync, url, opts),
             unexpected_event="ytdlp_extract_unexpected",
             wrap_unexpected=lambda exc: ProviderError(f"yt-dlp failure: {exc}"),
         )
@@ -97,7 +108,7 @@ class YtDlpRunner:
         opts = self._finalize(ytdlp_opts.probe_opts(format_spec), extra_opts)
         result = await self._guarded(
             url,
-            lambda: self._extract_sync(url, opts),
+            lambda: asyncio.to_thread(self._extract_sync, url, opts),
             unexpected_event="ytdlp_probe_unexpected",
             wrap_unexpected=lambda exc: DownloadError(f"yt-dlp size probe failed: {exc}"),
         )
@@ -135,20 +146,15 @@ class YtDlpRunner:
     ) -> list[Path]:
         """Download the media. Returns list of resulting file paths in target_dir.
 
-        ``on_progress`` is invoked from yt-dlp's ``progress_hooks`` with
-        a float percent in [0.0, 100.0]. The callback runs inside the
-        ``asyncio.to_thread`` worker, NOT in the caller's event loop,
-        so it must be purely synchronous and thread-safe. Errors raised
-        by the callback are swallowed (yt-dlp has no recovery path for
-        hook failures and we do not want progress reporting to abort a
-        download). See ADR-0010 §2.2.
+        ``on_progress`` gets a float percent in [0.0, 100.0] as the
+        child process reports it. The callback runs in a worker thread
+        (``asyncio.to_thread``), NOT in the caller's event loop, so it
+        must be purely synchronous and thread-safe. Errors raised by the
+        callback are logged and swallowed: progress reporting must never
+        abort a download. See ADR-0010 §2.2.
         """
         target_dir.mkdir(parents=True, exist_ok=True)
         base = ytdlp_opts.download_opts(format_spec, target_dir)
-        cancelled = threading.Event()
-        base["progress_hooks"] = [make_cancel_hook(cancelled)]
-        if on_progress is not None:
-            base["progress_hooks"].insert(0, make_progress_hook(on_progress))
         # yt-dlp treats ``ffmpeg_location`` as an absolute path to the binary
         # or a directory containing it and verifies via ``os.path.exists``. A
         # bare name like ``"ffmpeg"`` therefore resolves to False and the
@@ -166,32 +172,26 @@ class YtDlpRunner:
             base["merge_output_format"] = merge_output_format
         if postprocessors:
             base["postprocessors"] = postprocessors
-        opts = self._finalize(base, extra_opts)
+        # The child adds the source guards: ``match_filter`` is a function.
+        opts = self._finalize(base, extra_opts, guards=False)
 
         # Audit fix A10: bound the yt-dlp call by
         # ``DOWNLOAD_TIMEOUT_SECONDS`` independently of arq's
         # ``JOB_TIMEOUT_SECONDS``. Without this, a hung/slow source
         # consumed the entire job budget (download + transcode + upload)
-        # and arq prematurely killed the worker mid-ffmpeg.
-        #
-        # ``asyncio.wait_for`` on ``to_thread`` cannot cancel the thread.
-        # On timeout we set ``cancelled``; the cancel hook then raises
-        # ``DownloadCancelled`` at the next progress frame and yt-dlp
-        # stops (audit R13). A slow download used to keep going after the
-        # job had failed; only a stalled socket ended it (socket_timeout).
-        # ffmpeg post-processing emits no progress frames and still runs
-        # to its end; a hard kill needs yt-dlp in a subprocess.
+        # and arq prematurely killed the worker mid-ffmpeg. On timeout,
+        # and when arq cancels the job, ``_run_child`` kills the child's
+        # process group (audit R16).
         download_timeout = self._settings.DOWNLOAD_TIMEOUT_SECONDS
         try:
             await self._guarded(
                 url,
-                lambda: self._download_sync(url, opts),
+                lambda: self._run_child(url, opts, on_progress),
                 unexpected_event="ytdlp_download_unexpected",
                 wrap_unexpected=lambda exc: DownloadError(f"yt-dlp download failed: {exc}"),
                 timeout_s=download_timeout,
             )
         except TimeoutError as exc:
-            cancelled.set()
             _logger.warning("ytdlp_download_timeout", host=host_of(url), timeout_s=download_timeout)
             raise DownloadTimeoutError(f"yt-dlp timed out after {download_timeout}s") from exc
 
@@ -203,24 +203,75 @@ class YtDlpRunner:
             )
         return files
 
-    def _finalize(self, opts: YtDlpOpts, extra_opts: dict[str, Any] | None) -> YtDlpOpts:
+    def _finalize(
+        self, opts: YtDlpOpts, extra_opts: dict[str, Any] | None, *, guards: bool = True
+    ) -> YtDlpOpts:
         """Source guards → provider overrides → proxy, in that order."""
-        ytdlp_opts.apply_source_guards(opts)
+        if guards:
+            ytdlp_opts.apply_source_guards(opts)
         if extra_opts:
             opts.update(extra_opts)
         ytdlp_opts.apply_proxy(opts, self._settings.HTTPS_PROXY_URL)
         return opts
 
+    async def _run_child(
+        self,
+        url: str,
+        opts: YtDlpOpts,
+        on_progress: Callable[[float], None] | None,
+    ) -> None:
+        """Run one download in ``ytdlp_child``; kill its group if we stop early.
+
+        Raises ``YtDlpDownloadError`` with the child's message so
+        :meth:`_guarded` classifies it as before.
+        """
+        request = json.dumps({"url": url, "opts": opts}).encode()
+        proc = await asyncio.create_subprocess_exec(
+            *self._child_argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            cwd=_APP_ROOT,
+            start_new_session=True,
+            # yt-dlp error messages can be long; the default is 64 KiB.
+            limit=1 << 20,
+        )
+        outcome: dict[str, Any] = {}
+        try:
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(request)
+            await proc.stdin.drain()
+            proc.stdin.close()
+            async for line in proc.stdout:
+                message = _parse_line(line)
+                if "progress" in message:
+                    if on_progress is not None:
+                        await _report_progress(on_progress, message["progress"])
+                elif message:
+                    outcome = message
+            await proc.wait()
+        finally:
+            if proc.returncode is None:
+                # Timeout or cancelled job: yt-dlp and its ffmpeg go too.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                await proc.wait()
+        if outcome.get("ok") is True:
+            return
+        if outcome.get("error") == "ytdlp":
+            raise YtDlpDownloadError(str(outcome.get("message", "")))
+        detail = outcome.get("message") or f"exit code {proc.returncode}, no result"
+        raise _ChildFailedError(str(detail))
+
     async def _guarded[T](
         self,
         url: str,
-        call: Callable[[], T],
+        call: Callable[[], Awaitable[T]],
         *,
         unexpected_event: str,
         wrap_unexpected: Callable[[Exception], AppError],
         timeout_s: float | None = None,
     ) -> T:
-        """Run a blocking yt-dlp call with circuit breaker and error mapping.
+        """Await a yt-dlp call with circuit breaker and error mapping.
 
         ``TimeoutError`` (only possible with ``timeout_s``) propagates
         unchanged so the caller can map it to its own timeout error.
@@ -228,7 +279,7 @@ class YtDlpRunner:
         host = host_of(url)
         await self._trip_if_open(host)
         try:
-            pending = asyncio.to_thread(call)
+            pending = call()
             if timeout_s is None:
                 result = await pending
             else:
@@ -271,10 +322,23 @@ class YtDlpRunner:
             return ydl.sanitize_info(ydl.extract_info(url, download=False))
 
     @staticmethod
-    def _download_sync(url: str, opts: YtDlpOpts) -> None:
-        with YoutubeDL(opts) as ydl:
-            ydl.download([url])
-
-    @staticmethod
     def _classify(exc: YtDlpDownloadError) -> ProviderError | DownloadError:
         return classify_error(exc)
+
+
+def _parse_line(line: bytes) -> dict[str, Any]:
+    """One protocol line; anything that is not a JSON object reads as ``{}``."""
+    try:
+        message = json.loads(line)
+    except ValueError:
+        return {}
+    return message if isinstance(message, dict) else {}
+
+
+async def _report_progress(on_progress: Callable[[float], None], percent: object) -> None:
+    if not isinstance(percent, int | float):
+        return
+    try:
+        await asyncio.to_thread(on_progress, float(percent))
+    except Exception:  # pragma: no cover  defensive
+        _logger.exception("ytdlp_progress_hook_error")
