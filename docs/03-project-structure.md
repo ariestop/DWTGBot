@@ -127,7 +127,7 @@ app/application/
 ├── ports/               # Порты к адаптерам (Protocol), ADR-0012
 │   ├── media_sender.py  # MediaSender + DTO InlineKeyboard / InlineButton
 │   ├── media_storage.py # MediaStorage
-│   ├── progress_channel.py   # Redis-ключи side-channel прогресса (контракт worker ↔ bot)
+│   ├── progress_channel.py   # Redis-ключи side-channel прогресса + порт ProgressFeed (контракт worker ↔ bot)
 │   └── progress_reporter.py  # ProgressReporter + NoopProgressReporter
 ├── services/            # Service protocols (Protocol/ABC)
 │   ├── delivery_service.py
@@ -164,7 +164,7 @@ service protocols. Everything that talks to the outside world.
 **Subfolders:**
 ```
 app/infrastructure/
-├── cache/                # Redis client + RedisRequestStateStore
+├── cache/                # Redis client + RedisRequestStateStore, RedisProgressFeed
 ├── db/                   # SQLAlchemy: base, session, models, repositories impl
 │   ├── repositories/
 │   ├── base.py
@@ -233,6 +233,9 @@ app/bot/
 **May import from:** `app.application.*` (use cases + services as protocols),
 `app.domain.*` (enums, DTOs), `app.utils.*`. **Must not** import
 `app.infrastructure.*`.
+Drivers (`redis`, `sqlalchemy`, `asyncpg`, `arq`, `yt_dlp`) are off
+limits too, here and in `app/api/` and `app/workers/`: reach them through a
+port (`app/tests/test_layering.py` checks this).
 
 ### 2.5 `app/api/`
 

@@ -26,6 +26,7 @@ from app.bot.services.progress_updater import (
 )
 from app.config import get_settings
 from app.domain.enums import ProgressStage
+from app.infrastructure.cache.redis_progress_feed import RedisProgressFeed
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -97,7 +98,7 @@ class _FakeBot:
 def _make_updater() -> tuple[ProgressUpdater, _FakeRedis, _FakeBot]:
     redis = _FakeRedis()
     settings = get_settings()
-    updater = ProgressUpdater(settings=settings, redis=redis)  # type: ignore[arg-type]
+    updater = ProgressUpdater(settings=settings, feed=RedisProgressFeed(redis))  # type: ignore[arg-type]
     bot = _FakeBot()
     updater._bot = bot  # type: ignore[attr-defined]
     return updater, redis, bot

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import text
 
 from app.composition import ApiComposition
 from app.config import Settings
@@ -44,15 +43,14 @@ async def readyz(
     checks: dict[str, str] = {}
 
     try:
-        async with composition.core.engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        await composition.core.ping_postgres()
         checks["postgres"] = "ok"
     except Exception:
         _logger.exception("readyz_check_failed", check="postgres")
         checks["postgres"] = "fail"
 
     try:
-        pong = await composition.core.redis.ping()
+        pong = await composition.core.ping_redis()
         checks["redis"] = "ok" if pong else "fail"
     except Exception:
         _logger.exception("readyz_check_failed", check="redis")

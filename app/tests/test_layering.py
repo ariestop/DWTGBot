@@ -59,3 +59,22 @@ def test_inner_layer_imports_only_stdlib_and_inner_modules(
     layer: str, extra_forbidden: tuple[str, ...]
 ) -> None:
     assert _violations(layer, extra_forbidden) == []
+
+
+# Outer layers (docs/03 §7: bot, api, workers <- application, domain,
+# utils) may use their own frameworks (telegram, fastapi) but reach
+# storage, queues and yt-dlp only through ports wired in
+# app/composition (audit R15). Entry points (app/main_*.py) are wiring
+# and stay outside this check.
+_DRIVERS = ("redis", "sqlalchemy", "asyncpg", "arq", "yt_dlp", "app.infrastructure")
+
+
+@pytest.mark.parametrize("layer", ["bot", "api", "workers"])
+def test_outer_layers_reach_drivers_only_through_ports(layer: str) -> None:
+    problems = [
+        f"{path.relative_to(_APP.parent)}:{lineno} imports {module}"
+        for path in sorted((_APP / layer).rglob("*.py"))
+        for lineno, module in _imports(path)
+        if any(module == d or module.startswith(d + ".") for d in _DRIVERS)
+    ]
+    assert problems == []

@@ -28,7 +28,8 @@ Failure policy
 --------------
 Every Telegram edit / delete is wrapped: the progress UI is strictly
 best-effort and must never propagate an error back to the main flow.
-Redis errors in the pubsub loop trigger a short backoff + reconnect.
+Feed errors (Redis unreachable) in the pubsub loop trigger a short
+backoff + reconnect.
 ``RetryAfter`` is swallowed — the next publish cycle will re-apply fresh
 progress, so a single dropped edit costs at most one debounce window.
 """
@@ -39,25 +40,19 @@ import asyncio
 import contextlib
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
-from redis.exceptions import RedisError
 from telegram import Bot
 from telegram.error import BadRequest, RetryAfter, TelegramError
 
 from app.application.ports.progress_channel import (
-    EVENTS_CHANNEL,
-    PROGRESS_META_KEY_PREFIX,
-    progress_key,
-    progress_meta_key,
+    ProgressFeed,
+    ProgressFeedError,
+    ProgressSubscription,
 )
 from app.bot.services.progress_caption import STALE_CAPTION, render_caption
 from app.config import Settings
 from app.domain.enums import ProgressStage
 from app.logging_config import get_logger
-
-if TYPE_CHECKING:
-    from redis.asyncio import Redis
 
 _logger = get_logger(__name__)
 
@@ -70,27 +65,6 @@ _TOMBSTONE_TTL_SEC = 60.0
 # Terminal-caption hold before delete: gives the user a brief glance at
 # "Готово" / "Отменено" before the placeholder disappears.
 _TERMINAL_HOLD_SEC = 2.0
-
-
-def _bytes_to_str(value: object) -> str | None:
-    """Decode a Redis field value regardless of ``decode_responses`` mode."""
-    if value is None:
-        return None
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value)
-
-
-def _get_field(mapping: dict, key: str) -> str | None:
-    """Extract ``key`` from a Redis hash reply that may key by ``str`` or ``bytes``."""
-    if not mapping:
-        return None
-    if key in mapping:
-        return _bytes_to_str(mapping[key])
-    encoded = key.encode("utf-8")
-    if encoded in mapping:
-        return _bytes_to_str(mapping[encoded])
-    return None
 
 
 @dataclass(slots=True)
@@ -110,9 +84,9 @@ class _ActiveJob:
     terminated: bool = False
 
     @classmethod
-    def from_meta(cls, job_id: int, meta: dict) -> _ActiveJob | None:
-        chat_id = _get_field(meta, "chat_id")
-        message_id = _get_field(meta, "message_id")
+    def from_meta(cls, job_id: int, meta: dict[str, str]) -> _ActiveJob | None:
+        chat_id = meta.get("chat_id")
+        message_id = meta.get("message_id")
         if chat_id is None or message_id is None:
             return None
         try:
@@ -120,7 +94,7 @@ class _ActiveJob:
             message_id_int = int(message_id)
         except (TypeError, ValueError):
             return None
-        has_photo = _get_field(meta, "thumbnail_url") is not None
+        has_photo = meta.get("thumbnail_url") is not None
         return cls(
             job_id=job_id,
             chat_id=chat_id_int,
@@ -130,13 +104,13 @@ class _ActiveJob:
 
 
 class ProgressUpdater:
-    """Asyncio-driven consumer of the Redis progress side-channel."""
+    """Asyncio-driven consumer of the progress side-channel (``ProgressFeed``)."""
 
     __slots__ = (
         "_active",
         "_bot",
+        "_feed",
         "_pubsub_task",
-        "_redis",
         "_running",
         "_settings",
         "_stop_event",
@@ -145,9 +119,9 @@ class ProgressUpdater:
         "last_iteration_at",
     )
 
-    def __init__(self, *, settings: Settings, redis: Redis) -> None:
+    def __init__(self, *, settings: Settings, feed: ProgressFeed) -> None:
         self._settings = settings
-        self._redis = redis
+        self._feed = feed
         self._bot: Bot | None = None
         self._pubsub_task: asyncio.Task[None] | None = None
         self._watchdog_task: asyncio.Task[None] | None = None
@@ -194,29 +168,12 @@ class ProgressUpdater:
 
     async def _recover_active_jobs(self) -> None:
         try:
-            async for key in self._redis.scan_iter(
-                match=f"{PROGRESS_META_KEY_PREFIX}*",
-                count=100,
-            ):
-                key_text = _bytes_to_str(key)
-                if key_text is None:
-                    continue
-                try:
-                    job_id = int(key_text.split(":", 1)[1])
-                except (IndexError, ValueError):
-                    continue
-                try:
-                    meta = await self._redis.hgetall(key)
-                except RedisError:
-                    _logger.warning("progress_recovery_read_failed", key=key_text)
-                    continue
-                if not meta:
-                    continue
+            async for job_id, meta in self._feed.placeholders():
                 job = _ActiveJob.from_meta(job_id, meta)
                 if job is None:
                     continue
                 self._active[job_id] = job
-        except RedisError:
+        except ProgressFeedError:
             _logger.exception("progress_recovery_scan_failed")
 
     # ---- pubsub loop ------------------------------------------------------
@@ -225,19 +182,15 @@ class ProgressUpdater:
         backoff = 1.0
         while not self._stop_event.is_set():
             try:
-                pubsub = self._redis.pubsub()
+                subscription = await self._feed.subscribe()
                 try:
-                    await pubsub.subscribe(EVENTS_CHANNEL)
                     backoff = 1.0
-                    await self._consume_pubsub(pubsub)
+                    await self._consume_pubsub(subscription)
                 finally:
-                    with contextlib.suppress(Exception):
-                        await pubsub.unsubscribe(EVENTS_CHANNEL)
-                    with contextlib.suppress(Exception):
-                        await pubsub.close()
+                    await subscription.close()
             except asyncio.CancelledError:
                 raise
-            except (RedisError, OSError):
+            except ProgressFeedError:
                 _logger.warning("progress_pubsub_reconnect", backoff_s=round(backoff, 2))
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
@@ -246,27 +199,13 @@ class ProgressUpdater:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
 
-    async def _consume_pubsub(self, pubsub: object) -> None:
-        # ``get_message`` lets us honour ``_stop_event`` promptly without
-        # cancelling the whole listener; ``pubsub.listen()`` would block
-        # indefinitely on an idle channel.
+    async def _consume_pubsub(self, subscription: ProgressSubscription) -> None:
+        # A short wait per poll honours ``_stop_event`` promptly; a
+        # blocking listen would hang on an idle channel.
         while not self._stop_event.is_set():
-            try:
-                message = await pubsub.get_message(  # type: ignore[attr-defined]
-                    ignore_subscribe_messages=True,
-                    timeout=1.0,
-                )
-            except TimeoutError:
-                message = None
+            job_id = await subscription.next_job_id(wait_s=1.0)
             self.last_iteration_at = time.monotonic()
-            if message is None:
-                continue
-            if message.get("type") != "message":
-                continue
-            raw = message.get("data")
-            try:
-                job_id = int(_bytes_to_str(raw) or "")
-            except ValueError:
+            if job_id is None:
                 continue
             try:
                 await self._handle_event(job_id)
@@ -282,8 +221,8 @@ class ProgressUpdater:
         if self._tombstones.get(job_id, 0.0) > time.monotonic():
             return
         try:
-            progress = await self._redis.hgetall(progress_key(job_id))
-        except RedisError:
+            progress = await self._feed.read_progress(job_id)
+        except ProgressFeedError:
             _logger.warning("progress_read_failed", job_id=job_id)
             return
         if not progress:
@@ -292,8 +231,8 @@ class ProgressUpdater:
         job = self._active.get(job_id)
         if job is None:
             try:
-                meta = await self._redis.hgetall(progress_meta_key(job_id))
-            except RedisError:
+                meta = await self._feed.read_meta(job_id)
+            except ProgressFeedError:
                 _logger.warning("progress_meta_read_failed", job_id=job_id)
                 return
             job = _ActiveJob.from_meta(job_id, meta) if meta else None
@@ -301,8 +240,8 @@ class ProgressUpdater:
                 return
             self._active[job_id] = job
 
-        stage_value = _get_field(progress, "stage")
-        percent_text = _get_field(progress, "percent")
+        stage_value = progress.get("stage")
+        percent_text = progress.get("percent")
         if stage_value is None or percent_text is None:
             return
         try:
@@ -310,7 +249,7 @@ class ProgressUpdater:
             percent = float(percent_text)
         except ValueError:
             return
-        reason = _get_field(progress, "reason")
+        reason = progress.get("reason")
 
         job.last_event_at = time.monotonic()
         job.stale_notified = False

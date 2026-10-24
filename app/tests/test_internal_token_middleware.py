@@ -12,36 +12,17 @@ from app.application.dto.jobs import EnqueueDownloadResult
 from app.config import Settings
 
 
-class _OkConnCtx:
-    async def __aenter__(self) -> _OkConnCtx:
-        return self
-
-    async def __aexit__(self, *_: object) -> None:
-        return None
-
-    async def execute(self, _stmt: object) -> None:
-        return None
-
-
-class _OkEngine:
-    def connect(self) -> _OkConnCtx:
-        return _OkConnCtx()
-
-
-class _OkRedis:
-    async def ping(self) -> bool:
-        return True
-
-
 class _OkStorage:
     def init(self) -> None:
         return None
 
 
-@dataclass
 class _Core:
-    engine: _OkEngine
-    redis: _OkRedis
+    async def ping_postgres(self) -> None:
+        return None
+
+    async def ping_redis(self) -> bool:
+        return True
 
 
 @dataclass
@@ -74,7 +55,7 @@ def _make_client(
     app = create_app(settings)
     app.state.settings = settings
     app.state.composition = _Composition(
-        core=_Core(engine=_OkEngine(), redis=_OkRedis()),
+        core=_Core(),
         storage=_OkStorage(),
         enqueue_download=_FakeEnqueue(),
     )
