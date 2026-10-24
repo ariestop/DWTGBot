@@ -18,6 +18,29 @@ none.
 
 ## [Unreleased]
 
+### Changed — порты вместо прямого доступа к Redis/Postgres и `os.environ` (аудит R14, R15)
+
+Рефакторинг без изменения поведения.
+
+- **R15.** `ProgressUpdater` в боте читает прогресс через порт
+  `ProgressFeed`; реализация на Redis — `RedisProgressFeed` в
+  `app/infrastructure/cache/`. `/readyz` проверяет Postgres и Redis через
+  `CoreInfra.ping_postgres` / `ping_redis`, а не своим SQL. Тест слоёв
+  теперь падает, если `app/bot`, `app/api` или `app/workers` импортируют
+  драйвер (`redis`, `sqlalchemy`, `asyncpg`, `arq`, `yt_dlp`).
+- **R14.** Воркер бэкапов берёт `BACKUP_INTERVAL_SECONDS` и новый
+  `BACKUP_SCRIPT` из `Settings`, а не из `os.environ`. Значения по
+  умолчанию прежние (86400 с, `/app/deploy/scripts/backup.sh`); ошибка в
+  значении теперь видна при старте, а не молча заменяется дефолтом. Новый
+  тест запрещает `os.environ` / `os.getenv` вне `app/config.py`.
+
+### Added — действие `docker-prune` в «Server maintenance»
+
+Удаляет образы, которые не использует ни один контейнер и которых нет в
+`last-good-*.env` (откат без pull остаётся возможным), и весь build cache.
+Печатает `docker system df` до и после. На single уже выполнено: образы
+10.9 → 7.6 ГБ, кэш сборки 5.5 ГБ → 0, диск 81 % → 69 %.
+
 ### Changed — `ProcessDownloadUseCase` без дублей переходов статуса (аудит R10)
 
 Рефакторинг без изменения поведения. Метрика и лог `job_status_changed`
