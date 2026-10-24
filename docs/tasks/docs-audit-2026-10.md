@@ -100,8 +100,8 @@ Status: Evolving
 
 `error=str(exc)` в WARNING/ERROR-логах (`app/bot/handlers/links.py`,
 `app/application/use_cases/process_download.py`) может унести URL в
-journald: сообщения yt-dlp вида «Unsupported URL: https://…» и «No
-suitable extractor found for URL …» содержат его целиком. Тест
+journald: сообщения yt-dlp вида `Unsupported URL: <url>` и
+`No suitable extractor found for URL <url>` содержат его целиком. Тест
 `test_no_urls_in_logs.py` ловит только ключи `url=` и `source_url=`.
 Чинить в отдельном PR: логировать `error_class`, а текст ошибки пропускать
 через обрезку URL (`app/utils/url.py`).
