@@ -1142,5 +1142,5 @@ Print and pin at the desk. Use during incidents.
 - **Telegram-hosted file IDs as a secondary recovery vector:** every successfully delivered Telegram file gets a Telegram-side `file_id`; storing those alongside `download_jobs` lets the bot re-deliver without re-downloading.
 
 Each crosses an ADR-0005 assumption — propose in
-[`26-cursor-rules.md`](26-cursor-rules.md) and add an ADR before
+[`CLAUDE.md`](../CLAUDE.md) (skill `plan-change`) and add an ADR before
 implementing.

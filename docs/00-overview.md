@@ -287,7 +287,7 @@ These are forbidden in this codebase. Each is detailed in the relevant doc.
 
 - **First-day onboarding:** [`01-product-purpose.md`](01-product-purpose.md) → [`02-architecture.md`](02-architecture.md) → [`03-project-structure.md`](03-project-structure.md) → [`05-data-flow.md`](05-data-flow.md).
 - **Implementing a feature:** [`28-implementation-playbook.md`](28-implementation-playbook.md).
-- **AI agent making changes:** [`25-agent-guide.md`](25-agent-guide.md), [`26-cursor-rules.md`](26-cursor-rules.md).
+- **AI agent making changes:** [`CLAUDE.md`](../CLAUDE.md), [`25-agent-guide.md`](25-agent-guide.md), `.claude/rules/`, `.claude/skills/`.
 - **Going on-call:** [`24-runbooks.md`](24-runbooks.md), [`31-troubleshooting.md`](31-troubleshooting.md).
 
 ---

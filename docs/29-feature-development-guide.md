@@ -4,7 +4,7 @@
 > Audience: every engineer or AI agent designing or building a feature in DWTGBot.
 > Companion docs:
 > [`25-agent-guide.md`](25-agent-guide.md) — operating manual (how to think),
-> [`26-cursor-rules.md`](26-cursor-rules.md) — operational protocol for AI tools,
+> [`CLAUDE.md`](../CLAUDE.md) + `.claude/skills/` — operational protocol for AI tools,
 > [`27-coding-standards.md`](27-coding-standards.md) — code-level rules,
 > [`28-implementation-playbook.md`](28-implementation-playbook.md) — change-class playbooks (how to execute),
 > [`adr/0005-locked-architectural-assumptions.md`](adr/0005-locked-architectural-assumptions.md) — locked rows.
@@ -24,7 +24,7 @@
 >
 > The eleven principles **P1–P11** referenced throughout are defined
 > canonically in [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register)
-> and [`26-` §1.A](26-cursor-rules.md#1a-mandatory-principles-p1p11--operational-register).
+> and [`CLAUDE.md`](../CLAUDE.md).
 
 ---
 
@@ -70,7 +70,7 @@ discipline.
 |---|---|
 | **Engineer** | A pre-flight checklist and design template before opening files |
 | **Tech lead / reviewer** | A reference for "what should a feature PR look like?" |
-| **AI agent (Cursor, etc.)** | A scripted design phase + per-feature-type playbook + verbatim plan template |
+| **AI agent (Claude, etc.)** | A scripted design phase + per-feature-type playbook + verbatim plan template |
 | **Product-minded contributor** | A way to translate user need → architecturally-safe implementation |
 | **First-day joiner** | A way to ship a real feature in week 1 without breaking anything |
 
@@ -1856,7 +1856,7 @@ guide, keep these.
     enable for internal first; observe; then broadly.
 14. **Every feature has a rollback story (§22.10).** Code revert +
     DB rollback + flag toggle.
-15. **When in doubt, refuse and ask.** Use [`26-` §17.9](26-cursor-rules.md#179-refusal-scripts-verbatim--copy-fill--send)
+15. **When in doubt, refuse and ask.** Use [`refusals.md`](../.claude/skills/plan-change/refusals.md)
     refusal scripts.
 
 ---
@@ -1880,7 +1880,7 @@ If you remember nothing else, remember **where to look**:
 
 | Need | Place |
 |---|---|
-| What the eleven principles mean | [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register), [`26-` §1.A](26-cursor-rules.md#1a-mandatory-principles-p1p11--operational-register) |
+| What the eleven principles mean | [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register), [`CLAUDE.md`](../CLAUDE.md) |
 | The verbatim plan template | [`25-` §6.A](25-agent-guide.md#6a-plan-template-verbatim--emit-before-any-file-edit), [`28-` §5.1](28-implementation-playbook.md#51-planning-note-template-verbatim--emit-before-any-file-edit) |
 | The verbatim mini-design note | §7.1 (this doc) |
 | What to do for a change of class X | [`28-` §§7–21](28-implementation-playbook.md) |
@@ -1888,7 +1888,7 @@ If you remember nothing else, remember **where to look**:
 | What to update alongside what | [`28-` §22](28-implementation-playbook.md#22-what-must-be-updated-together) + §18.1 (this doc) |
 | What never to do | §§20–21 (this doc), [`28-` §§23–24](28-implementation-playbook.md) |
 | Did I forget anything? | §§22–23 (this doc), [`28-` §§25 + 27](28-implementation-playbook.md) |
-| Quick refusal scripts | [`26-` §17.9](26-cursor-rules.md#179-refusal-scripts-verbatim--copy-fill--send) |
+| Quick refusal scripts | [`refusals.md`](../.claude/skills/plan-change/refusals.md) |
 | Code skeletons | [`28-` Appendix B](28-implementation-playbook.md#appendix-b--code-templates-copy-pasteable-skeletons) |
 | Pre-merge mechanical sweep | [`28-` Appendix C](28-implementation-playbook.md#appendix-c--pre-merge-grep-recipes) |
 

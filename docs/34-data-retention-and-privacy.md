@@ -558,5 +558,5 @@ If you operate under a different jurisdiction's regime, replace the
 - **DPIA template** — once the system processes >N users / day, run a Data Protection Impact Assessment and store it in `adr/` as a reference document.
 
 Each of these crosses an ADR-0005 assumption — propose in
-[`26-cursor-rules.md`](26-cursor-rules.md) and add an ADR before
+[`CLAUDE.md`](../CLAUDE.md) (skill `plan-change`) and add an ADR before
 implementing.

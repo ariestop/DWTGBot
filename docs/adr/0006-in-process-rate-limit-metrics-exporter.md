@@ -186,8 +186,8 @@ collapses that to O(1).
 - **Code lint:** the `prometheus_client` import is allowed only inside
   `app/infrastructure/metrics/`. Any `from prometheus_client …` outside
   that package fails review (P7: no infra leakage into domain /
-  application). Update `docs/26-cursor-rules.md` if the rule needs to
-  be machine-enforced.
+  application). To enforce it by machine, extend `app/tests/test_layering.py`
+  (the agent rule lives in `.claude/rules/architecture.md`).
 - **Tests:** `app/tests/test_rate_limit_metrics.py` asserts both the
   Noop sink and the Prometheus sink record what `evaluate()` and
   `RedisRateLimitGate` expect. Any rename of a metric (or label) MUST

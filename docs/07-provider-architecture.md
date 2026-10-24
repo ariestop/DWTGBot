@@ -278,7 +278,7 @@ The minimum touchpoints (full discussion in `30-`):
 
 If you find yourself touching **anything** outside `30-`'s
 "Step-by-step provider implementation workflow", stop — you're probably
-violating layering. See `26-cursor-rules.md` for the refusal protocol.
+violating layering. See [`refusals.md`](../.claude/skills/plan-change/refusals.md) for the refusal scripts.
 
 ---
 

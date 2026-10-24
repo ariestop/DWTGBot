@@ -1,6 +1,6 @@
 """Every ``Settings`` field is documented and present in every env example.
 
-``.cursor/rules/40-config-and-secrets.mdc`` requires a new variable to
+``.claude/skills/add-config-variable`` requires a new variable to
 land in ``docs/13-config-and-env.md`` and in all four ``.env.example``
 files. A key may appear commented out (``# KEY=default``) when the
 example relies on the ``Settings`` default. Compose-only variables

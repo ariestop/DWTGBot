@@ -89,7 +89,7 @@ likely cascades through several others — see §3.13 (interlocks) below.
   2. Refuse to write the code;
   3. Propose drafting a superseding ADR instead.
   This obligation is encoded in [`25-agent-guide.md`](../25-agent-guide.md)
-  §3 and [`26-cursor-rules.md`](../26-cursor-rules.md) §5.
+  §3, [`CLAUDE.md`](../../CLAUDE.md) and [`refusals.md`](../../.claude/skills/plan-change/refusals.md) (script A).
 - "Locked" is **not** "frozen forever". It is "changeable only with a
   written, reviewed decision." The protocol for change is in §6 below.
 
@@ -465,8 +465,8 @@ The following docs reference this ADR and must stay consistent with it:
 - [`docs/21-cicd.md`](../21-cicd.md) (GHA workflows).
 - [`docs/25-agent-guide.md`](../25-agent-guide.md) §3 (architecture
   rules).
-- [`docs/26-cursor-rules.md`](../26-cursor-rules.md) §5 (architecture
-  preservation).
+- [`.claude/rules/architecture.md`](../../.claude/rules/architecture.md) (architecture
+  preservation for agents).
 - [`docs/28-implementation-playbook.md`](../28-implementation-playbook.md)
   §5 (locked-decisions list).
 

@@ -8,7 +8,7 @@
 > [`07-provider-architecture.md`](07-provider-architecture.md) — current providers + interfaces,
 > [`08-download-pipeline.md`](08-download-pipeline.md) — pipeline anatomy,
 > [`25-agent-guide.md`](25-agent-guide.md) — operating manual,
-> [`26-cursor-rules.md`](26-cursor-rules.md) — operational protocol,
+> [`CLAUDE.md`](../CLAUDE.md) + `.claude/skills/` — operational protocol,
 > [`27-coding-standards.md`](27-coding-standards.md) — code-level rules,
 > [`28-implementation-playbook.md`](28-implementation-playbook.md) — change-class playbooks,
 > [`29-feature-development-guide.md`](29-feature-development-guide.md) — feature-level lifecycle,
@@ -26,7 +26,7 @@
 >
 > The eleven principles **P1–P11** referenced throughout are defined
 > canonically in [`25-` §1.A](25-agent-guide.md#1a-mandatory-principles-p1p11--canonical-register)
-> and [`26-` §1.A](26-cursor-rules.md#1a-mandatory-principles-p1p11--operational-register).
+> and [`CLAUDE.md`](../CLAUDE.md).
 > The **provider contract is sacred (P8).** This document defines it.
 
 ---
@@ -81,7 +81,7 @@ This guide front-loads the discipline so a provider is shipped in
 |---|---|
 | **Engineer** | Step-by-step workflow (§24) + worked example (§25) + checklists (§§26–27) |
 | **Reviewer** | A reference for "what should a provider PR look like?" + anti-patterns (§22) |
-| **AI agent (Cursor, etc.)** | Verbatim contract + DO/DON'T + 25-mistake catalogue + skeletons (Appendix B) |
+| **AI agent (Claude, etc.)** | Verbatim contract + DO/DON'T + 25-mistake catalogue + skeletons (Appendix B) |
 | **Tech lead** | Decision tree for "does this need its own provider?" (§5) |
 
 ---

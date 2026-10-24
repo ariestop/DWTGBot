@@ -819,7 +819,7 @@ Per-stage table of common failures, how they manifest, and what to do. Always re
 |---|---|---|---|
 | `lint` | `ruff check` errors | new code violates a rule | run `ruff check . --fix` locally; commit |
 | `lint` | `ruff format --check` non-zero | unformatted file | run `ruff format .`; commit |
-| `typecheck` | `mypy` errors | new code introduced a type regression | fix types in code; do **not** add `# type: ignore` blanket — see `26-cursor-rules.md` |
+| `typecheck` | `mypy` errors | new code introduced a type regression | fix types in code; do **not** add `# type: ignore` blanket |
 | `tests` | one or more pytest failures | broken behaviour | reproduce locally with the same env block (§3.3); fix |
 | `tests` | timeouts / flakes | test reads network or filesystem state | mark `@pytest.mark.integration` if appropriate, or fix the test |
 | `shell-lint` | shellcheck warnings | new bash issues | fix in `deploy/scripts/`; SC1091 for sourced files needs `# shellcheck source=…` annotation |
@@ -1100,4 +1100,4 @@ Print this. Pin it near the deploy button.
 - **Canary deploy**: split worker concurrency across two image tags briefly.
 
 Each of these crosses an ADR-0005 assumption — propose in
-`26-cursor-rules.md` and add an ADR before implementing.
+an ADR (skill `plan-change`) before implementing.

@@ -956,5 +956,5 @@ GROUP BY 1 ORDER BY 1 DESC LIMIT 30;
 - **Telegram-`file_id` re-use** (see `22-` §20): if every successful direct send records its Telegram-side `file_id`, the worker can re-deliver without redownload, dramatically lowering the storage need.
 
 Each crosses an ADR-0005 assumption — propose in
-[`26-cursor-rules.md`](26-cursor-rules.md) and add an ADR before
+[`CLAUDE.md`](../CLAUDE.md) (skill `plan-change`) and add an ADR before
 implementing.

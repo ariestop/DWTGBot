@@ -4,13 +4,13 @@ This is the **single source of truth** for the DWTGBot architecture, conventions
 and operations. The root [`README.md`](../README.md) is a marketing/overview
 page; everything technical lives here.
 
-> **For AI agents (Cursor, etc.):** before making any change, read at minimum
+> **For AI agents:** before making any change, read at minimum
 > [`00-overview.md`](00-overview.md), [`02-architecture.md`](02-architecture.md),
 > [`03-project-structure.md`](03-project-structure.md), and
 > [`25-agent-guide.md`](25-agent-guide.md). Then read the topic-specific doc(s)
-> for the area you are touching. Cursor-specific rules are mirrored in
-> [`.cursor/rules/`](../.cursor/rules/) and explained in
-> [`26-cursor-rules.md`](26-cursor-rules.md).
+> for the area you are touching. Claude: [`CLAUDE.md`](../CLAUDE.md) (always
+> loaded), path-scoped rules in [`.claude/rules/`](../.claude/rules/) and
+> procedures in [`.claude/skills/`](../.claude/skills/).
 
 ---
 
@@ -51,7 +51,7 @@ page; everything technical lives here.
 
 ### 5. Contributor & AI-agent guidelines
 - [`25-agent-guide.md`](25-agent-guide.md) — AI agent operating manual (mental model, layered rules, change protocol, escalation)
-- [`26-cursor-rules.md`](26-cursor-rules.md) — Cursor operational protocol (strict per-step rules, anti-patterns, final checklist; `.cursor/rules/*.mdc` inventory in Appendix B)
+- [`CLAUDE.md`](../CLAUDE.md), [`.claude/rules/`](../.claude/rules/), [`.claude/skills/`](../.claude/skills/) — правила и процедуры для агента (заменили прежние правила Cursor и документ 26)
 - [`27-coding-standards.md`](27-coding-standards.md) — style + lint rationale
 - [`28-implementation-playbook.md`](28-implementation-playbook.md) — recipes
 - [`29-feature-development-guide.md`](29-feature-development-guide.md) — branch → PR → release

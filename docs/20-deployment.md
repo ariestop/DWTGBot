@@ -1575,7 +1575,7 @@ Honest scope: with two single hosts and Docker Compose, **true zero-downtime is 
 - Multiple bot replicas polling the same Telegram token (Telegram allows only one polling client) — true blue/green for the bot would need webhooks behind a load balancer.
 - Zero-downtime Postgres failover without a managed service / replica.
 
-If you need either, design that in `26-cursor-rules.md` first; it crosses ADR-0005 / ADR-0011 and changes the topology.
+If you need either, design that as an ADR first (skill `plan-change`); it crosses ADR-0005 / ADR-0011 and changes the topology.
 
 ---
 
@@ -1661,4 +1661,4 @@ du -sh /var/lib/dwtgbot/storage/jobs/* | sort -h | tail
 - Image signing verification at pull time (cosign + admission).
 - Postgres streaming replica on NL-2 (read-only) for fast failover.
 
-Each of these crosses an ADR-0005 assumption — propose in `26-cursor-rules.md` and add an ADR before implementing.
+Each of these crosses an ADR-0005 assumption — propose it (skill `plan-change`) and add an ADR before implementing.
