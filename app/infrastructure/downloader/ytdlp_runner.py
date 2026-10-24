@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,12 @@ from app.infrastructure.cache.redis_circuit_breaker import RedisCircuitBreaker
 from app.infrastructure.downloader import ytdlp_opts
 from app.infrastructure.downloader.http_probe import head_content_length
 from app.infrastructure.downloader.mobile_compat import make_mobile_compatible
-from app.infrastructure.downloader.ytdlp_opts import YtDlpOpts, host_of, make_progress_hook
+from app.infrastructure.downloader.ytdlp_opts import (
+    YtDlpOpts,
+    host_of,
+    make_cancel_hook,
+    make_progress_hook,
+)
 from app.infrastructure.downloader.ytdlp_results import (
     classify_error,
     extract_known_size,
@@ -139,8 +145,10 @@ class YtDlpRunner:
         """
         target_dir.mkdir(parents=True, exist_ok=True)
         base = ytdlp_opts.download_opts(format_spec, target_dir)
+        cancelled = threading.Event()
+        base["progress_hooks"] = [make_cancel_hook(cancelled)]
         if on_progress is not None:
-            base["progress_hooks"] = [make_progress_hook(on_progress)]
+            base["progress_hooks"].insert(0, make_progress_hook(on_progress))
         # yt-dlp treats ``ffmpeg_location`` as an absolute path to the binary
         # or a directory containing it and verifies via ``os.path.exists``. A
         # bare name like ``"ffmpeg"`` therefore resolves to False and the
@@ -166,14 +174,13 @@ class YtDlpRunner:
         # consumed the entire job budget (download + transcode + upload)
         # and arq prematurely killed the worker mid-ffmpeg.
         #
-        # Known limitation: ``asyncio.wait_for`` on ``to_thread`` cannot
-        # cancel the in-flight thread — the background yt-dlp work keeps
-        # running until its socket timeout (``socket_timeout=30``) trips.
-        # The caller has already returned ``DownloadError("timeout")``,
-        # so the job is correctly marked failed; the thread terminates
-        # shortly after and its output files are GC'd by the cleanup
-        # sweep. A clean kill requires moving yt-dlp to a subprocess
-        # (tracked as a follow-up — see audit-fixes phase 3 backlog).
+        # ``asyncio.wait_for`` on ``to_thread`` cannot cancel the thread.
+        # On timeout we set ``cancelled``; the cancel hook then raises
+        # ``DownloadCancelled`` at the next progress frame and yt-dlp
+        # stops (audit R13). A slow download used to keep going after the
+        # job had failed; only a stalled socket ended it (socket_timeout).
+        # ffmpeg post-processing emits no progress frames and still runs
+        # to its end; a hard kill needs yt-dlp in a subprocess.
         download_timeout = self._settings.DOWNLOAD_TIMEOUT_SECONDS
         try:
             await self._guarded(
@@ -184,6 +191,7 @@ class YtDlpRunner:
                 timeout_s=download_timeout,
             )
         except TimeoutError as exc:
+            cancelled.set()
             _logger.warning("ytdlp_download_timeout", host=host_of(url), timeout_s=download_timeout)
             raise DownloadTimeoutError(f"yt-dlp timed out after {download_timeout}s") from exc
 
